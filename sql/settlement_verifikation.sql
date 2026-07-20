@@ -384,3 +384,94 @@ JOIN auszahlungen a
 WHERE psr.transaction_id IN (SELECT id FROM tx)
 GROUP BY date_diff('day', bt.valuedate, a.createdon)
 ORDER BY tage_bis_auszahlung;
+
+
+-- =====================================================================
+-- (9) Auszahlungen NUR des eigenen Accounts
+-- =====================================================================
+--
+-- Der entscheidende Befund aus Query (7):
+--   Im Messzeitraum lagen dort mehrere Zehntausend Auszahlungen. Auszahlungen
+--   sind aber seltene Ereignisse - diese Menge kann unmoeglich die eines
+--   einzelnen Haendlers sein. Der Grund: currentaccountwithdrawal wurde
+--   ueberhaupt nicht auf den Account eingeschraenkt. Gezaehlt wurden die
+--   Auszahlungen der gesamten Plattform.
+--
+-- Das erklaert beides:
+--   Performance  - der Range-Join paart jede SETTLED-Banktransaktion mit einem
+--                  Teil dieser Gesamtmenge. Das Produkt wird so gross, dass die
+--                  Query unabhaengig vom Zeitfenster ins Timeout laeuft.
+--   Korrektheit  - min_by(w.internalreference, w.createdon) waehlt die
+--                  frueheste Auszahlung nach dem Valutadatum quer ueber ALLE
+--                  Accounts. Die zurueckgegebene Referenz gehoert damit sehr
+--                  wahrscheinlich einem fremden Haendler. Die Spalte
+--                  settlement_reference war nie korrekt, nur unauffaellig -
+--                  weil sie standardmaessig deaktiviert ist.
+--
+-- Der fehlende Baustein: spacereference verknuepft spaceid mit accountid, und
+-- currentaccountwithdrawal traegt selbst ein accountid.
+--
+-- Lesart:
+--   Liefert diese Query eine kleine, plausible Zahl (Auszahlungen eines
+--   Haendlers ueber mehrere Wochen - eher Dutzende als Tausende), ist die
+--   Einschraenkung wirksam und settlement_reference wird sowohl schnell als
+--   auch fachlich richtig. Dann weiter mit Query (10).
+
+SELECT
+    count(*)                    AS anzahl_auszahlungen,
+    count(DISTINCT w.accountid) AS anzahl_accounts,
+    min(w.createdon)            AS frueheste,
+    max(w.createdon)            AS spaeteste
+FROM currentaccountwithdrawal w
+JOIN spacereference sr
+  ON sr.accountid = w.accountid
+WHERE sr.spaceid = <SPACE_ID>
+  AND w.createdon >= TIMESTAMP '<START>'
+  AND w.createdon <  TIMESTAMP '<ENDE>';
+
+
+-- =====================================================================
+-- (10) Auszahlungsdauer - mit Account-Einschraenkung
+-- =====================================================================
+--
+-- Nur ausfuehren, wenn Query (9) eine kleine Zahl lieferte.
+--
+-- Das ist die Fassung, die im Generator landen soll, falls sie durchlaeuft:
+-- Auszahlungsliste zuerst auf den eigenen Account und den Zeitraum reduzieren,
+-- danach der Range-Join gegen ein kleines Zwischenergebnis.
+--
+-- Lesart:
+--   Die Verteilung zeigt, wie lange es real vom Valutadatum bis zur Auszahlung
+--   dauert. Liegt die Masse bei wenigen Tagen, kann das Fenster im Generator
+--   von 30 Tagen deutlich enger gesetzt werden.
+
+WITH tx AS (
+    SELECT t.id
+    FROM transaction t
+    WHERE t.spaceid = <SPACE_ID>
+      AND t.completedon >= TIMESTAMP '<START>'
+      AND t.completedon <  TIMESTAMP '<ENDE>'
+      AND t.state IN ('FULFILL', 'COMPLETED')
+),
+auszahlungen AS (
+    SELECT w.internalreference, w.createdon
+    FROM currentaccountwithdrawal w
+    JOIN spacereference sr
+      ON sr.accountid = w.accountid
+    WHERE sr.spaceid = <SPACE_ID>
+      AND w.createdon >= TIMESTAMP '<START>'
+      AND w.createdon <  TIMESTAMP '<ENDE>'
+)
+SELECT
+    date_diff('day', bt.valuedate, a.createdon)    AS tage_bis_auszahlung,
+    count(*)                                       AS anzahl
+FROM payfacsettlementrecord psr
+JOIN banktransaction bt
+  ON bt.id = psr.banktransaction_id
+ AND bt.state = 'SETTLED'
+JOIN auszahlungen a
+  ON a.createdon >= bt.valuedate
+ AND a.createdon <  bt.valuedate + INTERVAL '30' DAY
+WHERE psr.transaction_id IN (SELECT id FROM tx)
+GROUP BY date_diff('day', bt.valuedate, a.createdon)
+ORDER BY tage_bis_auszahlung;
