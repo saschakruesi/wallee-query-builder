@@ -1,8 +1,8 @@
 -- Verifikations-Queries fuer die Settlement-Annahmen des Query Builders.
 --
--- Diese fuenf Queries klaeren, was sich aus dem Analytics-Schema allein nicht
+-- Diese Queries klaeren, was sich aus dem Analytics-Schema allein nicht
 -- ableiten laesst. Jede beantwortet genau eine Frage, die im Generator als
--- Annahme steckt (oder steckte - siehe Kommentare bei (1), (2) und (4)).
+-- Annahme steckt (oder steckte - siehe Kommentare bei (1), (2), (4) und (9)).
 -- Einzeln ausfuehren, Ergebnis-CSV zurueckmelden.
 --
 -- Vor dem Ausfuehren: <SPACE_ID>, <START> und <ENDE> ersetzen.
@@ -334,6 +334,16 @@ ORDER BY 1, 2;
 --   settlement_reference auf diesem Weg nicht umsetzbar, und das gehoert so
 --   in die Doku - eine Spalte, die zuverlaessig ins Timeout laeuft, hilft
 --   niemandem.
+--
+-- Bisheriger Befund (ein Space, ein Zeitraum von mehreren Wochen):
+--   Die Query lief durch, aber die zurueckgegebene Zahl war um Groessenordnungen
+--   zu hoch fuer die Auszahlungen eines einzelnen Haendlers - Auszahlungen sind
+--   seltene Ereignisse, hier kamen aber mehrere Zehntausend heraus. Der
+--   naheliegende Schluss: die Tabelle war nie auf den Account eingeschraenkt und
+--   zeigte die Auszahlungen der gesamten Plattform, nicht die des eigenen
+--   Haendlers. Das erklaert zugleich das Timeout aus Query (3) (der Range-Join
+--   paart jede Banktransaktion mit einem Teil dieser Gesamtmenge) und wirft die
+--   fachliche Frage auf, die Query (9) beantwortet.
 
 SELECT
     count(*)                    AS anzahl_auszahlungen,
@@ -416,6 +426,15 @@ ORDER BY tage_bis_auszahlung;
 --   Haendlers ueber mehrere Wochen - eher Dutzende als Tausende), ist die
 --   Einschraenkung wirksam und settlement_reference wird sowohl schnell als
 --   auch fachlich richtig. Dann weiter mit Query (10).
+--
+-- Bisheriger Befund (ein Space, derselbe Zeitraum wie bei Query 7):
+--   Mit der Einschraenkung ueber spacereference.accountid sinkt die Zahl von
+--   den Zehntausenden aus Query (7) auf eine kleine, fuer einen einzelnen
+--   Haendler plausible Groessenordnung (eher Dutzende als Hunderte), verteilt
+--   auf genau einen Account. Die Einschraenkung ist damit sowohl wirksam als
+--   auch notwendig: sie ist keine Performance-Feinjustierung, sondern der
+--   Unterschied zwischen einer fachlich falschen und einer fachlich richtigen
+--   Auszahlungsreferenz. Weiter mit Query (10).
 
 SELECT
     count(*)                    AS anzahl_auszahlungen,
@@ -444,6 +463,19 @@ WHERE sr.spaceid = <SPACE_ID>
 --   Die Verteilung zeigt, wie lange es real vom Valutadatum bis zur Auszahlung
 --   dauert. Liegt die Masse bei wenigen Tagen, kann das Fenster im Generator
 --   von 30 Tagen deutlich enger gesetzt werden.
+--
+-- Bisheriger Befund (ein Space, ein Zeitraum von mehreren Wochen):
+--   Praktisch jede Banktransaktion hat bereits am Valutatag selbst oder am
+--   Folgetag eine Auszahlung des eigenen Accounts - die grosse Mehrheit der
+--   Faelle liegt in diesen ersten ein bis zwei Tagen. Die duenn besetzte
+--   Verteilung ueber die weiteren Tage bis zum Rand des Messfensters ist kein
+--   Hinweis auf eine tatsaechlich laengere Zuordnungsdauer, sondern ein
+--   Artefakt davon, dass ungefaehr taeglich irgendeine Auszahlung des Accounts
+--   stattfindet: sie erzeugt reinen Ausschuss im Zwischenergebnis, sagt aber
+--   nichts ueber die fachlich richtige Zuordnung aus. Das Generator-Fenster
+--   wurde entsprechend von 30 auf 10 Tage verkleinert - ein Vielfaches der
+--   gemessenen ein bis zwei Tage, bewusst als Puffer fuer Feiertage und
+--   Wochenenden, an denen keine Auszahlung laeuft.
 
 WITH tx AS (
     SELECT t.id

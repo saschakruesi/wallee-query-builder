@@ -76,38 +76,81 @@ test('Settlement-Spalten ohne Referenz: kein Withdrawal-Join', () => {
   assert.doesNotMatch(sql, /ROW_NUMBER\(\)/);
 });
 
-test('Auszahlungsreferenz zieht ein begrenztes payoutref-CTE nach', () => {
+test('Auszahlungsreferenz zieht ein auszahlungen-CTE nach, das auf den eigenen Account eingeschraenkt ist', () => {
+  // Ohne diese Einschraenkung enthaelt currentaccountwithdrawal die Auszahlungen
+  // der gesamten Plattform, nicht nur die des eigenen Haendlers - siehe
+  // sql/settlement_verifikation.sql, Query 7 und 9, sowie den Kommentar im
+  // payoutref-CTE selbst.
   const cols = ALL_ON();
   const sql = B.buildExportQuery({ ...RANGE, terminalIds: [], cols });
-  assert.match(sql, /payoutref AS \(/);
-  assert.match(sql, /currentaccountwithdrawal/);
-  assert.match(sql, /INTERVAL '30' DAY/);
-  assert.match(sql, /min_by\(/);
+  assert.match(sql, /auszahlungen AS \(/);
+  assert.match(sql, /JOIN\s+spacereference\s+sr/);
+  assert.match(sql, /sr\.accountid\s*=\s*w\.accountid/);
+  assert.match(sql, /sr\.spaceid = 12345/);
   assert.doesNotMatch(sql, /ROW_NUMBER\(\)/);
-  // Die psr/bt-Seite des Range-Joins ist ueber tx eingegrenzt.
-  assert.match(sql, /psr\.transaction_id IN \(SELECT id FROM tx\)/);
 });
 
-test('payoutref-CTE: w-Seite des Joins hat sowohl die korrelierte als auch die absolute Zeitbedingung', () => {
-  // Die korrelierte Bedingung (w.createdon relativ zu bt.valuedate) sichert die
-  // fachliche Zuordnung. Ohne zusaetzlich ein absolutes, konstantes Praedikat
-  // auf w.createdon kann der Optimizer currentaccountwithdrawal nicht per
-  // Partition beschneiden und scannt die ganze Tabelle - genau das liess eine
-  // Diagnose-Query (sql/settlement_verifikation.sql, Query 3) ins Timeout
-  // laufen. Beide Bedingungen muessen deshalb nebeneinander im CTE stehen.
+test('payoutref joint gegen auszahlungen, nicht direkt gegen currentaccountwithdrawal', () => {
   const cols = ALL_ON();
   const sql = B.buildExportQuery({ ...RANGE, terminalIds: [], cols });
   const cteMatch = sql.match(/payoutref AS \(([\s\S]*?)\n\)/);
   assert.ok(cteMatch, 'payoutref-CTE nicht gefunden');
   const cte = cteMatch[1];
 
-  // korrelierte Bedingung (bleibt fuer die fachliche Zuordnung bestehen)
-  assert.match(cte, /w\.createdon >= bt\.valuedate/);
-  assert.match(cte, /w\.createdon\s*<\s*bt\.valuedate \+ INTERVAL '30' DAY/);
+  // currentaccountwithdrawal wird nur noch im auszahlungen-CTE abgefragt,
+  // nicht mehr direkt im payoutref-CTE (der Kommentar dort darf die Tabelle
+  // weiterhin in Prosa erwaehnen, deshalb der Check auf FROM/JOIN statt auf
+  // das blosse Wort).
+  assert.doesNotMatch(cte, /(FROM|JOIN)\s+currentaccountwithdrawal/);
+  assert.match(cte, /JOIN auszahlungen a/);
+  assert.match(cte, /a\.createdon >= bt\.valuedate/);
+  assert.match(cte, /a\.createdon\s*<\s*bt\.valuedate \+ INTERVAL '10' DAY/);
+  assert.match(cte, /min_by\(a\.internalreference, a\.createdon\)/);
+  // Die psr/bt-Seite des Range-Joins bleibt ueber tx eingegrenzt.
+  assert.match(sql, /psr\.transaction_id IN \(SELECT id FROM tx\)/);
+});
 
-  // absolute Bedingung, abgeleitet aus dem Berichtszeitraum (RANGE.start/RANGE.end)
+test('payoutref-Fenster steht auf zehn Tagen, nicht mehr auf dreissig', () => {
+  const cols = ALL_ON();
+  const sql = B.buildExportQuery({ ...RANGE, terminalIds: [], cols });
+  assert.match(sql, /INTERVAL '10' DAY/);
+  assert.doesNotMatch(sql, /INTERVAL '30' DAY/);
+});
+
+test('auszahlungen-CTE: absolutes Fenster kombiniert Berichtszeitraum mit den zehn Tagen Puffer', () => {
+  // Analog zur frueheren Begruendung im payoutref-CTE: ohne ein konstantes
+  // Praedikat auf w.createdon kann der Optimizer currentaccountwithdrawal
+  // nicht per Partition beschneiden. Das absolute Fenster lebt jetzt hier,
+  // im vorgelagerten auszahlungen-CTE.
+  const cols = ALL_ON();
+  const sql = B.buildExportQuery({ ...RANGE, terminalIds: [], cols });
+  const cteMatch = sql.match(/auszahlungen AS \(([\s\S]*?)\n\)/);
+  assert.ok(cteMatch, 'auszahlungen-CTE nicht gefunden');
+  const cte = cteMatch[1];
   assert.match(cte, /w\.createdon >= TIMESTAMP '2026-07-01 00:00:00'/);
-  assert.match(cte, /w\.createdon\s*<\s*TIMESTAMP '2026-07-02 00:00:00' \+ INTERVAL '30' DAY/);
+  assert.match(cte, /w\.createdon\s*<\s*TIMESTAMP '2026-07-02 00:00:00' \+ INTERVAL '10' DAY/);
+});
+
+test('ohne Auszahlungsreferenz: weder auszahlungen noch spacereference noch currentaccountwithdrawal im SQL', () => {
+  const cols = ALL_ON();
+  cols.payoutref = false;
+  const sql = B.buildExportQuery({ ...RANGE, terminalIds: [], cols });
+  assert.doesNotMatch(sql, /auszahlungen AS \(/);
+  assert.doesNotMatch(sql, /spacereference/);
+  // Bare-Word-Check waere hier falsch-positiv: der settle-CTE-Kommentar
+  // erwaehnt "currentaccountwithdrawal" als Prosa-Referenz auf das
+  // payoutref-CTE, auch wenn payoutref selbst nicht gewaehlt ist (siehe
+  // die aehnliche Einschraenkung in den Tests weiter oben). Massgeblich ist,
+  // dass die Tabelle nicht tatsaechlich abgefragt wird.
+  assert.doesNotMatch(sql, /(FROM|JOIN)\s+currentaccountwithdrawal/);
+});
+
+test('Mehr-Space-Fall: auszahlungen-CTE nutzt sr.spaceid IN (...)', () => {
+  const cols = ALL_ON();
+  const sql = B.buildExportQuery({ ...RANGE, spaceIds: [12345, 12346], terminalIds: [], cols });
+  const cteMatch = sql.match(/auszahlungen AS \(([\s\S]*?)\n\)/);
+  assert.ok(cteMatch, 'auszahlungen-CTE nicht gefunden');
+  assert.match(cteMatch[1], /sr\.spaceid IN \(12345, 12346\)/);
 });
 
 test('settle-CTE filtert bt.state nicht in der WHERE-Klausel (UPCOMING bleibt sichtbar)', () => {

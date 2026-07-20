@@ -104,15 +104,19 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
     „Wallee-Referenzwissen"; `settlement_state` wird `'PARTIAL'`, wenn sowohl `SETTLED`- als
     auch andere Records vorkommen — siehe Kommentare im CTE und
     `sql/settlement_reference_reference.sql`.
-  - **`payoutref`**: Auszahlungsreferenz = `currentaccountwithdrawal.internalreference`,
-    zeitlich zugeordnet (früheste Withdrawal im Fenster
-    `[bt.valuedate, bt.valuedate + 30 Tage)`) — rein heuristische Zuordnung, da es keinen
-    direkten Fremdschlüssel gibt. Langsam (zusätzlicher Range-Join), deshalb default aus.
-    Der Join auf `w` hat zusätzlich zur korrelierten Bedingung ein **absolutes** Zeitfenster
-    aus `start`/`end` (`w.createdon >= TIMESTAMP '<start>' AND w.createdon < TIMESTAMP
-    '<end>' + INTERVAL '30' DAY`) — ohne dieses konstante Prädikat scannt der Optimizer
-    `currentaccountwithdrawal` voll, was an Produktivdaten zum Timeout führte (siehe
-    „Wallee-Referenzwissen").
+  - **`auszahlungen`** / **`payoutref`**: Auszahlungsreferenz =
+    `currentaccountwithdrawal.internalreference`, zeitlich zugeordnet (früheste Withdrawal
+    des eigenen Accounts im Fenster `[bt.valuedate, bt.valuedate + 10 Tage)`) — rein
+    heuristische Zuordnung, da es keinen direkten Fremdschlüssel gibt. Zwei CTEs, weil
+    `currentaccountwithdrawal` **zwingend** auf den eigenen Account eingeschränkt werden
+    muss (siehe „Wallee-Referenzwissen") — das vorgelagerte `auszahlungen`-CTE erledigt
+    genau das (`JOIN spacereference sr ON sr.accountid = w.accountid`, eingegrenzt über
+    `spaceInClause(spaceIds, 'sr.spaceid')` sowie ein absolutes Zeitfenster aus `start`/`end`
+    sonst kann der Optimizer die Tabelle nicht per Partition beschneiden), `payoutref`
+    joint danach nur noch gegen dieses kleine, bereits eingeschränkte Zwischenergebnis. Das
+    Fenster steht auf 10 Tagen statt der an Produktivdaten gemessenen 1–2 Tage — bewusst
+    Puffer für Feiertage und Wochenenden. Trotz der Korrektur bleibt die Spalte default aus:
+    sie ist die teuerste im Export, und die Zuordnung bleibt heuristisch.
   - **`tip`** (`tipCte({ spaceIds })`, Helper-Funktion): summiert `lineitem.amountincludingtax`
     pro Transaktion für `lineitem.type = TIP_LINEITEM_TYPE` (Konstante `TIP_LINEITEM_TYPE =
     'TIP'`). Eingegrenzt über `tx`, damit nicht die gesamte `lineitem`-Historie des Space
@@ -193,15 +197,34 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
     settlement_verifikation.sql` bleibt im Repo, um sie bei Bedarf (anderer Space, anderer
     Acquirer, Schema-Änderung) erneut zu prüfen; Query 5 misst zusätzlich direkt den
     `NO_RECORD`-Anteil (Transaktionen des Zeitraums ganz ohne Settlement-Record).
-  - Der Range-Join im `payoutref`-CTE auf `currentaccountwithdrawal` ist ohne ein
-    zusätzliches **absolutes** Zeitfenster nicht praktikabel: eine rein korrelierte
-    Bedingung (`w.createdon` relativ zu `bt.valuedate`) gibt dem Optimizer kein konstantes
-    Prädikat, wodurch die Tabelle nicht per Partition beschnitten werden kann und voll
-    gescannt wird. Genau das liess eine Diagnose-Query an dieser Stelle ins Timeout laufen,
-    obwohl sie nur eine Woche Transaktionen umfasste. Der `payoutref`-CTE hat deshalb neben
-    der korrelierten Bedingung zusätzlich ein absolutes Fenster aus dem Berichtszeitraum
-    (`<start>` bis `<ende> + 30 Tage`) — beide Bedingungen sind nötig, keine ersetzt die
-    andere.
+  - **`currentaccountwithdrawal` enthält ohne Einschränkung die Auszahlungen aller Accounts
+    der Plattform, nicht nur die des eigenen Händlers — das ist dauerhaftes Wissen, kein
+    Detail nur des `payoutref`-CTE.** An Produktivdaten nachgewiesen
+    (`sql/settlement_verifikation.sql`, Query 7/9): eine ungefilterte Abfrage über einen
+    mehrwöchigen Zeitraum lieferte mehrere Zehntausend Auszahlungen verteilt über sehr viele
+    Accounts — für einen einzelnen Händler unmöglich, das sind die Auszahlungen der gesamten
+    Plattform. Erst eine Einschränkung über
+    `spacereference.accountid` (`JOIN spacereference sr ON sr.accountid = w.accountid`,
+    gefiltert auf den eigenen Space) reduziert das auf eine plausible, kleine Zahl für einen
+    einzelnen Händler. Ohne diese Einschränkung ist jeder Zugriff auf
+    `currentaccountwithdrawal` **beides zugleich**: unbrauchbar langsam (der Range-Join im
+    `payoutref`-CTE paart jede Banktransaktion mit einem Teil der Gesamtmenge, das liess
+    frühere Diagnose-Queries selbst mit engem Zeitfenster ins Timeout laufen) und fachlich
+    falsch (`min_by`/`max_by`/jede andere Auswahl über `w.createdon` wählt dann quer über
+    alle Accounts, die zurückgegebene Referenz gehört mit hoher Wahrscheinlichkeit einem
+    fremden Händler). Genau das war der Fehler in der ursprünglichen Fassung des
+    `payoutref`-CTE: die Spalte `settlement_reference` war nie korrekt, fiel aber nicht auf,
+    weil sie standardmässig deaktiviert ist. Seit der Korrektur läuft die
+    Account-Einschränkung immer zwingend mit (`auszahlungen`-CTE, siehe oben) — bei jeder
+    künftigen Query gegen `currentaccountwithdrawal` (auch ausserhalb des Generators, z. B.
+    in Diagnose-Queries) gilt dasselbe.
+  - Das Zeitfenster im `payoutref`-CTE steht auf 10 statt vormals 30 Tagen. Eine Messung an
+    Produktivdaten (`sql/settlement_verifikation.sql`, Query 10, mit Account-Einschränkung)
+    zeigt: praktisch jede Banktransaktion hat bereits am Valutatag oder am Folgetag eine
+    Auszahlung des eigenen Accounts. Die Verteilung über weitere Tage ist flach und entsteht
+    nur dadurch, dass etwa täglich eine Auszahlung stattfindet — sie sagt nichts über die
+    fachlich richtige Zuordnung aus. 10 Tage sind bewusst ein Vielfaches der gemessenen 1–2
+    Tage, als Puffer für Feiertage und Wochenenden.
 - **Grenzen der Analytics** (nicht lösbar, dem Kunden so kommunizieren):
   - Keine IC++-Aufschlüsselung (DCC/Interchange/Scheme/Acquirer) — nur `totalappliedfees` gesamt.
   - Eine Query läuft in **einem** Account; Spaces fremder Accounts → Permission Error.
@@ -239,13 +262,14 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
 
 - Settlement-Referenz-Zuordnung über Withdrawals ist heuristisch (zeitbasiert) —
   beobachten, ob es einen direkten Verknüpfungspfad gibt.
-- Das 30-Tage-Fenster (maximale Auszahlungslatenz, siehe `payoutref`-CTE) ist weiterhin eine
-  Annahme — gegen echte Fälle validieren, inkl. mehrerer Settlements pro Transaktion bei
-  unterschiedlichen Brands, falls das doch vorkommt. `sql/settlement_verifikation.sql`
-  Query 3 misst die reale Verteilung und läuft dank des absoluten Zeitfensters auf
-  `w.createdon` jetzt durch, statt wie zuvor ins Timeout zu laufen.
-- `spacereference`-Join über `accountid` als Weg, alle Spaces eines Accounts automatisch
-  zu erfassen — für einen späteren Ausbau des Space-Selektors.
+- Das Zeitfenster im `payoutref`-CTE steht seit der Account-Einschränkung auf 10 Tagen
+  (vormals 30, gemessen mit `sql/settlement_verifikation.sql` Query 10) — weiter gegen
+  echte Fälle in anderen Spaces/Accounts validieren, inkl. mehrerer Settlements pro
+  Transaktion bei unterschiedlichen Brands, falls das doch vorkommt.
+- `spacereference`-Join über `accountid` wird bereits im `auszahlungen`-CTE genutzt, um
+  `currentaccountwithdrawal` auf den eigenen Account einzuschränken (siehe
+  „Wallee-Referenzwissen"). Offen bleibt ein späterer Ausbau des Space-Selektors, der alle
+  Spaces eines Accounts automatisch erfasst.
 - Refund-Berücksichtigung (`- SUM(t.refundedamount)`) als Option.
 - Country-Breakdown.
 - Status-Auswahl im Export (aktuell fix FULFILL/COMPLETED) z. B. für FAILED-Analysen.

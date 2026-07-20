@@ -833,7 +833,7 @@
     { key:'settlenet',   name:'Auszahlungsbetrag',       sql:'settle.settlement_net',                              alias:'settlement_net',        def:false, desc:'Tatsächlich ausbezahlter Betrag (banktransaction.valueamount).', needsSettle:true },
     { key:'settlefees',  name:'Settlement-Gebühren',     sql:'settle.settlement_fees',                             alias:'settlement_fees',       def:false, desc:'Auf Settlement-Ebene abgerechnete Gebühren (postingamount − valueamount). Für den Bankabgleich genauer als totalappliedfees.', needsSettle:true },
     { key:'settlecount', name:'Anzahl Settlement-Records',sql:'settle.settlement_records',                         alias:'settlement_records',    def:false, desc:'Anzahl Settlement-Records dieser Transaktion. Grösser als 1 bei Refunds oder Korrekturen.', needsSettle:true },
-    { key:'payoutref',   name:'Auszahlungsreferenz',     sql:'payoutref.settlement_reference',                     alias:'settlement_reference',  def:false, desc:'LANGSAM. Referenz der Bankauszahlung (currentaccountwithdrawal.internalreference), die mehrere Settlements bündelt. Nur anhaken, wenn für den Kontoauszug-Abgleich nötig – die Zuordnung ist zeitbasiert-heuristisch und zieht einen teuren Join nach.', needsPayoutRef:true },
+    { key:'payoutref',   name:'Auszahlungsreferenz',     sql:'payoutref.settlement_reference',                     alias:'settlement_reference',  def:false, desc:'Referenz der Bankauszahlung (currentaccountwithdrawal.internalreference), die mehrere Settlements bündelt – auf den eigenen Account eingeschränkt. Nur anhaken, wenn für den Kontoauszug-Abgleich nötig: die Zuordnung bleibt zeitbasiert-heuristisch und ist trotz der Einschränkung die teuerste Spalte im Export.', needsPayoutRef:true },
     { key:'maskedcard',  name:'Maskierte Kartennummer',  sql:'card.masked_card',                                   alias:'masked_card',           def:false, desc:'Sensibel. Maskierte Kartennummer (z. B. 424242******4242).', needsCard:true, sensitive:true },
     { key:'authcode',    name:'Autorisierungscode',      sql:'card.auth_code',                                     alias:'auth_code',             def:false, desc:'Sensibel. Auth-Code von Issuer/Acquirer (Descriptor 1579287795628).', needsCard:true, sensitive:true },
   ];
@@ -1523,37 +1523,54 @@ ORDER BY
 )`);
     }
     if (needPayoutRef) {
+      ctes.push(`auszahlungen AS (
+    -- Auszahlungen aus currentaccountwithdrawal, vorab auf den eigenen Account
+    -- und den Berichtszeitraum (plus Puffer) reduziert. Erst dieses kleine
+    -- Zwischenergebnis macht den Range-Join im payoutref-CTE unten
+    -- praktikabel - Begruendung dort.
+    SELECT w.internalreference, w.createdon
+    FROM currentaccountwithdrawal w
+    JOIN spacereference sr
+      ON sr.accountid = w.accountid
+    WHERE ${spaceInClause(spaceIds, 'sr.spaceid')}
+      AND w.createdon >= TIMESTAMP '${start}'
+      AND w.createdon <  TIMESTAMP '${end}' + INTERVAL '10' DAY
+)`);
       ctes.push(`payoutref AS (
     -- Auszahlungsreferenz = internalreference der Withdrawal, die die einzelnen
     -- Settlements zu einer Bankauszahlung buendelt.
     -- ACHTUNG: rein zeitliche, heuristische Zuordnung - es gibt keinen direkten
     -- Fremdschluessel von der Banktransaktion zur Withdrawal.
-    -- Zugeordnet wird die frueheste Withdrawal, die im Fenster
-    -- [valuedate, valuedate + 30 Tage) erstellt wurde.
-    -- Der Join auf w braucht zwei Bedingungen, keine ersetzt die andere:
-    --  - die korrelierte (w.createdon >= bt.valuedate ... + 30 Tage) sichert die
-    --    fachliche Zuordnung "fruehste Withdrawal nach dem Valutadatum";
-    --  - die absolute (w.createdon >= TIMESTAMP <start> ... < TIMESTAMP <ende>
-    --    + 30 Tage) ist fuer den Optimizer da: ohne ein konstantes Praedikat
-    --    auf w kann Presto currentaccountwithdrawal nicht per Partition
-    --    beschneiden und muss die ganze Tabelle scannen. Genau das liess eine
-    --    Diagnose-Query an dieser Stelle in ein Timeout laufen (siehe
-    --    sql/settlement_verifikation.sql, Query 3). Fachlich verliert das
-    --    nichts: w.createdon liegt durch die korrelierte Bedingung ohnehin
-    --    nicht vor bt.valuedate, und ein Valutadatum liegt nicht vor dem
-    --    Beginn des Berichtszeitraums.
+    --
+    -- currentaccountwithdrawal enthaelt OHNE Einschraenkung die Auszahlungen
+    -- der gesamten Plattform, nicht nur die des eigenen Haendlers - an
+    -- Produktivdaten nachgewiesen (sql/settlement_verifikation.sql, Query 7
+    -- und 9). Ohne die Einschraenkung waere die Zuordnung nicht nur unbrauchbar
+    -- langsam, sondern schlicht falsch: min_by waehlt dann die frueheste
+    -- Withdrawal irgendeines Haendlers auf der Plattform, nicht die des
+    -- eigenen Accounts - die zurueckgegebene Referenz gehoerte mit hoher
+    -- Wahrscheinlichkeit einem fremden Haendler. Die Einschraenkung laeuft
+    -- deshalb zwingend ueber spacereference.accountid (siehe auszahlungen-CTE
+    -- oben) und ist keine Performance-Optimierung, sondern Voraussetzung fuer
+    -- ein korrektes Ergebnis.
+    --
+    -- Zugeordnet wird die frueheste Withdrawal des eigenen Accounts, die im
+    -- Fenster [valuedate, valuedate + 10 Tage) erstellt wurde. Eine Messung an
+    -- Produktivdaten (sql/settlement_verifikation.sql, Query 10) zeigt:
+    -- praktisch jede Banktransaktion hat bereits am Valutatag oder am
+    -- Folgetag eine Auszahlung des eigenen Accounts. Die 10 Tage sind bewusst
+    -- ein Vielfaches davon - Puffer fuer Feiertage und Wochenenden, an denen
+    -- keine Auszahlung laeuft.
     SELECT
         psr.transaction_id,
-        min_by(w.internalreference, w.createdon) AS settlement_reference
+        min_by(a.internalreference, a.createdon) AS settlement_reference
     FROM payfacsettlementrecord psr
     JOIN banktransaction bt
       ON bt.id = psr.banktransaction_id
      AND bt.state = 'SETTLED'
-    JOIN currentaccountwithdrawal w
-      ON w.createdon >= bt.valuedate
-     AND w.createdon <  bt.valuedate + INTERVAL '30' DAY
-     AND w.createdon >= TIMESTAMP '${start}'
-     AND w.createdon <  TIMESTAMP '${end}' + INTERVAL '30' DAY
+    JOIN auszahlungen a
+      ON a.createdon >= bt.valuedate
+     AND a.createdon <  bt.valuedate + INTERVAL '10' DAY
     WHERE psr.transaction_id IN (SELECT id FROM tx)
     GROUP BY psr.transaction_id
 )`);

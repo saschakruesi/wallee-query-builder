@@ -76,15 +76,18 @@ Kartennummer noch Autorisierungscode.
 - Eine Query läuft in **einem** Account. Mehrere Spaces gehen nur innerhalb
   desselben Accounts; Spaces fremder Accounts erzeugen einen Permission Error.
 - Die Zuordnung der Auszahlungsreferenz ist zeitbasiert-heuristisch —
-  es gibt keinen direkten Fremdschlüssel von der Banktransaktion zur Auszahlung.
-  Die entsprechende Spalte ist deshalb standardmässig aus.
+  es gibt keinen direkten Fremdschlüssel von der Banktransaktion zur Auszahlung. Die
+  zugrunde liegende Tabelle (`currentaccountwithdrawal`) enthält ohne Einschränkung die
+  Auszahlungen der gesamten Plattform, nicht nur die des eigenen Accounts; der Generator
+  schränkt sie deshalb zwingend über `spacereference.accountid` ein. Die Spalte ist trotz
+  dieser Korrektur weiterhin die teuerste im Export und standardmässig aus.
 - Dass Trinkgeld bereits im Bruttobetrag enthalten ist (siehe Abschnitt „Trinkgeld"),
   ist an echten Daten geprüft und bestätigt — es darf trotzdem nicht zusätzlich zum
   Bruttobetrag addiert werden, sonst wird der Umsatz doppelt gezählt.
 
 ## Entwicklung
 
-Tests laufen ohne Browser und ohne Dependencies (62 Tests in
+Tests laufen ohne Browser und ohne Dependencies (66 Tests in
 `test/queries.test.js` und `test/tip_unsettled.test.js`):
 
 ```bash
