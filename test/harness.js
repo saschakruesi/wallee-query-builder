@@ -1,6 +1,13 @@
-// Extrahiert den <script>-Block aus der Single-File-App und laedt ihn in Node,
-// damit die SQL-Builder ohne Browser getestet werden koennen.
+// Extrahiert den App-Logik-Block aus der Single-File-App und laedt ihn in Node,
+// damit die SQL- und Report-Funktionen ohne Browser getestet werden koennen.
 // Einzige Stelle im Projekt, die DOM-Wissen enthaelt.
+//
+// Die HTML-Datei enthaelt seit v4 zwei <script>-Bloecke: den eingebetteten
+// SheetJS-Vendor-Block (id="vendor-xlsx", ~930 KB minified) und den App-Code
+// (id="app-logic"). Getestet wird ausschliesslich der App-Block - SheetJS wird
+// nur im DOM-/Event-Pfad benutzt (XLSX-Export) und ist fuer die reinen
+// Funktionen irrelevant. Deshalb wird hier gezielt ueber die id extrahiert,
+// statt "der einzige <script>-Block" anzunehmen.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -78,17 +85,34 @@ const EXPORTED = [
   'STORAGE_KEY_OLD',
 ];
 
+// Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
+// Bewusst per indexOf statt per Regex: der Vendor-Block ist ~930 KB gross, ein
+// greedy [\s\S]* daneben ist unnoetig teuer und bei mehreren Bloecken auch noch
+// mehrdeutig. Der Vendor-Block enthaelt selbst kein "</script" (beim Einbetten
+// geprueft), deshalb ist das erste "</script>" nach dem Opening-Tag das richtige.
+function extractScript(html, id) {
+  const openTag = `<script id="${id}">`;
+  const start = html.indexOf(openTag);
+  if (start === -1) {
+    throw new Error(`Kein <script id="${id}">-Block in ${APP} gefunden`);
+  }
+  if (html.indexOf(openTag, start + openTag.length) !== -1) {
+    throw new Error(`Mehr als ein <script id="${id}">-Block in ${APP}`);
+  }
+  const from = start + openTag.length;
+  const end = html.indexOf('</script>', from);
+  if (end === -1) {
+    throw new Error(`Kein schliessendes </script> fuer id="${id}" in ${APP}`);
+  }
+  return html.slice(from, end);
+}
+
 // options.seedLocalStorage: { [key]: string } - wird VOR dem Laden des Scripts in
 // localStorage geschrieben, damit loadState() (das beim Init des Scripts einmalig
 // laeuft) Migrationsszenarien sieht, statt immer von einem leeren Storage zu starten.
 function loadBuilders(options = {}) {
   const html = fs.readFileSync(APP, 'utf8');
-  const scriptCount = (html.match(/<script/g) || []).length;
-  if (scriptCount !== 1) {
-    throw new Error(`Erwartet genau 1 <script>-Tag in ${APP}, gefunden: ${scriptCount}`);
-  }
-  const match = html.match(/<script>([\s\S]*)<\/script>/);
-  if (!match) throw new Error('Kein <script>-Block in ' + APP + ' gefunden');
+  const appScript = extractScript(html, 'app-logic');
 
   // Der Script-Block deklariert alles mit const/function im Modul-Scope.
   // Wir haengen einen Export-Epilog an, der die Builder nach aussen reicht.
@@ -120,7 +144,7 @@ function loadBuilders(options = {}) {
   sandbox.globalThis = sandbox;
 
   vm.createContext(sandbox);
-  vm.runInContext(match[1] + epilog, sandbox, { filename: 'query-builder-script.js' });
+  vm.runInContext(appScript + epilog, sandbox, { filename: 'query-builder-script.js' });
 
   const missing = ['buildBrandQuery', 'buildTerminalQuery', 'buildExportQuery']
     .filter(n => typeof sandbox.__x[n] !== 'function');
