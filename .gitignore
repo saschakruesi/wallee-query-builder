@@ -1,0 +1,8 @@
+.DS_Store
+node_modules/
+*.log
+AGENTS.md
+.superpowers/
+docs/superpowers/
+TIP_FEATURE.md
+Terminal-Report-Tool/

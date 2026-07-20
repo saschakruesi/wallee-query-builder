@@ -1,0 +1,1992 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wallee Analytics – Query Builder v2</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #334155;
+    --border: #475569;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent-hover: #0ea5e9;
+    --success: #22c55e;
+    --danger: #ef4444;
+    --warn: #f59e0b;
+    --code-bg: #0b1220;
+    --code-text: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    padding: 24px;
+  }
+  .container { max-width: 980px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 24px; font-weight: 600; }
+  .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 14px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .panel h2 {
+    margin: 0 0 16px;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .mode-switcher {
+    display: flex;
+    gap: 8px;
+    background: var(--panel-2);
+    padding: 4px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .mode-btn {
+    flex: 1;
+    padding: 10px 16px;
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    color: #0b1220;
+    font-weight: 600;
+  }
+
+  .field { display: flex; flex-direction: column; }
+  .field label {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+  .field input[type="number"],
+  .field input[type="text"] {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .field input:focus { border-color: var(--accent); }
+
+  /* Datetime input */
+  .datetime-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .dt-input {
+    display: flex;
+    align-items: stretch;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+    height: 32px;
+  }
+  .dt-input:focus-within { border-color: var(--accent); }
+  .dt-date {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    padding: 4px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+    border-right: 1px solid var(--border);
+    min-width: 0;
+  }
+  .dt-date::-webkit-calendar-picker-indicator {
+    filter: invert(1); opacity: 0.6; cursor: pointer;
+    padding: 0; margin-left: 2px;
+  }
+  .time-group {
+    display: flex;
+    align-items: center;
+    padding: 0 4px;
+    gap: 1px;
+  }
+  .spinner { display: flex; flex-direction: column; align-items: center; }
+  .spin-value {
+    width: 26px;
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    text-align: center;
+    font-size: 12px;
+    font-family: "SF Mono", Monaco, monospace;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 0;
+    outline: none;
+    -moz-appearance: textfield;
+  }
+  .spin-value::-webkit-outer-spin-button,
+  .spin-value::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .spin-btn {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    width: 100%;
+    height: 11px;
+    font-size: 8px;
+    padding: 0;
+    line-height: 1;
+    transition: color 0.15s;
+    user-select: none;
+  }
+  .spin-btn:hover { color: var(--accent); }
+  .spin-btn:active { color: var(--accent-hover); }
+  .time-sep {
+    color: var(--muted);
+    font-family: "SF Mono", Monaco, monospace;
+    font-size: 12px;
+    user-select: none;
+    padding: 0 1px;
+  }
+
+  .presets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .preset-chip {
+    background: var(--panel-2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .preset-chip:hover { color: var(--text); border-color: var(--accent); }
+  .preset-chip.user-preset {
+    background: rgba(56, 189, 248, 0.12);
+    color: var(--accent);
+    border-color: rgba(56, 189, 248, 0.45);
+  }
+  .preset-chip.user-preset:hover {
+    background: rgba(56, 189, 248, 0.22);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .preset-chip .chip-del {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    opacity: 0.55;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+    line-height: 1;
+    font-family: inherit;
+  }
+  .preset-chip .chip-del:hover { opacity: 1; color: var(--danger); }
+  .label-help {
+    display: inline-block;
+    margin-left: 6px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 14px;
+    text-align: center;
+    cursor: help;
+    font-style: normal;
+    font-weight: 600;
+  }
+  .label-help:hover { color: var(--accent); }
+  .label-suffix {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .quick-times { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
+  .quick-time {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-size: 10px;
+    cursor: pointer;
+    font-family: "SF Mono", Monaco, monospace;
+    transition: all 0.15s;
+  }
+  .quick-time:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* Conditional sections */
+  .cond-section { display: none; }
+  .cond-section.active { display: block; }
+
+  .wallet-note {
+    margin-top: 18px;
+    padding: 14px 16px;
+    border-left: 3px solid #d98324;
+    background: rgba(217, 131, 36, 0.07);
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .wallet-note h3 { margin: 0 0 8px; font-size: 13px; }
+  .wallet-note p  { margin: 0 0 8px; }
+  .wallet-note ul { margin: 0 0 8px; padding-left: 18px; }
+  .wallet-note li { margin-bottom: 4px; }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  .import-box {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--code-bg);
+  }
+  .import-box:hover {
+    border-color: var(--accent);
+    background: rgba(56, 189, 248, 0.05);
+  }
+  .import-box.dragover {
+    border-color: var(--accent);
+    background: rgba(56, 189, 248, 0.12);
+  }
+  .import-icon { font-size: 32px; margin-bottom: 8px; }
+  .import-title { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 6px; }
+  .import-sub { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .import-sub code {
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+  .import-toast {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: var(--success);
+    font-size: 13px;
+    display: none;
+  }
+  .import-toast.error {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: var(--danger);
+  }
+  .import-toast.show { display: block; }
+  .add-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .add-row input {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+  }
+  .add-row input:focus { border-color: var(--accent); }
+  .item-list {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+    min-height: 60px;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    transition: background 0.15s;
+  }
+  .item-row:hover { background: var(--panel-2); }
+  .item-row input[type="checkbox"] {
+    width: 16px; height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .check-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+  .check-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  .item-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: pointer;
+  }
+  .item-id {
+    font-family: "SF Mono", Monaco, monospace;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .item-label { font-size: 12px; color: var(--muted); }
+  .row-actions { display: flex; gap: 6px; }
+  .btn-icon {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-icon:hover { color: var(--text); border-color: var(--text); }
+  .btn-icon.danger:hover { color: var(--danger); border-color: var(--danger); }
+  .empty {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    padding: 20px;
+    font-style: italic;
+  }
+  .list-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    justify-content: flex-end;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 8px;
+  }
+  .btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .btn:hover { background: var(--border); }
+  .btn-primary {
+    background: var(--accent);
+    color: #0b1220;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn-copy.copied { background: var(--success); color: #fff; border-color: var(--success); }
+  .output-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .output-title {
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--code-text);
+    font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .badge {
+    display: inline-block;
+    background: var(--panel-2);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 8px;
+  }
+  .count-pill {
+    display: inline-block;
+    background: var(--accent);
+    color: #0b1220;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 6px;
+  }
+  .section-divider {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
+  }
+
+  /* Column selection */
+  .col-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .col-item {
+    display: flex;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .col-item:hover { border-color: var(--accent); }
+  .col-item.checked { border-color: rgba(56,189,248,0.55); background: rgba(56,189,248,0.06); }
+  .col-item.sensitive { border-style: dashed; }
+  .col-item.sensitive.checked { border-color: rgba(245,158,11,0.7); background: rgba(245,158,11,0.08); }
+  .col-item input[type="checkbox"] {
+    width: 16px; height: 16px;
+    margin-top: 2px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .col-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .col-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .col-name .col-sql {
+    font-family: "SF Mono", Monaco, monospace;
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .col-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+  .col-item.sensitive .col-name { color: var(--warn); }
+  @media (max-width: 720px) {
+    .datetime-row { grid-template-columns: 1fr; }
+    .add-row { grid-template-columns: 1fr; }
+    .col-grid { grid-template-columns: 1fr; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Wallee Analytics – Query Builder <span class="badge">v3</span></h1>
+  <p class="subtitle">Brand-Auswertung · Brand + Terminal-Filter · Transaktions-Export · Kartensuche · Settlement / Auszahlung · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
+
+  <div class="panel">
+    <h2>Modus</h2>
+    <div class="mode-switcher" role="tablist">
+      <button class="mode-btn active" data-mode="brand">Brand-Auswertung</button>
+      <button class="mode-btn" data-mode="terminal">Brand + Terminal-Filter</button>
+      <button class="mode-btn" data-mode="export">Transaktions-Export</button>
+      <button class="mode-btn" data-mode="card">Kartensuche</button>
+      <button class="mode-btn" data-mode="settlement">Settlement / Auszahlung</button>
+    </div>
+
+    <h2 style="margin-top:4px;">Spaces <span class="count-pill" id="spaceCount">0</span></h2>
+    <div class="add-row">
+      <input id="newSpaceId" type="text" inputmode="numeric" placeholder="Space-ID"
+             title="Numerische Space-ID. Mehrere Spaces können hinzugefügt werden – nur angehakte fliessen in die Query (spaceid IN (...))." />
+      <input id="newSpaceLabel" type="text" placeholder="Label / Name (optional)"
+             title="Frei wählbarer Text, nur zur Übersicht (z.B. Filialname). Kommt nicht ins SQL." />
+      <button class="btn btn-primary" id="addSpaceBtn" title="Space zur Liste hinzufügen (Enter funktioniert auch)">+ Hinzufügen</button>
+    </div>
+    <div class="item-list" id="spaceList"></div>
+    <div class="list-actions">
+      <button class="btn" id="spaceSelectAll" title="Alle Spaces aktivieren">Alle auswählen</button>
+      <button class="btn" id="spaceDeselectAll" title="Auswahl aller Spaces zurücknehmen">Auswahl löschen</button>
+      <button class="btn" id="spaceClearAll" title="ACHTUNG: löscht alle gespeicherten Spaces">Liste leeren</button>
+    </div>
+    <p class="hint">Nur <strong>angehakte</strong> Spaces fliessen in die Query (<code>spaceid IN (...)</code>). Hinweis: eine Query läuft immer in <em>einem</em> Account – Spaces aus anderen Accounts gehen nicht in derselben Datei.</p>
+
+    <hr class="section-divider" />
+
+    <div class="field" style="margin-bottom: 12px;">
+      <label>Zeitraum</label>
+    </div>
+
+    <div class="presets" id="builtinPresets">
+      <button class="preset-chip" data-preset="today">Heute</button>
+      <button class="preset-chip" data-preset="yesterday">Gestern</button>
+      <button class="preset-chip" data-preset="last7">Letzte 7 Tage</button>
+      <button class="preset-chip" data-preset="last30">Letzte 30 Tage</button>
+      <button class="preset-chip" data-preset="thisMonth">Aktueller Monat</button>
+      <button class="preset-chip" data-preset="lastMonth">Letzter Monat</button>
+      <button class="preset-chip" data-preset="thisQuarter">Aktuelles Quartal</button>
+      <button class="preset-chip" data-preset="lastQuarter">Letztes Quartal</button>
+      <button class="preset-chip" data-preset="thisYear">Aktuelles Jahr</button>
+      <button class="preset-chip" data-preset="lastYear">Letztes Jahr</button>
+    </div>
+
+    <div class="presets" id="userPresets" style="margin-top: 6px;"></div>
+
+    <div class="datetime-row" style="margin-top: 16px;">
+      <div class="field">
+        <label>
+          Start <span class="label-suffix">(completedon)</span>
+          <span class="label-help" title="Der Zeitraum filtert auf das Feld t.completedon – also den Zeitpunkt des Tagesabschlusses bzw. wann die Transaktion final abgeschlossen wurde (nicht authorisiert / nicht erstellt).">?</span>
+        </label>
+        <div class="dt-input">
+          <input type="date" class="dt-date" id="startDateOnly" />
+          <div class="time-group">
+            <div class="spinner">
+              <button class="spin-btn" data-target="startHH" data-dir="up">▲</button>
+              <input class="spin-value" id="startHH" data-min="0" data-max="23" inputmode="numeric" />
+              <button class="spin-btn" data-target="startHH" data-dir="down">▼</button>
+            </div>
+            <span class="time-sep">:</span>
+            <div class="spinner">
+              <button class="spin-btn" data-target="startMM" data-dir="up">▲</button>
+              <input class="spin-value" id="startMM" data-min="0" data-max="59" inputmode="numeric" />
+              <button class="spin-btn" data-target="startMM" data-dir="down">▼</button>
+            </div>
+            <span class="time-sep">:</span>
+            <div class="spinner">
+              <button class="spin-btn" data-target="startSS" data-dir="up">▲</button>
+              <input class="spin-value" id="startSS" data-min="0" data-max="59" inputmode="numeric" />
+              <button class="spin-btn" data-target="startSS" data-dir="down">▼</button>
+            </div>
+          </div>
+        </div>
+        <div class="quick-times">
+          <button class="quick-time" data-target="start" data-time="00:00:00">00:00:00</button>
+          <button class="quick-time" data-target="start" data-time="06:00:00">06:00:00</button>
+          <button class="quick-time" data-target="start" data-time="08:00:00">08:00:00</button>
+          <button class="quick-time" data-target="start" data-time="09:00:00">09:00:00</button>
+          <button class="quick-time" data-target="start" data-time="12:00:00">12:00:00</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>
+          Ende <span class="label-suffix">(completedon)</span>
+          <span class="label-help" title="Der Zeitraum filtert auf das Feld t.completedon – also den Zeitpunkt des Tagesabschlusses bzw. wann die Transaktion final abgeschlossen wurde (nicht authorisiert / nicht erstellt).">?</span>
+        </label>
+        <div class="dt-input">
+          <input type="date" class="dt-date" id="endDateOnly" />
+          <div class="time-group">
+            <div class="spinner">
+              <button class="spin-btn" data-target="endHH" data-dir="up">▲</button>
+              <input class="spin-value" id="endHH" data-min="0" data-max="23" inputmode="numeric" />
+              <button class="spin-btn" data-target="endHH" data-dir="down">▼</button>
+            </div>
+            <span class="time-sep">:</span>
+            <div class="spinner">
+              <button class="spin-btn" data-target="endMM" data-dir="up">▲</button>
+              <input class="spin-value" id="endMM" data-min="0" data-max="59" inputmode="numeric" />
+              <button class="spin-btn" data-target="endMM" data-dir="down">▼</button>
+            </div>
+            <span class="time-sep">:</span>
+            <div class="spinner">
+              <button class="spin-btn" data-target="endSS" data-dir="up">▲</button>
+              <input class="spin-value" id="endSS" data-min="0" data-max="59" inputmode="numeric" />
+              <button class="spin-btn" data-target="endSS" data-dir="down">▼</button>
+            </div>
+          </div>
+        </div>
+        <div class="quick-times">
+          <button class="quick-time" data-target="end" data-time="17:00:00">17:00:00</button>
+          <button class="quick-time" data-target="end" data-time="18:00:00">18:00:00</button>
+          <button class="quick-time" data-target="end" data-time="20:00:00">20:00:00</button>
+          <button class="quick-time" data-target="end" data-time="23:59:00">23:59:00</button>
+          <button class="quick-time" data-target="end" data-time="23:59:59">23:59:59</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="hint">Filter auf <code>completedon</code> (Zeitpunkt des Tagesabschlusses / Transaktion abgeschlossen). Tipp: Mausrad oder Pfeiltasten in den Zeitfeldern. „Neu generieren" speichert den aktuellen Zeitraum als eigenes Preset (blau hervorgehoben).</p>
+  </div>
+
+  <!-- Terminal section: Modus 2 (Pflicht) + Modus 3 (optional) -->
+  <div class="panel cond-section" id="terminalSection">
+    <h2>Terminals <span class="count-pill" id="terminalCount">0</span></h2>
+    <p class="hint" id="terminalModeHint" style="margin-top:-8px;margin-bottom:14px;"></p>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="manual" title="Terminals einzeln per Identifier + Label hinzufügen">+ Manuell hinzufügen</button>
+      <button class="tab-btn" data-tab="import" title="Wallee Terminal-CSV-Export komplett einlesen">📁 CSV importieren</button>
+    </div>
+
+    <div class="tab-pane active" id="tab-manual">
+      <div class="add-row">
+        <input id="newTerminalId" type="text" placeholder="Terminal-Identifier (z.B. 33024744)"
+               title="Der Identifier ist die ID, die auf dem Gerät angezeigt wird, bzw. die Spalte 'Terminal ID' im Wallee-Export. Wird im SQL als pt.identifier gefiltert." />
+        <input id="newTerminalLabel" type="text" placeholder="Label / Beschreibung (optional)"
+               title="Frei wählbarer Text, nur für eure Übersicht (z.B. Filiale, Kassenname). Wird nicht in das SQL übernommen." />
+        <button class="btn btn-primary" id="addTerminalBtn" title="Terminal zur Liste hinzufügen (Enter im Identifier-Feld funktioniert auch)">+ Hinzufügen</button>
+      </div>
+      <p class="hint">Tipp: Den Identifier siehst du auf dem Terminal-Display selbst oder in der Wallee-UI unter <em>Terminals &gt; Übersicht</em>.</p>
+    </div>
+
+    <div class="tab-pane" id="tab-import">
+      <div class="import-box" id="importBox"
+           title="Datei hier ablegen oder anklicken, um den Wallee Terminal-CSV-Export hochzuladen.">
+        <input type="file" id="importInput" accept=".csv,.txt" style="display:none" />
+        <div class="import-icon">📂</div>
+        <div class="import-title">CSV-Datei wählen oder hierher ziehen</div>
+        <div class="import-sub">
+          Erwartetes Format: Wallee Terminal-Export mit Spalten<br />
+          <code>"ID","Terminal ID","Terminal Configuration Name","Terminal External ID","Location ID",…</code>
+        </div>
+      </div>
+      <p class="hint">Export aus Wallee: Im Account &gt; <em>Terminals</em> oben rechts „Export" anklicken (CSV). Identifier = Spalte „Terminal ID", Label wird automatisch aus „Terminal Configuration Name" + „Location ID" zusammengebaut. Duplikate werden übersprungen.</p>
+      <div class="import-toast" id="importToast"></div>
+    </div>
+
+    <hr class="section-divider" style="margin: 16px 0;" />
+
+    <div class="item-list" id="terminalList"></div>
+
+    <div class="list-actions">
+      <button class="btn" id="selectAllBtn" title="Alle Terminals in der Liste aktivieren">Alle auswählen</button>
+      <button class="btn" id="deselectAllBtn" title="Auswahl aller Terminals zurücknehmen (Liste bleibt erhalten)">Auswahl löschen</button>
+      <button class="btn" id="clearAllBtn" title="ACHTUNG: löscht alle gespeicherten Terminals komplett (Rückfrage erfolgt)">Liste leeren</button>
+    </div>
+
+    <p class="hint">Gespeicherte Terminals bleiben im Browser erhalten (<code>localStorage</code>). Nur <strong>ausgewählte</strong> Terminals (Checkbox aktiviert) fliessen in die Query ein.</p>
+  </div>
+
+  <!-- Column selection: Modus 3 -->
+  <div class="panel cond-section" id="exportSection">
+    <h2>Spalten <span class="count-pill" id="colCount">0</span></h2>
+    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Wähle, welche Spalten im CSV-Export erscheinen. Eine Zeile pro Transaktion. Sensible Kartendaten sind gestrichelt markiert und standardmässig aus.</p>
+    <div class="col-grid" id="colGrid"></div>
+    <div class="list-actions">
+      <button class="btn" id="colSelectAll" title="Alle Spalten aktivieren">Alle</button>
+      <button class="btn" id="colDeselectAll" title="Alle abwählen">Keine</button>
+      <button class="btn" id="colReset" title="Auf Standard-Auswahl zurücksetzen">Standard</button>
+    </div>
+  </div>
+
+  <div class="panel cond-section" id="cardSection">
+    <h2>Kartensuche</h2>
+    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Für Streitfälle („Kunde hat angeblich doppelt bezahlt“). Sucht Transaktionen, deren maskierte Kartennummer auf diese vier Ziffern endet. Eine Zeile pro Transaktion.</p>
+
+    <div class="field" style="max-width:220px;">
+      <label>Letzte 4 Ziffern <span class="label-help" title="Pflichtfeld. Ohne Eingabe wird bewusst eine leere Query erzeugt statt eines Vollexports.">?</span></label>
+      <input id="cardLast4" type="text" inputmode="numeric" maxlength="4" placeholder="z.B. 7873" />
+    </div>
+
+    <div class="wallet-note">
+      <h3>Wichtig bei Apple Pay, Google Pay und tokenisierten Karten</h3>
+      <p>Die letzten vier Ziffern im Wallet sind <strong>nicht</strong> die der physischen Karte. Das Gerät nutzt eine eigene Gerätekontonummer (DAN); in Analytics erscheinen deren letzte vier Ziffern. Sucht der Kunde mit den Ziffern der Plastikkarte, findet er nichts.</p>
+      <p><strong>So findet der Karteninhaber die richtigen Ziffern:</strong></p>
+      <ul>
+        <li><strong>iPhone:</strong> Wallet → Karte antippen → «…» oben rechts → Karteninformationen → <em>Gerätekontonummer</em>, letzte 4 Ziffern.</li>
+        <li><strong>Apple Watch:</strong> Watch-App auf dem iPhone → Wallet &amp; Apple Pay → Karte → Gerätekontonummer. Achtung: Uhr und iPhone haben <strong>unterschiedliche</strong> Nummern.</li>
+        <li><strong>Google Wallet:</strong> Wallet → Karte → Details → <em>Virtuelle Kontonummer</em>.</li>
+      </ul>
+      <p>Pro Gerät existiert eine eigene Nummer — findet man nichts, kann es auch am falschen Gerät liegen. Bei TWINT gibt es weder Kartennummer noch Auth-Code.</p>
+      <p class="hint" style="margin-bottom:0;">Die Menüpfade können je nach iOS-/Android-Version leicht abweichen.</p>
+    </div>
+  </div>
+
+  <div class="panel cond-section" id="settlementSection">
+    <h2>Settlement / Auszahlung</h2>
+    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Zeigt pro Tag, ob die Transaktionen bereits ausbezahlt sind. <code>settlement_state</code>: <strong>SETTLED</strong> = ausbezahlt, <strong>UPCOMING</strong> = noch ausstehend, <strong>PARTIAL</strong> = teilweise ausbezahlt (typisch, wenn ein Refund erst in einem späteren Settlement-Lauf abgerechnet wird), <strong>NO_RECORD</strong> = für diese Transaktion existiert noch gar kein Settlement-Record. Die Gebühren stammen hier aus der Banktransaktion (<code>postingamount − valueamount</code>) und sind für den Kontoabgleich genauer als <code>totalappliedfees</code>.</p>
+
+    <label class="check-row">
+      <input type="checkbox" id="settlementByTerminal" />
+      <span>Zusätzlich nach Terminal aufschlüsseln</span>
+    </label>
+
+    <p class="hint" style="margin-top:14px;margin-bottom:0;">Stimmt <code>anzahl_settlement_records</code> nicht mit <code>anzahl_transaktionen</code> überein, gibt es Transaktionen mit mehreren Settlement-Records — typischerweise Refunds oder Korrekturen, die in einem späteren Lauf abgerechnet wurden.</p>
+  </div>
+
+  <div class="panel">
+    <div class="output-header">
+      <span class="output-title">Generiertes SQL <span class="badge" id="modeBadge">Brand</span></span>
+      <div class="actions">
+        <button class="btn btn-copy" id="copyBtn">Kopieren</button>
+        <button class="btn btn-primary" id="generateBtn">Neu generieren</button>
+      </div>
+    </div>
+    <pre id="sqlOutput"></pre>
+    <p class="hint">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> (SETTLED = ausbezahlt, UPCOMING = ausstehend, PARTIAL = teilweise ausbezahlt) im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export. <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
+  </div>
+</div>
+
+<script>
+  const STORAGE_KEY = 'wallee_query_builder_v5';
+  // Vorheriger Schluessel (v4): wird bei Fehlen von v5 einmalig fuer die Migration
+  // gelesen, aber NIE geloescht - falls jemand nochmal die alte HTML-Datei oeffnet,
+  // soll die dort weiter funktionieren.
+  const STORAGE_KEY_OLD = 'wallee_query_builder_v4';
+
+  // Label-Descriptors (Credit Card Information)
+  const DESC_MASKED_CARD = '1456765125779';
+  const DESC_AUTH_CODE   = '1579287795628';
+
+  // Spaltenkatalog für den Transaktions-Export.
+  // flags: needsConn (pcc/pc-Join), needsTerm (pt-Join), needsCard (charge/chargeattempt-CTE), needsSettle (Settlement-CTE), needsPayoutRef (Withdrawal-CTE)
+  const EXPORT_COLUMNS = [
+    { key:'spaceid',     name:'Space-ID',                sql:'t.spaceid',                                          alias:'space_id',              def:true,  desc:'Space-ID der Transaktion.' },
+    { key:'createdon',   name:'Erstellt',                sql:'t.createdon',                                        alias:'createdon',             def:true,  desc:'Zeitpunkt Erstellung / Autorisierung der Transaktion.' },
+    { key:'completedon', name:'Abgeschlossen',           sql:'t.completedon',                                      alias:'completedon',           def:true,  desc:'Zeitpunkt Tagesabschluss / final abgeschlossen.' },
+    { key:'state',       name:'Status',                  sql:'t.state',                                            alias:'state',                 def:true,  desc:'Status der Transaktion (FULFILL/COMPLETED ...).' },
+    { key:'currency',    name:'Währung',                 sql:'t.currency',                                         alias:'currency',              def:true,  desc:'ISO-Währungscode (CHF, EUR ...).' },
+    { key:'gross',       name:'Bruttobetrag',            sql:'t.completedamount',                                  alias:'gross_amount',          def:true,  desc:'Abgeschlossener Bruttobetrag (completedamount).' },
+    { key:'fees',        name:'Gebühren',                sql:'COALESCE(t.totalappliedfees, 0)',                    alias:'processing_fees',       def:true,  desc:'Total der angewandten Gebühren (totalappliedfees).' },
+    { key:'net',         name:'Nettobetrag',             sql:'t.completedamount - COALESCE(t.totalappliedfees, 0)', alias:'net_amount',           def:true,  desc:'Brutto − Gebühren (berechnet).' },
+    { key:'connername',  name:'Connector/Brand-Name',    sql:"COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')",    alias:'payment_connector_name',def:true,  desc:'Name des Connectors / Brand.', needsConn:true },
+    { key:'connector',   name:'Connector-ID',            sql:'pcc.connector',                                      alias:'connector',             def:false, desc:'Interne Connector-ID.', needsConn:true },
+    { key:'terminalident',name:'Terminal-Identifier',    sql:'pt.identifier',                                      alias:'terminal_identifier',   def:true,  desc:'Auf dem Gerät angezeigter Identifier.', needsTerm:true },
+    { key:'terminalname',name:'Terminal-Name',           sql:'pt.name',                                            alias:'terminal_name',         def:true,  desc:'Name/Bezeichnung des Terminals (paymentterminal.name).', needsTerm:true },
+    { key:'terminalid',  name:'Terminal-ID (intern)',    sql:'t.terminal_id',                                      alias:'terminal_id',           def:false, desc:'Interne Terminal-ID der Transaktion.' },
+    { key:'merchantref', name:'Händlerreferenz',         sql:'t.merchantreference',                                alias:'merchant_reference',    def:false, desc:'merchantreference der Transaktion.' },
+    { key:'payout',      name:'Echtes Auszahlungsdatum', sql:'settle.auszahlungsdatum',                            alias:'auszahlungsdatum',      def:true,  desc:'Valutadatum der Auszahlung aus dem Settlement (kann später als der Abschluss sein).', needsSettle:true },
+    { key:'settlestate', name:'Settlement-Status',       sql:'settle.settlement_state',                            alias:'settlement_state',      def:true,  desc:'Status der Banktransaktion: SETTLED = ausbezahlt, UPCOMING = noch ausstehend, PARTIAL = teilweise ausbezahlt (z. B. Refund in einem späteren Settlement-Lauf). Leer = noch kein Settlement-Record vorhanden. Ersetzt die frühere unmatched-Schätzung.', needsSettle:true },
+    { key:'settlenet',   name:'Auszahlungsbetrag',       sql:'settle.settlement_net',                              alias:'settlement_net',        def:false, desc:'Tatsächlich ausbezahlter Betrag (banktransaction.valueamount).', needsSettle:true },
+    { key:'settlefees',  name:'Settlement-Gebühren',     sql:'settle.settlement_fees',                             alias:'settlement_fees',       def:false, desc:'Auf Settlement-Ebene abgerechnete Gebühren (postingamount − valueamount). Für den Bankabgleich genauer als totalappliedfees.', needsSettle:true },
+    { key:'settlecount', name:'Anzahl Settlement-Records',sql:'settle.settlement_records',                         alias:'settlement_records',    def:false, desc:'Anzahl Settlement-Records dieser Transaktion. Grösser als 1 bei Refunds oder Korrekturen.', needsSettle:true },
+    { key:'payoutref',   name:'Auszahlungsreferenz',     sql:'payoutref.settlement_reference',                     alias:'settlement_reference',  def:false, desc:'LANGSAM. Referenz der Bankauszahlung (currentaccountwithdrawal.internalreference), die mehrere Settlements bündelt. Nur anhaken, wenn für den Kontoauszug-Abgleich nötig – die Zuordnung ist zeitbasiert-heuristisch und zieht einen teuren Join nach.', needsPayoutRef:true },
+    { key:'maskedcard',  name:'Maskierte Kartennummer',  sql:'card.masked_card',                                   alias:'masked_card',           def:false, desc:'Sensibel. Maskierte Kartennummer (z. B. 424242******4242).', needsCard:true, sensitive:true },
+    { key:'authcode',    name:'Autorisierungscode',      sql:'card.auth_code',                                     alias:'auth_code',             def:false, desc:'Sensibel. Auth-Code von Issuer/Acquirer (Descriptor 1579287795628).', needsCard:true, sensitive:true },
+  ];
+
+  const modeButtons     = document.querySelectorAll('.mode-btn');
+  const terminalSection = document.getElementById('terminalSection');
+  const exportSection   = document.getElementById('exportSection');
+  const cardSection     = document.getElementById('cardSection');
+  const cardLast4El     = document.getElementById('cardLast4');
+  const settlementSection = document.getElementById('settlementSection');
+  const settlementByTermEl = document.getElementById('settlementByTerminal');
+  const terminalModeHint= document.getElementById('terminalModeHint');
+  const modeBadge       = document.getElementById('modeBadge');
+  const sqlOutput       = document.getElementById('sqlOutput');
+  const copyBtn         = document.getElementById('copyBtn');
+  const generateBtn     = document.getElementById('generateBtn');
+
+  // Spaces
+  const newSpaceId      = document.getElementById('newSpaceId');
+  const newSpaceLabel   = document.getElementById('newSpaceLabel');
+  const addSpaceBtn     = document.getElementById('addSpaceBtn');
+  const spaceListEl     = document.getElementById('spaceList');
+  const spaceCount      = document.getElementById('spaceCount');
+  const spaceSelectAll  = document.getElementById('spaceSelectAll');
+  const spaceDeselectAll= document.getElementById('spaceDeselectAll');
+  const spaceClearAll   = document.getElementById('spaceClearAll');
+
+  const startDateOnly = document.getElementById('startDateOnly');
+  const startHH = document.getElementById('startHH');
+  const startMM = document.getElementById('startMM');
+  const startSS = document.getElementById('startSS');
+
+  const endDateOnly = document.getElementById('endDateOnly');
+  const endHH = document.getElementById('endHH');
+  const endMM = document.getElementById('endMM');
+  const endSS = document.getElementById('endSS');
+
+  const newTerminalId    = document.getElementById('newTerminalId');
+  const newTerminalLabel = document.getElementById('newTerminalLabel');
+  const addTerminalBtn   = document.getElementById('addTerminalBtn');
+  const terminalListEl   = document.getElementById('terminalList');
+  const terminalCount    = document.getElementById('terminalCount');
+  const selectAllBtn     = document.getElementById('selectAllBtn');
+  const deselectAllBtn   = document.getElementById('deselectAllBtn');
+  const clearAllBtn      = document.getElementById('clearAllBtn');
+
+  const colGrid          = document.getElementById('colGrid');
+  const colCount         = document.getElementById('colCount');
+  const colSelectAll     = document.getElementById('colSelectAll');
+  const colDeselectAll   = document.getElementById('colDeselectAll');
+  const colReset         = document.getElementById('colReset');
+
+  const userPresetsEl    = document.getElementById('userPresets');
+
+  function defaultColumns() {
+    const o = {};
+    EXPORT_COLUMNS.forEach(c => { o[c.key] = !!c.def; });
+    return o;
+  }
+
+  let state = {
+    mode: 'brand',
+    spaces: [{ id: '', label: '', selected: true }],
+    startDate: '2026-05-01',
+    startTime: '00:00:00',
+    endDate:   '2026-05-31',
+    endTime:   '23:59:59',
+    terminals: [],
+    exportColumns: defaultColumns(),
+    cardLast4: '',
+    settlementByTerminal: false,
+    userPresets: []
+  };
+
+  // --- Persistence ---------------------------------------------------------
+  function loadState() {
+    try {
+      // Erst den aktuellen Schluessel versuchen. Nur wenn der leer ist, auf den
+      // alten (v4) zurueckfallen und von dort migrieren - sonst wuerde jeder
+      // Start eines frischen v5-States faelschlich nochmal "migrieren".
+      let raw = localStorage.getItem(STORAGE_KEY);
+      let migrating = false;
+      if (!raw) {
+        raw = localStorage.getItem(STORAGE_KEY_OLD);
+        migrating = !!raw;
+      }
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        state = { ...state, ...parsed };
+        // Migration: altes Einzelfeld spaceId -> spaces[]
+        if ((!state.spaces || !state.spaces.length) && parsed.spaceId) {
+          state.spaces = [{ id: String(parsed.spaceId), label: '', selected: true }];
+        }
+        // exportColumns mit Katalog abgleichen (neue Keys ergänzen)
+        const merged = defaultColumns();
+        if (parsed.exportColumns) {
+          Object.keys(merged).forEach(k => {
+            if (k in parsed.exportColumns) merged[k] = !!parsed.exportColumns[k];
+          });
+        }
+        state.exportColumns = merged;
+        if (migrating) {
+          // Migration aus dem alten Schluessel (_v4 -> _v5):
+          // Kartensuche ist vom Export in einen eigenen Tab (cardLast4) gewandert.
+          if (!state.cardLast4 && parsed.cardSearch) {
+            state.cardLast4 = String(parsed.cardSearch).replace(/\D/g, '').slice(0, 4);
+          }
+          delete state.cardSearch;
+          // payoutref zieht einen teuren Join auf currentaccountwithdrawal nach sich
+          // und war die Ursache des vom Kunden gemeldeten Timeouts. Beim Umzug auf
+          // den neuen Schluessel deshalb zwingend deaktivieren, unabhaengig davon,
+          // ob die Spalte im alten State an war - wer sie braucht, schaltet sie
+          // bewusst wieder ein.
+          state.exportColumns.payoutref = false;
+          // Migriertes Ergebnis sofort unter dem neuen Schluessel sichern, damit
+          // der naechste Start direkt von v5 liest (der alte Schluessel bleibt
+          // trotzdem unangetastet stehen).
+          saveState();
+        }
+        // Unbekannter Modus (z. B. aus einer aelteren Version) faellt auf brand zurueck.
+        if (!['brand','terminal','export','card','settlement'].includes(state.mode)) {
+          state.mode = 'brand';
+        }
+      }
+    } catch (e) {}
+    if (!state.spaces || !state.spaces.length) {
+      state.spaces = [{ id: '', label: '', selected: true }];
+    }
+  }
+  function saveState() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  // --- Helpers -------------------------------------------------------------
+  const pad = n => String(n).padStart(2, '0');
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+  function escapeSql(s) { return String(s).replace(/'/g, "''"); }
+
+  function clamp(n, min, max) {
+    n = Number.isFinite(n) ? n : 0;
+    if (n < min) return max;
+    if (n > max) return min;
+    return n;
+  }
+  function readSpin(el) {
+    const v = parseInt(el.value, 10);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function writeSpin(el, val) {
+    const min = +el.dataset.min, max = +el.dataset.max;
+    el.value = pad(clamp(val, min, max));
+  }
+  function bumpSpin(el, dir) {
+    writeSpin(el, readSpin(el) + dir);
+    syncFromInputs();
+  }
+
+  // --- Date/time sync ------------------------------------------------------
+  function applyStateToInputs() {
+    startDateOnly.value = state.startDate;
+    endDateOnly.value   = state.endDate;
+    const [sh, sm, ss] = state.startTime.split(':').map(x => parseInt(x, 10) || 0);
+    const [eh, em, es] = state.endTime.split(':').map(x => parseInt(x, 10) || 0);
+    startHH.value = pad(sh); startMM.value = pad(sm); startSS.value = pad(ss);
+    endHH.value   = pad(eh); endMM.value   = pad(em); endSS.value   = pad(es);
+    cardLast4El.value = state.cardLast4 || '';
+    settlementByTermEl.checked = !!state.settlementByTerminal;
+  }
+  function syncFromInputs() {
+    state.startDate = startDateOnly.value || state.startDate;
+    state.endDate   = endDateOnly.value   || state.endDate;
+    state.startTime = `${pad(readSpin(startHH))}:${pad(readSpin(startMM))}:${pad(readSpin(startSS))}`;
+    state.endTime   = `${pad(readSpin(endHH))}:${pad(readSpin(endMM))}:${pad(readSpin(endSS))}`;
+    saveState();
+    generate();
+  }
+
+  // --- Presets -------------------------------------------------------------
+  function fmt(d) {
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+  function applyPreset(name) {
+    const now = new Date();
+    let s, e;
+    switch (name) {
+      case 'today':        s = new Date(now); e = new Date(now); break;
+      case 'yesterday':    s = new Date(now); s.setDate(s.getDate()-1); e = new Date(s); break;
+      case 'last7':        s = new Date(now); s.setDate(s.getDate()-6); e = new Date(now); break;
+      case 'last30':       s = new Date(now); s.setDate(s.getDate()-29); e = new Date(now); break;
+      case 'thisMonth':    s = new Date(now.getFullYear(), now.getMonth(), 1);
+                           e = new Date(now.getFullYear(), now.getMonth()+1, 0); break;
+      case 'lastMonth':    s = new Date(now.getFullYear(), now.getMonth()-1, 1);
+                           e = new Date(now.getFullYear(), now.getMonth(), 0); break;
+      case 'thisQuarter': {
+        const q = Math.floor(now.getMonth()/3);
+        s = new Date(now.getFullYear(), q*3, 1);
+        e = new Date(now.getFullYear(), q*3+3, 0); break;
+      }
+      case 'lastQuarter': {
+        const q = Math.floor(now.getMonth()/3) - 1;
+        const y = q < 0 ? now.getFullYear()-1 : now.getFullYear();
+        const qq = (q + 4) % 4;
+        s = new Date(y, qq*3, 1);
+        e = new Date(y, qq*3+3, 0); break;
+      }
+      case 'thisYear':     s = new Date(now.getFullYear(), 0, 1);
+                           e = new Date(now.getFullYear(), 11, 31); break;
+      case 'lastYear':     s = new Date(now.getFullYear()-1, 0, 1);
+                           e = new Date(now.getFullYear()-1, 11, 31); break;
+      default: return;
+    }
+    state.startDate = fmt(s);
+    state.endDate   = fmt(e);
+    state.startTime = '00:00:00';
+    state.endTime   = '23:59:59';
+    applyStateToInputs();
+    syncFromInputs();
+  }
+
+  // --- User Presets --------------------------------------------------------
+  function formatRangeLabel(sd, st, ed, et) {
+    const [sy, sm, sday] = sd.split('-');
+    const [ey, em, eday] = ed.split('-');
+    const shortDateS = `${sday}.${sm}.${sy.slice(2)}`;
+    const shortDateE = `${eday}.${em}.${ey.slice(2)}`;
+    const isFullDay = (st === '00:00:00' && et === '23:59:59');
+    if (isFullDay && sd === ed) return shortDateS;
+    if (isFullDay) return `${shortDateS} → ${shortDateE}`;
+    const stShort = st.slice(0, 5);
+    const etShort = et.slice(0, 5);
+    if (sd === ed) return `${shortDateS} ${stShort}–${etShort}`;
+    return `${shortDateS} ${stShort} → ${shortDateE} ${etShort}`;
+  }
+  function presetSignature(p) {
+    return `${p.startDate}|${p.startTime}|${p.endDate}|${p.endTime}`;
+  }
+  function saveCurrentAsPreset() {
+    const preset = {
+      startDate: state.startDate,
+      startTime: state.startTime,
+      endDate:   state.endDate,
+      endTime:   state.endTime,
+      label: formatRangeLabel(state.startDate, state.startTime, state.endDate, state.endTime)
+    };
+    const sig = presetSignature(preset);
+    if (state.userPresets.some(p => presetSignature(p) === sig)) return;
+    state.userPresets.unshift(preset);
+    if (state.userPresets.length > 12) state.userPresets = state.userPresets.slice(0, 12);
+    saveState();
+    renderUserPresets();
+  }
+  function applyUserPreset(idx) {
+    const p = state.userPresets[idx];
+    if (!p) return;
+    state.startDate = p.startDate;
+    state.startTime = p.startTime;
+    state.endDate   = p.endDate;
+    state.endTime   = p.endTime;
+    applyStateToInputs();
+    syncFromInputs();
+  }
+  function deleteUserPreset(idx, ev) {
+    ev.stopPropagation();
+    state.userPresets.splice(idx, 1);
+    saveState();
+    renderUserPresets();
+  }
+  function renderUserPresets() {
+    if (!state.userPresets || state.userPresets.length === 0) {
+      userPresetsEl.innerHTML = '';
+      return;
+    }
+    userPresetsEl.innerHTML = state.userPresets.map((p, idx) => `
+      <button class="preset-chip user-preset" data-user-idx="${idx}" title="Gespeicherter Zeitraum">
+        <span>${escapeHtml(p.label)}</span>
+        <span class="chip-del" data-del-idx="${idx}" title="Preset löschen">×</span>
+      </button>
+    `).join('');
+    userPresetsEl.querySelectorAll('button.preset-chip').forEach(b => {
+      b.addEventListener('click', e => {
+        if (e.target.classList.contains('chip-del')) {
+          deleteUserPreset(+e.target.dataset.delIdx, e);
+        } else {
+          applyUserPreset(+b.dataset.userIdx);
+        }
+      });
+    });
+  }
+
+  // --- Spaces UI -----------------------------------------------------------
+  function renderSpaces() {
+    spaceCount.textContent = state.spaces.filter(s => s.selected).length;
+    if (state.spaces.length === 0) {
+      spaceListEl.innerHTML = '<div class="empty">Noch keine Spaces. Space-ID oben hinzufügen.</div>';
+      return;
+    }
+    spaceListEl.innerHTML = state.spaces.map((s, idx) => `
+      <div class="item-row">
+        <input type="checkbox" data-idx="${idx}" ${s.selected ? 'checked' : ''} />
+        <div class="item-info" data-idx="${idx}">
+          <span class="item-id">${escapeHtml(s.id)}</span>
+          ${s.label ? `<span class="item-label">${escapeHtml(s.label)}</span>` : ''}
+        </div>
+        <div class="row-actions">
+          <button class="btn-icon" data-action="edit" data-idx="${idx}" title="Bearbeiten">✎</button>
+          <button class="btn-icon danger" data-action="delete" data-idx="${idx}" title="Löschen">✕</button>
+        </div>
+      </div>
+    `).join('');
+
+    spaceListEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        state.spaces[+e.target.dataset.idx].selected = e.target.checked;
+        saveState(); renderSpaces(); generate();
+      });
+    });
+    spaceListEl.querySelectorAll('.item-info').forEach(el => {
+      el.addEventListener('click', () => {
+        const i = +el.dataset.idx;
+        state.spaces[i].selected = !state.spaces[i].selected;
+        saveState(); renderSpaces(); generate();
+      });
+    });
+    spaceListEl.querySelectorAll('button[data-action="delete"]').forEach(b => {
+      b.addEventListener('click', () => {
+        state.spaces.splice(+b.dataset.idx, 1);
+        saveState(); renderSpaces(); generate();
+      });
+    });
+    spaceListEl.querySelectorAll('button[data-action="edit"]').forEach(b => {
+      b.addEventListener('click', () => {
+        const i = +b.dataset.idx;
+        const s = state.spaces[i];
+        const newId = prompt('Space-ID:', s.id);
+        if (newId === null) return;
+        const newLabel = prompt('Label (optional):', s.label || '');
+        if (newLabel === null) return;
+        state.spaces[i] = { ...s, id: newId.trim(), label: newLabel.trim() };
+        saveState(); renderSpaces(); generate();
+      });
+    });
+  }
+  function addSpace() {
+    const id = newSpaceId.value.trim();
+    if (!id) { newSpaceId.focus(); return; }
+    if (!/^\d+$/.test(id)) { alert('Space-ID muss numerisch sein.'); return; }
+    if (state.spaces.some(s => s.id === id)) {
+      alert(`Space "${id}" existiert bereits.`); return;
+    }
+    state.spaces.push({ id, label: newSpaceLabel.value.trim(), selected: true });
+    newSpaceId.value = '';
+    newSpaceLabel.value = '';
+    saveState(); renderSpaces(); generate();
+    newSpaceId.focus();
+  }
+
+  // --- Terminals UI --------------------------------------------------------
+  function renderTerminals() {
+    terminalCount.textContent = state.terminals.length;
+    if (state.terminals.length === 0) {
+      terminalListEl.innerHTML = '<div class="empty">Noch keine Terminals gespeichert. Identifier oben hinzufügen.</div>';
+      return;
+    }
+    terminalListEl.innerHTML = state.terminals.map((t, idx) => `
+      <div class="item-row">
+        <input type="checkbox" data-idx="${idx}" ${t.selected ? 'checked' : ''} />
+        <div class="item-info" data-idx="${idx}">
+          <span class="item-id">${escapeHtml(t.id)}</span>
+          ${t.label ? `<span class="item-label">${escapeHtml(t.label)}</span>` : ''}
+        </div>
+        <div class="row-actions">
+          <button class="btn-icon" data-action="edit" data-idx="${idx}" title="Bearbeiten">✎</button>
+          <button class="btn-icon danger" data-action="delete" data-idx="${idx}" title="Löschen">✕</button>
+        </div>
+      </div>
+    `).join('');
+
+    terminalListEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        state.terminals[+e.target.dataset.idx].selected = e.target.checked;
+        saveState(); generate();
+      });
+    });
+    terminalListEl.querySelectorAll('.item-info').forEach(el => {
+      el.addEventListener('click', () => {
+        const i = +el.dataset.idx;
+        state.terminals[i].selected = !state.terminals[i].selected;
+        saveState(); renderTerminals(); generate();
+      });
+    });
+    terminalListEl.querySelectorAll('button[data-action="delete"]').forEach(b => {
+      b.addEventListener('click', () => {
+        state.terminals.splice(+b.dataset.idx, 1);
+        saveState(); renderTerminals(); generate();
+      });
+    });
+    terminalListEl.querySelectorAll('button[data-action="edit"]').forEach(b => {
+      b.addEventListener('click', () => {
+        const i = +b.dataset.idx;
+        const t = state.terminals[i];
+        const newId = prompt('Terminal-Identifier:', t.id);
+        if (newId === null) return;
+        const newLabel = prompt('Label (optional):', t.label || '');
+        if (newLabel === null) return;
+        state.terminals[i] = { ...t, id: newId.trim(), label: newLabel.trim() };
+        saveState(); renderTerminals(); generate();
+      });
+    });
+  }
+  function addTerminal() {
+    const id = newTerminalId.value.trim();
+    if (!id) { newTerminalId.focus(); return; }
+    if (state.terminals.some(t => t.id === id)) {
+      alert(`Terminal "${id}" existiert bereits.`); return;
+    }
+    state.terminals.push({ id, label: newTerminalLabel.value.trim(), selected: true });
+    newTerminalId.value = '';
+    newTerminalLabel.value = '';
+    saveState(); renderTerminals(); generate();
+    newTerminalId.focus();
+  }
+
+  // --- Columns UI ----------------------------------------------------------
+  function renderColumns() {
+    const sel = EXPORT_COLUMNS.filter(c => state.exportColumns[c.key]).length;
+    colCount.textContent = sel;
+    colGrid.innerHTML = EXPORT_COLUMNS.map(c => {
+      const checked = !!state.exportColumns[c.key];
+      return `
+        <label class="col-item ${checked ? 'checked' : ''} ${c.sensitive ? 'sensitive' : ''}" data-key="${c.key}">
+          <input type="checkbox" data-key="${c.key}" ${checked ? 'checked' : ''} />
+          <span class="col-text">
+            <span class="col-name">${c.sensitive ? '⚠ ' : ''}${escapeHtml(c.name)}<span class="col-sql">${escapeHtml(c.alias)}</span></span>
+            <span class="col-desc">${escapeHtml(c.desc)}</span>
+          </span>
+        </label>`;
+    }).join('');
+    colGrid.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        state.exportColumns[e.target.dataset.key] = e.target.checked;
+        saveState(); renderColumns(); generate();
+      });
+    });
+  }
+
+  // --- SQL Generation: shared helpers -------------------------------------
+  function selectedSpaceIds() {
+    return state.spaces.filter(s => s.selected && /^\d+$/.test(s.id)).map(s => s.id);
+  }
+  function spaceInClause(ids, col) {
+    if (ids.length === 0) return `${col} = -1  -- BITTE MINDESTENS EINEN SPACE AUSWÄHLEN`;
+    if (ids.length === 1) return `${col} = ${ids[0]}`;
+    return `${col} IN (${ids.join(', ')})`;
+  }
+
+  // --- SQL Generation: Brand ----------------------------------------------
+  function buildBrandQuery({ spaceIds, start, end }) {
+    return `SELECT
+    t.spaceid                                                    AS space_id,
+    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')              AS brand,
+    t.currency                                                   AS waehrung,
+    COUNT(*)                                                     AS anzahl_transaktionen,
+    SUM(t.completedamount)                                       AS brutto_gross,
+    SUM(t.totalappliedfees)                                      AS transaction_fee_total,
+    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto
+FROM transaction t
+LEFT JOIN paymentconnectorconfiguration pcc
+       ON pcc.id      = t.paymentconnectorconfiguration_id
+      AND pcc.spaceid = t.spaceid
+LEFT JOIN paymentconnector pc
+       ON pc.id       = pcc.connector
+WHERE ${spaceInClause(spaceIds, 't.spaceid')}
+  AND t.completedon >= TIMESTAMP '${start}'
+  AND t.completedon <  TIMESTAMP '${end}'
+  AND t.state IN ('FULFILL', 'COMPLETED')
+GROUP BY
+    t.spaceid,
+    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN'),
+    t.currency
+ORDER BY
+    space_id,
+    brutto_gross DESC;`;
+  }
+
+  // --- SQL Generation: Brand + Terminal -----------------------------------
+  function buildTerminalQuery({ spaceIds, start, end, terminalIds }) {
+    const idList = terminalIds.length > 0
+      ? terminalIds.map(id => `'${escapeSql(id)}'`).join(', ')
+      : "'PLEASE_ADD_AT_LEAST_ONE_TERMINAL'";
+    const inClause = terminalIds.length === 1
+      ? `pt.identifier = ${idList}`
+      : `pt.identifier IN (${idList})`;
+    return `SELECT
+    t.spaceid                                                    AS space_id,
+    pt.identifier                                                AS terminal_identifier,
+    pt.name                                                      AS terminal_name,
+    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')              AS brand,
+    t.currency                                                   AS waehrung,
+    COUNT(*)                                                     AS anzahl_transaktionen,
+    SUM(t.completedamount)                                       AS brutto_gross,
+    SUM(t.totalappliedfees)                                      AS transaction_fee_total,
+    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto
+FROM transaction t
+LEFT JOIN paymentconnectorconfiguration pcc
+       ON pcc.id      = t.paymentconnectorconfiguration_id
+      AND pcc.spaceid = t.spaceid
+LEFT JOIN paymentconnector pc
+       ON pc.id       = pcc.connector
+LEFT JOIN paymentterminal pt
+       ON pt.id       = t.terminal_id
+      AND pt.spaceid  = t.spaceid
+WHERE ${spaceInClause(spaceIds, 't.spaceid')}
+  AND t.completedon >= TIMESTAMP '${start}'
+  AND t.completedon <  TIMESTAMP '${end}'
+  AND t.state IN ('FULFILL', 'COMPLETED')
+  AND ${inClause}
+GROUP BY
+    t.spaceid,
+    pt.identifier,
+    pt.name,
+    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN'),
+    t.currency
+ORDER BY
+    space_id,
+    terminal_identifier,
+    brutto_gross DESC;`;
+  }
+
+  // Gemeinsame Eingrenzung der Transaktionen (Space + Zeitraum + Status).
+  // Wird von card-, settle-, payoutref-CTE und vom Settlement-Modus genutzt,
+  // damit die teuren Joins nie ueber die gesamte Historie laufen.
+  function txCte({ spaceIds, start, end }) {
+    return `tx AS (
+    SELECT t.id
+    FROM transaction t
+    WHERE ${spaceInClause(spaceIds, 't.spaceid')}
+      AND t.completedon >= TIMESTAMP '${start}'
+      AND t.completedon <  TIMESTAMP '${end}'
+      AND t.state IN ('FULFILL', 'COMPLETED')
+)`;
+  }
+
+  // Label-Satz pro Transaktion: der letzte Charge-Attempt gewinnt (max_by ueber ca.id).
+  // Eingrenzung ueber tx, sonst wird die gesamte chargeattempt-Historie des Space gescannt.
+  // Wird vom Transaktions-Export und vom Kartensuche-Modus genutzt.
+  function cardCte({ spaceIds }) {
+    return `card AS (
+    SELECT
+        c.transaction_id,
+        max_by(element_at(filter(ca.labels, l -> l['descriptor'] = '${DESC_MASKED_CARD}'), 1)['shortTextContent'], ca.id) AS masked_card,
+        max_by(element_at(filter(ca.labels, l -> l['descriptor'] = '${DESC_AUTH_CODE}'),  1)['shortTextContent'], ca.id) AS auth_code
+    FROM charge c
+    JOIN chargeattempt ca ON ca.charge_id = c.id
+    WHERE ${spaceInClause(spaceIds, 'ca.spaceid')}
+      AND c.transaction_id IN (SELECT id FROM tx)
+    GROUP BY c.transaction_id
+)`;
+  }
+
+  // --- SQL Generation: Transaktions-Export --------------------------------
+  function buildExportQuery({ spaceIds, start, end, terminalIds, cols }) {
+    const chosen = EXPORT_COLUMNS.filter(c => cols[c.key]);
+    const needCard   = chosen.some(c => c.needsCard);
+    const needSettle = chosen.some(c => c.needsSettle);
+    const needPayoutRef = chosen.some(c => c.needsPayoutRef);
+    const needConn   = chosen.some(c => c.needsConn);
+    const needTerm   = chosen.some(c => c.needsTerm) || terminalIds.length > 0;
+    const spaceIn    = spaceInClause(spaceIds, 't.spaceid');
+
+    // SELECT-Liste
+    let selectList;
+    if (chosen.length === 0) {
+      selectList = '    t.id  AS transaction_id   -- BITTE MINDESTENS EINE SPALTE AUSWÄHLEN';
+    } else {
+      selectList = chosen.map(c => `    ${c.sql}`.padEnd(62) + ` AS ${c.alias}`).join(',\n');
+    }
+
+    // CTEs
+    const ctes = [];
+    if (needCard || needSettle || needPayoutRef) {
+      ctes.push(txCte({ spaceIds, start, end }));
+    }
+    if (needCard) {
+      ctes.push(cardCte({ spaceIds }));
+    }
+    if (needSettle) {
+      ctes.push(`settle AS (
+    -- Settlement-Informationen direkt aus banktransaction. Bewusst OHNE
+    -- currentaccountwithdrawal: der Range-Join dorthin ist teuer und wird nur
+    -- fuer die Auszahlungsreferenz gebraucht (siehe payoutref-CTE).
+    -- Kein Filter auf bt.state, damit UPCOMING (noch nicht ausbezahlt) sichtbar bleibt.
+    -- Pro Transaktion aggregiert: payfacsettlementrecord ist N:1 zur Transaktion
+    -- (z. B. Refund in einem spaeteren Settlement-Lauf), ohne GROUP BY wuerde
+    -- der Join Transaktionen vervielfachen.
+    -- settlement_state wird bewusst NICHT per max_by ueber bt.valuedate
+    -- bestimmt: valuedate ist bei noch nicht ausbezahlten Records leer, und
+    -- max_by ignoriert Zeilen mit NULL im Sortierfeld - dadurch wuerde immer
+    -- SETTLED gewinnen und eine offene Auszahlung (z. B. ein Refund aus einem
+    -- spaeteren Settlement-Lauf) unsichtbar bleiben. PARTIAL zeigt stattdessen
+    -- explizit, dass eine Transaktion teilweise ausbezahlt ist.
+    SELECT
+        psr.transaction_id,
+        count(*)                               AS settlement_records,
+        max(bt.valuedate)                      AS auszahlungsdatum,
+        CASE
+            WHEN count_if(bt.state = 'SETTLED') > 0
+             AND count_if(bt.state <> 'SETTLED') > 0 THEN 'PARTIAL'
+            ELSE max(bt.state)
+        END                                     AS settlement_state,
+        sum(bt.valueamount)                    AS settlement_net,
+        sum(bt.postingamount - bt.valueamount) AS settlement_fees
+    FROM payfacsettlementrecord psr
+    JOIN banktransaction bt
+      ON bt.id = psr.banktransaction_id
+    WHERE psr.transaction_id IN (SELECT id FROM tx)
+    GROUP BY psr.transaction_id
+)`);
+    }
+    if (needPayoutRef) {
+      ctes.push(`payoutref AS (
+    -- Auszahlungsreferenz = internalreference der Withdrawal, die die einzelnen
+    -- Settlements zu einer Bankauszahlung buendelt.
+    -- ACHTUNG: rein zeitliche, heuristische Zuordnung - es gibt keinen direkten
+    -- Fremdschluessel von der Banktransaktion zur Withdrawal.
+    -- Zugeordnet wird die frueheste Withdrawal, die im Fenster
+    -- [valuedate, valuedate + 30 Tage) erstellt wurde. Ohne diese Obergrenze
+    -- entsteht ein unbegrenzter Range-Join (Cartesian Product) und die Query
+    -- laeuft ins Timeout.
+    SELECT
+        psr.transaction_id,
+        min_by(w.internalreference, w.createdon) AS settlement_reference
+    FROM payfacsettlementrecord psr
+    JOIN banktransaction bt
+      ON bt.id = psr.banktransaction_id
+     AND bt.state = 'SETTLED'
+    JOIN currentaccountwithdrawal w
+      ON w.createdon >= bt.valuedate
+     AND w.createdon <  bt.valuedate + INTERVAL '30' DAY
+    WHERE psr.transaction_id IN (SELECT id FROM tx)
+    GROUP BY psr.transaction_id
+)`);
+    }
+    const withClause = ctes.length ? `WITH ${ctes.join(',\n')}\n` : '';
+
+    // JOINs
+    const joins = [];
+    if (needConn) {
+      joins.push(`LEFT JOIN paymentconnectorconfiguration pcc
+       ON pcc.id      = t.paymentconnectorconfiguration_id
+      AND pcc.spaceid = t.spaceid`);
+      joins.push(`LEFT JOIN paymentconnector pc
+       ON pc.id       = pcc.connector`);
+    }
+    if (needTerm) {
+      joins.push(`LEFT JOIN paymentterminal pt
+       ON pt.id       = t.terminal_id
+      AND pt.spaceid  = t.spaceid`);
+    }
+    if (needCard) {
+      joins.push(`LEFT JOIN card   ON card.transaction_id   = t.id`);
+    }
+    if (needSettle) {
+      joins.push(`LEFT JOIN settle    ON settle.transaction_id    = t.id`);
+    }
+    if (needPayoutRef) {
+      joins.push(`LEFT JOIN payoutref ON payoutref.transaction_id = t.id`);
+    }
+    const joinClause = joins.length ? '\n' + joins.join('\n') : '';
+
+    // WHERE
+    const where = [];
+    where.push(spaceIn);
+    where.push(`t.completedon >= TIMESTAMP '${start}'`);
+    where.push(`t.completedon <  TIMESTAMP '${end}'`);
+    where.push(`t.state IN ('FULFILL', 'COMPLETED')`);
+    if (terminalIds.length === 1) {
+      where.push(`pt.identifier = '${escapeSql(terminalIds[0])}'`);
+    } else if (terminalIds.length > 1) {
+      where.push(`pt.identifier IN (${terminalIds.map(id => `'${escapeSql(id)}'`).join(', ')})`);
+    }
+    const whereClause = where.map((w, i) => (i === 0 ? `WHERE ${w}` : `  AND ${w}`)).join('\n');
+
+    return `${withClause}SELECT
+${selectList}
+FROM transaction t${joinClause}
+${whereClause}
+ORDER BY t.spaceid, t.completedon;`;
+  }
+
+  // --- SQL Generation: Kartensuche ----------------------------------------
+  function buildCardQuery({ spaceIds, start, end, terminalIds, last4 }) {
+    const digits = String(last4 || '').replace(/\D/g, '').slice(-4);
+    const cardFilter = digits
+      ? `card.masked_card LIKE '%${digits}'`
+      : `1 = 0  -- BITTE DIE LETZTEN 4 ZIFFERN EINGEBEN`;
+
+    const where = [
+      spaceInClause(spaceIds, 't.spaceid'),
+      `t.completedon >= TIMESTAMP '${start}'`,
+      `t.completedon <  TIMESTAMP '${end}'`,
+      `t.state IN ('FULFILL', 'COMPLETED')`,
+    ];
+    if (terminalIds.length === 1) {
+      where.push(`pt.identifier = '${escapeSql(terminalIds[0])}'`);
+    } else if (terminalIds.length > 1) {
+      where.push(`pt.identifier IN (${terminalIds.map(id => `'${escapeSql(id)}'`).join(', ')})`);
+    }
+    where.push(cardFilter);
+    const whereClause = where.map((w, i) => (i === 0 ? `WHERE ${w}` : `  AND ${w}`)).join('\n');
+
+    return `WITH ${txCte({ spaceIds, start, end })},
+${cardCte({ spaceIds })}
+SELECT
+    t.spaceid                                       AS space_id,
+    t.completedon                                   AS completedon,
+    pt.identifier                                   AS terminal_identifier,
+    pt.name                                         AS terminal_name,
+    t.completedamount                               AS gross_amount,
+    t.currency                                      AS waehrung,
+    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN') AS brand,
+    card.masked_card                                AS masked_card,
+    card.auth_code                                  AS auth_code,
+    t.id                                            AS transaction_id,
+    t.state                                         AS state
+FROM transaction t
+LEFT JOIN paymentconnectorconfiguration pcc
+       ON pcc.id      = t.paymentconnectorconfiguration_id
+      AND pcc.spaceid = t.spaceid
+LEFT JOIN paymentconnector pc
+       ON pc.id       = pcc.connector
+LEFT JOIN paymentterminal pt
+       ON pt.id       = t.terminal_id
+      AND pt.spaceid  = t.spaceid
+LEFT JOIN card ON card.transaction_id = t.id
+${whereClause}
+ORDER BY t.completedon DESC;`;
+  }
+
+  // --- SQL Generation: Settlement / Auszahlung ----------------------------
+  function buildSettlementQuery({ spaceIds, start, end, terminalIds, byTerminal }) {
+    // Korrektur 3: Aufschluesselung nach Terminal (Spalte + GROUP BY) und der
+    // reine Terminal-FILTER sind zwei getrennte Belange. Ob pt.identifier in
+    // SELECT/GROUP BY erscheint, entscheidet ausschliesslich byTerminal. Der
+    // JOIN auf paymentterminal wird aber schon frueher gebraucht, sobald die
+    // WHERE-Klausel pt.identifier referenziert (also auch bei blossem Filter).
+    const needJoinTerm = byTerminal || terminalIds.length > 0;
+
+    const where = [
+      spaceInClause(spaceIds, 't.spaceid'),
+      `t.completedon >= TIMESTAMP '${start}'`,
+      `t.completedon <  TIMESTAMP '${end}'`,
+      `t.state IN ('FULFILL', 'COMPLETED')`,
+    ];
+    if (terminalIds.length === 1) {
+      where.push(`pt.identifier = '${escapeSql(terminalIds[0])}'`);
+    } else if (terminalIds.length > 1) {
+      where.push(`pt.identifier IN (${terminalIds.map(id => `'${escapeSql(id)}'`).join(', ')})`);
+    }
+    const whereClause = where.map((w, i) => (i === 0 ? `WHERE ${w}` : `  AND ${w}`)).join('\n');
+
+    const termSelect  = byTerminal ? '\n    pt.identifier                                   AS terminal_identifier,' : '';
+    const termJoin    = needJoinTerm ? `
+LEFT JOIN paymentterminal pt
+       ON pt.id       = t.terminal_id
+      AND pt.spaceid  = t.spaceid` : '';
+    const termGroup   = byTerminal ? ',\n    pt.identifier' : '';
+
+    // Korrektur 2: Transaktionen ohne payfacsettlementrecord fallen sonst still
+    // heraus. COALESCE(..., 'NO_RECORD') muss in SELECT und GROUP BY identisch
+    // stehen, sonst wird die Query ungueltig.
+    const stateExpr = `COALESCE(s.settlement_state, 'NO_RECORD')`;
+
+    return `WITH ${txCte({ spaceIds, start, end })},
+settle_tx AS (
+    -- Settlement-Records werden PRO TRANSAKTION vor-aggregiert.
+    -- payfacsettlementrecord ist N:1 zur Transaktion (z. B. Refund in einem
+    -- spaeteren Settlement-Lauf). Ohne diese Vor-Aggregation wuerde der
+    -- anschliessende Join Transaktionen vervielfachen und COUNT(*) sowie
+    -- SUM(t.completedamount) waeren zu hoch.
+    -- Kein Filter auf bt.state: UPCOMING (noch nicht ausbezahlt) soll neben
+    -- SETTLED sichtbar sein.
+    -- settlement_state wird bewusst NICHT per max_by ueber bt.valuedate
+    -- bestimmt: valuedate ist bei noch nicht ausbezahlten Records leer, und
+    -- max_by ignoriert Zeilen mit NULL im Sortierfeld - dadurch wuerde immer
+    -- SETTLED gewinnen und eine offene Auszahlung (z. B. ein Refund aus einem
+    -- spaeteren Settlement-Lauf) unsichtbar bleiben. PARTIAL zeigt stattdessen
+    -- explizit, dass eine Transaktion teilweise ausbezahlt ist.
+    SELECT
+        psr.transaction_id,
+        count(*)                               AS settlement_records,
+        CASE
+            WHEN count_if(bt.state = 'SETTLED') > 0
+             AND count_if(bt.state <> 'SETTLED') > 0 THEN 'PARTIAL'
+            ELSE max(bt.state)
+        END                                     AS settlement_state,
+        sum(bt.valueamount)                    AS net_amount,
+        sum(bt.postingamount)                  AS gross_amount,
+        sum(bt.postingamount - bt.valueamount) AS processing_fees
+    FROM payfacsettlementrecord psr
+    JOIN banktransaction bt
+      ON bt.id = psr.banktransaction_id
+    WHERE psr.transaction_id IN (SELECT id FROM tx)
+    GROUP BY psr.transaction_id
+)
+SELECT
+    t.spaceid                                       AS space_id,
+    date(t.completedon)                             AS tag,
+    -- NO_RECORD: Fuer diese Transaktion existiert (noch) kein
+    -- payfacsettlementrecord - der LEFT JOIN auf settle_tx traf nicht. Damit
+    -- stimmt die Summe im Settlement-Modus mit dem Brand-Modus ueberein,
+    -- statt dass solche Transaktionen still verschwinden.
+    ${stateExpr}                                     AS settlement_state,
+    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN') AS brand,${termSelect}
+    t.currency                                      AS waehrung,
+    COUNT(*)                                        AS anzahl_transaktionen,
+    COALESCE(SUM(s.settlement_records), 0)          AS anzahl_settlement_records,
+    SUM(t.completedamount)                          AS brutto_gross,
+    SUM(s.net_amount)                               AS netamount,
+    SUM(s.processing_fees)                          AS processing_fees,
+    SUM(s.gross_amount)                             AS settlement_gross
+FROM transaction t
+LEFT JOIN settle_tx s ON s.transaction_id = t.id
+LEFT JOIN paymentconnectorconfiguration pcc
+       ON pcc.id      = t.paymentconnectorconfiguration_id
+      AND pcc.spaceid = t.spaceid
+LEFT JOIN paymentconnector pc
+       ON pc.id       = pcc.connector${termJoin}
+${whereClause}
+GROUP BY
+    t.spaceid,
+    date(t.completedon),
+    ${stateExpr},
+    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN'),
+    t.currency${termGroup}
+ORDER BY
+    space_id,
+    tag DESC,
+    settlement_state;`;
+  }
+
+  function generate() {
+    const start = `${state.startDate} ${state.startTime}`;
+    const end   = `${state.endDate} ${state.endTime}`;
+    const spaceIds = selectedSpaceIds();
+    let sql;
+    if (state.mode === 'terminal') {
+      const ids = state.terminals.filter(t => t.selected).map(t => t.id);
+      sql = buildTerminalQuery({ spaceIds, start, end, terminalIds: ids });
+    } else if (state.mode === 'export') {
+      const ids = state.terminals.filter(t => t.selected).map(t => t.id);
+      sql = buildExportQuery({ spaceIds, start, end, terminalIds: ids, cols: state.exportColumns });
+    } else if (state.mode === 'card') {
+      const ids = state.terminals.filter(t => t.selected).map(t => t.id);
+      sql = buildCardQuery({ spaceIds, start, end, terminalIds: ids, last4: state.cardLast4 || '' });
+    } else if (state.mode === 'settlement') {
+      const ids = state.terminals.filter(t => t.selected).map(t => t.id);
+      sql = buildSettlementQuery({
+        spaceIds, start, end, terminalIds: ids,
+        byTerminal: !!state.settlementByTerminal,
+      });
+    } else {
+      sql = buildBrandQuery({ spaceIds, start, end });
+    }
+    sqlOutput.textContent = sql;
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    const showTerminal = (mode === 'terminal' || mode === 'export' || mode === 'card' || mode === 'settlement');
+    terminalSection.classList.toggle('active', showTerminal);
+    exportSection.classList.toggle('active', mode === 'export');
+    cardSection.classList.toggle('active', mode === 'card');
+    settlementSection.classList.toggle('active', mode === 'settlement');
+    if (mode === 'terminal') {
+      modeBadge.textContent = 'Brand + Terminal';
+      terminalModeHint.innerHTML = '<strong>Pflichtfilter:</strong> Es werden nur Transaktionen der ausgewählten Terminals ausgewertet.';
+    } else if (mode === 'export') {
+      modeBadge.textContent = 'Transaktions-Export';
+      terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl werden alle Terminals der gewählten Spaces exportiert.';
+    } else if (mode === 'card') {
+      modeBadge.textContent = 'Kartensuche';
+      terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl wird über alle Terminals der gewählten Spaces gesucht.';
+    } else if (mode === 'settlement') {
+      modeBadge.textContent = 'Settlement';
+      terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl werden alle Terminals der gewählten Spaces ausgewertet.';
+    } else {
+      modeBadge.textContent = 'Brand';
+    }
+    saveState();
+    generate();
+  }
+
+  // --- Event bindings ------------------------------------------------------
+  modeButtons.forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+
+  cardLast4El.addEventListener('input', () => {
+    cardLast4El.value = cardLast4El.value.replace(/\D/g, '').slice(0, 4);
+    state.cardLast4 = cardLast4El.value;
+    saveState();
+    generate();
+  });
+
+  settlementByTermEl.addEventListener('change', () => {
+    state.settlementByTerminal = settlementByTermEl.checked;
+    saveState();
+    generate();
+  });
+
+  document.querySelectorAll('.spin-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const target = document.getElementById(b.dataset.target);
+      bumpSpin(target, b.dataset.dir === 'up' ? 1 : -1);
+    });
+  });
+
+  [startHH, startMM, startSS, endHH, endMM, endSS].forEach(el => {
+    el.addEventListener('focus', () => el.select());
+    el.addEventListener('keydown', e => {
+      if (e.key === 'ArrowUp')   { e.preventDefault(); bumpSpin(el,  1); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); bumpSpin(el, -1); }
+    });
+    el.addEventListener('wheel', e => {
+      if (document.activeElement !== el) return;
+      e.preventDefault();
+      bumpSpin(el, e.deltaY < 0 ? 1 : -1);
+    }, { passive: false });
+    el.addEventListener('input', () => {
+      const digits = el.value.replace(/\D/g, '').slice(0, 2);
+      el.value = digits;
+    });
+    el.addEventListener('blur', () => {
+      writeSpin(el, readSpin(el));
+      syncFromInputs();
+    });
+  });
+
+  [startDateOnly, endDateOnly].forEach(el => el.addEventListener('change', syncFromInputs));
+
+  document.querySelectorAll('.quick-time').forEach(b => {
+    b.addEventListener('click', () => {
+      const [h, m, s] = b.dataset.time.split(':').map(x => parseInt(x, 10));
+      if (b.dataset.target === 'start') {
+        startHH.value = pad(h); startMM.value = pad(m); startSS.value = pad(s);
+      } else {
+        endHH.value = pad(h); endMM.value = pad(m); endSS.value = pad(s);
+      }
+      syncFromInputs();
+    });
+  });
+
+  document.querySelectorAll('.preset-chip[data-preset]').forEach(b => {
+    b.addEventListener('click', () => applyPreset(b.dataset.preset));
+  });
+
+  // Spaces
+  addSpaceBtn.addEventListener('click', addSpace);
+  newSpaceId.addEventListener('keydown', e => { if (e.key === 'Enter') addSpace(); });
+  newSpaceLabel.addEventListener('keydown', e => { if (e.key === 'Enter') addSpace(); });
+  newSpaceId.addEventListener('input', () => { newSpaceId.value = newSpaceId.value.replace(/\D/g, ''); });
+  spaceSelectAll.addEventListener('click', () => {
+    state.spaces.forEach(s => s.selected = true);
+    saveState(); renderSpaces(); generate();
+  });
+  spaceDeselectAll.addEventListener('click', () => {
+    state.spaces.forEach(s => s.selected = false);
+    saveState(); renderSpaces(); generate();
+  });
+  spaceClearAll.addEventListener('click', () => {
+    if (state.spaces.length === 0) return;
+    if (confirm(`Wirklich alle ${state.spaces.length} Spaces löschen?`)) {
+      state.spaces = [];
+      saveState(); renderSpaces(); generate();
+    }
+  });
+
+  // Terminals
+  addTerminalBtn.addEventListener('click', addTerminal);
+  newTerminalId.addEventListener('keydown', e => { if (e.key === 'Enter') addTerminal(); });
+  newTerminalLabel.addEventListener('keydown', e => { if (e.key === 'Enter') addTerminal(); });
+
+  // Columns
+  colSelectAll.addEventListener('click', () => {
+    EXPORT_COLUMNS.forEach(c => state.exportColumns[c.key] = true);
+    saveState(); renderColumns(); generate();
+  });
+  colDeselectAll.addEventListener('click', () => {
+    EXPORT_COLUMNS.forEach(c => state.exportColumns[c.key] = false);
+    saveState(); renderColumns(); generate();
+  });
+  colReset.addEventListener('click', () => {
+    state.exportColumns = defaultColumns();
+    saveState(); renderColumns(); generate();
+  });
+
+  // --- Tabs (manuell / import) -------------------------------------------
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === target));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === `tab-${target}`));
+    });
+  });
+
+  // --- CSV Import (Terminals) --------------------------------------------
+  const importBox   = document.getElementById('importBox');
+  const importInput = document.getElementById('importInput');
+  const importToast = document.getElementById('importToast');
+
+  function showToast(msg, isError) {
+    importToast.textContent = msg;
+    importToast.classList.toggle('error', !!isError);
+    importToast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => importToast.classList.remove('show'), 6000);
+  }
+
+  function parseCSVLine(line) {
+    const out = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') {
+        if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+        else inQ = !inQ;
+      } else if ((c === ',' || c === ';') && !inQ) {
+        out.push(cur); cur = '';
+      } else { cur += c; }
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  }
+  function parseCSV(text) {
+    const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (!lines.length) return { headers: [], rows: [] };
+    const headers = parseCSVLine(lines[0]);
+    const rows = lines.slice(1).map(parseCSVLine);
+    return { headers, rows };
+  }
+  function findColIdx(headers, patterns) {
+    for (const pat of patterns) {
+      const i = headers.findIndex(h => pat.test(h));
+      if (i >= 0) return i;
+    }
+    return -1;
+  }
+  function importTerminalsFromCSV(text) {
+    let parsed;
+    try { parsed = parseCSV(text); }
+    catch (e) { showToast('CSV konnte nicht gelesen werden: ' + e.message, true); return; }
+
+    const { headers, rows } = parsed;
+    if (!headers.length || !rows.length) {
+      showToast('Datei ist leer oder hat kein gültiges CSV-Format.', true); return;
+    }
+    const idIdx   = findColIdx(headers, [/^terminal\s*id$/i, /^terminal[_\s-]?identifier$/i, /^identifier$/i]);
+    const nameIdx = findColIdx(headers, [/terminal\s*configuration\s*name/i, /terminal\s*name/i, /^name$/i]);
+    const locIdx  = findColIdx(headers, [/^location\s*id$/i]);
+    const extIdx  = findColIdx(headers, [/terminal\s*external\s*id/i]);
+
+    if (idIdx < 0) {
+      showToast('Spalte „Terminal ID" wurde nicht gefunden. Bitte den Wallee-Standard-Export verwenden.', true);
+      return;
+    }
+    let added = 0, skipped = 0, empty = 0;
+    rows.forEach(row => {
+      const id = (row[idIdx] || '').trim();
+      if (!id) { empty++; return; }
+      if (state.terminals.some(t => t.id === id)) { skipped++; return; }
+      const parts = [];
+      if (nameIdx >= 0 && row[nameIdx]) parts.push(row[nameIdx]);
+      if (locIdx  >= 0 && row[locIdx])  parts.push(`Loc ${row[locIdx]}`);
+      if (!parts.length && extIdx >= 0 && row[extIdx]) parts.push(row[extIdx].slice(0, 8) + '…');
+      state.terminals.push({ id, label: parts.join(' · '), selected: true });
+      added++;
+    });
+    saveState();
+    renderTerminals();
+    generate();
+
+    const bits = [];
+    bits.push(`${added} Terminal${added === 1 ? '' : 's'} importiert`);
+    if (skipped) bits.push(`${skipped} bereits vorhanden (übersprungen)`);
+    if (empty)   bits.push(`${empty} Zeile${empty === 1 ? '' : 'n'} ohne ID`);
+    showToast('✓ ' + bits.join(' · '), false);
+  }
+
+  function handleFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => importTerminalsFromCSV(String(e.target.result || ''));
+    reader.onerror = () => showToast('Datei konnte nicht gelesen werden.', true);
+    reader.readAsText(file, 'utf-8');
+  }
+
+  importBox.addEventListener('click', () => importInput.click());
+  importInput.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) handleFile(f);
+    importInput.value = '';
+  });
+  ['dragenter', 'dragover'].forEach(ev => {
+    importBox.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation();
+      importBox.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(ev => {
+    importBox.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation();
+      importBox.classList.remove('dragover');
+    });
+  });
+  importBox.addEventListener('drop', e => {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+
+  selectAllBtn.addEventListener('click', () => {
+    state.terminals.forEach(t => t.selected = true);
+    saveState(); renderTerminals(); generate();
+  });
+  deselectAllBtn.addEventListener('click', () => {
+    state.terminals.forEach(t => t.selected = false);
+    saveState(); renderTerminals(); generate();
+  });
+  clearAllBtn.addEventListener('click', () => {
+    if (state.terminals.length === 0) return;
+    if (confirm(`Wirklich alle ${state.terminals.length} Terminals löschen?`)) {
+      state.terminals = [];
+      saveState(); renderTerminals(); generate();
+    }
+  });
+
+  generateBtn.addEventListener('click', () => {
+    saveCurrentAsPreset();
+    generate();
+  });
+  copyBtn.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(sqlOutput.textContent); }
+    catch (e) {
+      const range = document.createRange();
+      range.selectNode(sqlOutput);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      document.execCommand('copy');
+      window.getSelection().removeAllRanges();
+    }
+    copyBtn.textContent = 'Kopiert ✓';
+    copyBtn.classList.add('copied');
+    setTimeout(() => {
+      copyBtn.textContent = 'Kopieren';
+      copyBtn.classList.remove('copied');
+    }, 1800);
+  });
+
+  // --- Init ----------------------------------------------------------------
+  loadState();
+  applyStateToInputs();
+  renderSpaces();
+  renderTerminals();
+  renderColumns();
+  renderUserPresets();
+  setMode(state.mode || 'brand');
+</script>
+</body>
+</html>
