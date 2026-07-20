@@ -1,0 +1,461 @@
+#!/usr/bin/env node
+// Lokaler Proxy fuer den wallee Analytics Query Builder.
+//
+// Start:  node wallee-proxy.mjs
+// Danach: http://localhost:8787/setup im Browser oeffnen und die Zugangsdaten
+//         einmalig hinterlegen.
+//
+// WARUM ES DEN PROXY UEBERHAUPT BRAUCHT
+// Zwei Gruende, die beide nicht im Browser loesbar sind:
+//  1. CORS - app-wallee.com erlaubt keine Aufrufe aus einer lokalen HTML-Datei.
+//  2. Das Secret. Die Analytics-API verlangt eine HMAC-Signatur. Im Browser
+//     signieren hiesse, das Secret in die Seite zu legen; von dort kaeme es in
+//     den localStorage, in den Verlauf, in jeden Screenshot. Der Proxy
+//     signiert stattdessen hier, lokal, und gibt das Secret nie heraus.
+//
+// KEINE ABHAENGIGKEITEN - nur Node-Builtins. Kein npm install.
+
+import http from 'node:http';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// --- Konfiguration ---------------------------------------------------------
+
+export const PORT = Number(process.env.WALLEE_PROXY_PORT || 8787);
+
+// Bewusst nur 127.0.0.1, nicht 0.0.0.0: sonst haengt ein Dienst mit
+// Zugangsdaten am ganzen Netz und jeder im selben WLAN koennte ihn ansprechen.
+export const HOST = process.env.WALLEE_PROXY_HOST || '127.0.0.1';
+
+export const API_BASE = process.env.WALLEE_API_BASE || 'https://app-wallee.com';
+
+export const CONFIG_PATH = process.env.WALLEE_PROXY_CONFIG
+  || path.join(os.homedir(), '.wallee-proxy.json');
+
+// Analytics-Endpunkte. In Task 10 gegen das offizielle SDK gegengeprueft.
+export const API_PFADE = {
+  submit: '/api/analytics/submit-query',
+  status: token => `/api/analytics/query-status?id=${encodeURIComponent(token)}`,
+  result: token => `/api/analytics/fetch-result?id=${encodeURIComponent(token)}`,
+  cancel: token => `/api/analytics/cancel-query?id=${encodeURIComponent(token)}`,
+};
+
+// --- Zugangsdaten ----------------------------------------------------------
+// Liegen ausschliesslich hier und in der Config-Datei. Sie gehen NIE an die
+// App zurueck und werden NIE geloggt.
+
+let zugangsdaten = null;
+
+export function ladeZugangsdaten(pfad = CONFIG_PATH) {
+  try {
+    const roh = fs.readFileSync(pfad, 'utf8');
+    const c = JSON.parse(roh);
+    if (!c || !c.userId || !c.secret) return null;
+    return { userId: String(c.userId), secret: String(c.secret), accountId: String(c.accountId || '') };
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function speichereZugangsdaten(werte, pfad = CONFIG_PATH) {
+  const fehler = pruefeZugangsdaten(werte);
+  if (fehler.length) return { ok: false, fehler };
+
+  const inhalt = JSON.stringify({
+    userId: String(werte.userId).trim(),
+    secret: String(werte.secret).trim(),
+    accountId: String(werte.accountId || '').trim(),
+  }, null, 2);
+
+  // mode 0o600 schon beim Anlegen mitgeben - ein nachtraegliches chmod liesse
+  // die Datei fuer einen Moment lesbar fuer andere Konten auf dem Rechner.
+  await fsp.writeFile(pfad, inhalt, { mode: 0o600 });
+  await fsp.chmod(pfad, 0o600);        // falls die Datei schon existierte
+  zugangsdaten = ladeZugangsdaten(pfad);
+  return { ok: true, fehler: [] };
+}
+
+export function pruefeZugangsdaten(werte) {
+  const fehler = [];
+  const w = werte || {};
+  if (!String(w.userId || '').trim()) fehler.push('User-ID fehlt.');
+  else if (!/^\d+$/.test(String(w.userId).trim())) fehler.push('User-ID muss eine Zahl sein.');
+
+  const secret = String(w.secret || '').trim();
+  if (!secret) fehler.push('Secret fehlt.');
+  else if (!/^[A-Za-z0-9+/]+={0,2}$/.test(secret) || secret.length < 16) {
+    fehler.push('Secret sieht nicht nach einem Base64-Wert aus.');
+  }
+
+  const account = String(w.accountId || '').trim();
+  if (account && !/^\d+$/.test(account)) fehler.push('Account-ID muss eine Zahl sein.');
+
+  return fehler;
+}
+
+// --- Signatur --------------------------------------------------------------
+// ACHTUNG: In Task 10 gegen den offiziellen wallee-API-Client zu verifizieren.
+// Bis dahin gilt das Schema als angenommen, nicht als bestaetigt.
+//
+// Erwartet: x-mac-value = base64(HMAC_SHA512(base64decode(secret), nachricht))
+// mit nachricht = "version|userId|timestamp|METHODE|/pfad?query"
+
+export const MAC_VERSION = '1';
+
+export function macNachricht({ version, userId, timestamp, methode, pfad }) {
+  return [version, userId, timestamp, String(methode).toUpperCase(), pfad].join('|');
+}
+
+export function signRequest({ userId, secret, methode, pfad, timestamp }) {
+  const ts = String(timestamp);
+  const nachricht = macNachricht({ version: MAC_VERSION, userId, timestamp: ts, methode, pfad });
+  const schluessel = Buffer.from(secret, 'base64');
+  const mac = crypto.createHmac('sha512', schluessel).update(nachricht, 'utf8').digest('base64');
+
+  return {
+    'x-mac-version': MAC_VERSION,
+    'x-mac-userid': String(userId),
+    'x-mac-timestamp': ts,
+    'x-mac-value': mac,
+  };
+}
+
+// --- CORS und Missbrauchsschutz -------------------------------------------
+// Ein lokaler Server ist von JEDER Webseite aus erreichbar, die der Nutzer
+// offen hat. Ohne Schutz koennte eine beliebige Seite im Hintergrund
+// http://localhost:8787/submit aufrufen und ueber die hinterlegten
+// Zugangsdaten Transaktionsdaten abziehen. Zwei Riegel dagegen:
+//
+//  1. Herkunft: erlaubt sind nur "null" (die per file:// geoeffnete App) und
+//     ausdruecklich konfigurierte Origins. Nicht "*".
+//  2. Ein eigener Header (X-Wallee-Proxy). Den kann eine fremde Seite nicht
+//     einfach mitschicken: sobald sie es versucht, macht der Browser erst
+//     einen Preflight, und der schlaegt an Punkt 1 fehl. Einfache Formulare
+//     oder <img>-Aufrufe kommen so gar nicht erst durch.
+
+export const PROXY_HEADER = 'x-wallee-proxy';
+
+export const ERLAUBTE_ORIGINS = new Set(
+  (process.env.WALLEE_PROXY_ORIGINS || 'null')
+    .split(',').map(s => s.trim()).filter(Boolean),
+);
+
+export function originErlaubt(origin) {
+  if (origin === undefined || origin === null || origin === '') return true;  // kein Browser
+  return ERLAUBTE_ORIGINS.has(origin);
+}
+
+export function corsHeader(origin) {
+  const kopf = {
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': `content-type, ${PROXY_HEADER}`,
+    'Access-Control-Max-Age': '600',
+    Vary: 'Origin',
+  };
+  if (origin && originErlaubt(origin)) kopf['Access-Control-Allow-Origin'] = origin;
+  return kopf;
+}
+
+// --- Routing ---------------------------------------------------------------
+
+export function findeRoute(methode, pfad) {
+  const m = String(methode || '').toUpperCase();
+  const p = String(pfad || '').split('?')[0].replace(/\/+$/, '') || '/';
+
+  if (m === 'OPTIONS') return { name: 'preflight' };
+  if (m === 'GET' && p === '/health') return { name: 'health' };
+  if (m === 'GET' && p === '/setup') return { name: 'setup-seite' };
+  if (m === 'POST' && p === '/setup') return { name: 'setup-speichern' };
+  if (m === 'POST' && p === '/submit') return { name: 'submit' };
+
+  let treffer = /^\/status\/(.+)$/.exec(p);
+  if (m === 'GET' && treffer) return { name: 'status', token: decodeURIComponent(treffer[1]) };
+
+  treffer = /^\/result\/(.+)$/.exec(p);
+  if (m === 'GET' && treffer) return { name: 'result', token: decodeURIComponent(treffer[1]) };
+
+  treffer = /^\/query\/(.+)$/.exec(p);
+  if (m === 'DELETE' && treffer) return { name: 'cancel', token: decodeURIComponent(treffer[1]) };
+
+  return { name: 'unbekannt' };
+}
+
+// --- Aufrufe an die wallee-API --------------------------------------------
+
+async function rufeApi(methode, pfad, koerper) {
+  if (!zugangsdaten) {
+    const e = new Error('Keine Zugangsdaten hinterlegt. Bitte /setup aufrufen.');
+    e.status = 428;
+    throw e;
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const kopf = {
+    ...signRequest({
+      userId: zugangsdaten.userId,
+      secret: zugangsdaten.secret,
+      methode,
+      pfad,
+      timestamp,
+    }),
+    Accept: 'application/json',
+  };
+  if (koerper !== undefined) kopf['Content-Type'] = 'application/json';
+
+  const antwort = await fetch(API_BASE + pfad, {
+    method: methode,
+    headers: kopf,
+    body: koerper === undefined ? undefined : JSON.stringify(koerper),
+  });
+
+  const text = await antwort.text();
+  return { status: antwort.status, text, headers: antwort.headers };
+}
+
+// --- HTTP-Hilfen -----------------------------------------------------------
+
+function sendeJson(res, status, objekt, origin) {
+  const koerper = JSON.stringify(objekt);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(koerper),
+    ...corsHeader(origin),
+  });
+  res.end(koerper);
+}
+
+function sendeText(res, status, text, typ, origin) {
+  res.writeHead(status, {
+    'Content-Type': typ,
+    'Content-Length': Buffer.byteLength(text),
+    ...corsHeader(origin),
+  });
+  res.end(text);
+}
+
+function leseKoerper(req, maxBytes = 2 * 1024 * 1024) {
+  return new Promise((erfuellen, ablehnen) => {
+    let daten = '';
+    let laenge = 0;
+    req.on('data', stueck => {
+      laenge += stueck.length;
+      if (laenge > maxBytes) {
+        ablehnen(Object.assign(new Error('Anfrage zu gross.'), { status: 413 }));
+        req.destroy();
+        return;
+      }
+      daten += stueck;
+    });
+    req.on('end', () => erfuellen(daten));
+    req.on('error', ablehnen);
+  });
+}
+
+// --- Setup-Seite -----------------------------------------------------------
+// Bewusst schlicht und ohne Assets. Zeigt NIE ein gespeichertes Secret an -
+// nur, ob ueberhaupt schon etwas hinterlegt ist.
+
+export function setupSeite({ gespeichert, meldung, fehler } = {}) {
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const meldungHtml = meldung ? `<p class="ok">${esc(meldung)}</p>` : '';
+  const fehlerHtml = (fehler && fehler.length)
+    ? `<ul class="fehler">${fehler.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : '';
+
+  return `<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>wallee-Proxy – Zugangsdaten</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         max-width: 620px; margin: 40px auto; padding: 0 16px; color: #17302e; }
+  h1 { font-size: 20px; }
+  label { display: block; margin-top: 16px; font-size: 13px; color: #5b706e; }
+  input { width: 100%; padding: 8px 10px; font-size: 14px; margin-top: 4px;
+          border: 1px solid #cfdcda; border-radius: 6px; box-sizing: border-box; }
+  button { margin-top: 20px; padding: 9px 18px; font-size: 14px; cursor: pointer;
+           background: #11d9cc; border: none; border-radius: 6px; font-weight: 600; }
+  .hint { font-size: 13px; color: #5b706e; line-height: 1.5; }
+  .ok { background: #e6f9f7; border-left: 3px solid #0da69c; padding: 10px 12px; }
+  .fehler { background: #fdecec; border-left: 3px solid #d64545; padding: 10px 12px 10px 30px; }
+  .status { font-size: 13px; color: #5b706e; }
+</style>
+</head>
+<body>
+<h1>wallee-Proxy – Zugangsdaten</h1>
+
+${meldungHtml}
+${fehlerHtml}
+
+<p class="hint">
+  Diese Daten werden <strong>nur auf diesem Rechner</strong> gespeichert
+  (<code>${esc(CONFIG_PATH)}</code>, nur für dich lesbar) und niemals an die
+  Query-Builder-Seite zurückgegeben. Der Proxy signiert die Aufrufe damit selbst.
+</p>
+
+<p class="status">Aktuell hinterlegt: <strong>${gespeichert ? 'ja' : 'nein'}</strong>${
+  gespeichert ? ' (Secret wird aus Sicherheitsgründen nicht angezeigt)' : ''}</p>
+
+<form method="POST" action="/setup">
+  <label>Application-User-ID
+    <input name="userId" inputmode="numeric" autocomplete="off" required>
+  </label>
+  <label>Authentication-Key / Secret (Base64)
+    <input name="secret" type="password" autocomplete="off" required>
+  </label>
+  <label>Account-ID (optional)
+    <input name="accountId" inputmode="numeric" autocomplete="off">
+  </label>
+  <button type="submit">Speichern</button>
+</form>
+
+<p class="hint" style="margin-top:24px;">
+  Die Werte findest du im wallee-Portal unter <em>Account &gt; Application Users</em>.
+  Der Benutzer braucht Leserechte auf die Analytics-Abfragen.
+</p>
+</body>
+</html>`;
+}
+
+// --- Anfragebehandlung -----------------------------------------------------
+
+export async function behandleAnfrage(req, res) {
+  const origin = req.headers.origin;
+  const route = findeRoute(req.method, req.url);
+
+  if (!originErlaubt(origin)) {
+    sendeJson(res, 403, { ok: false, fehler: 'Herkunft nicht erlaubt.' }, undefined);
+    return;
+  }
+
+  if (route.name === 'preflight') {
+    res.writeHead(204, corsHeader(origin));
+    res.end();
+    return;
+  }
+
+  // Die Setup-Seite wird direkt im Browser aufgerufen (kein fetch), deshalb
+  // ohne den Zusatz-Header. Alles andere ist eine API und verlangt ihn.
+  const brauchtHeader = !['setup-seite', 'setup-speichern', 'health'].includes(route.name);
+  if (brauchtHeader && req.headers[PROXY_HEADER] === undefined) {
+    sendeJson(res, 403, {
+      ok: false,
+      fehler: `Header ${PROXY_HEADER} fehlt.`,
+    }, origin);
+    return;
+  }
+
+  try {
+    switch (route.name) {
+      case 'health':
+        sendeJson(res, 200, {
+          ok: true,
+          zugangsdaten: !!zugangsdaten,
+          setupUrl: `http://${HOST}:${PORT}/setup`,
+        }, origin);
+        return;
+
+      case 'setup-seite':
+        sendeText(res, 200, setupSeite({ gespeichert: !!zugangsdaten }), 'text/html; charset=utf-8', origin);
+        return;
+
+      case 'setup-speichern': {
+        const roh = await leseKoerper(req);
+        const werte = Object.fromEntries(new URLSearchParams(roh));
+        const ergebnis = await speichereZugangsdaten(werte);
+        sendeText(res, ergebnis.ok ? 200 : 400, setupSeite({
+          gespeichert: !!zugangsdaten,
+          meldung: ergebnis.ok ? 'Gespeichert. Der Query Builder kann den Proxy jetzt nutzen.' : '',
+          fehler: ergebnis.fehler,
+        }), 'text/html; charset=utf-8', origin);
+        return;
+      }
+
+      case 'submit': {
+        const roh = await leseKoerper(req);
+        let sql;
+        try { sql = JSON.parse(roh).sql; } catch (e) { sql = undefined; }
+        if (!sql || !String(sql).trim()) {
+          sendeJson(res, 400, { ok: false, fehler: 'Feld "sql" fehlt.' }, origin);
+          return;
+        }
+        const antwort = await rufeApi('POST', API_PFADE.submit, { query: String(sql) });
+        sendeJson(res, antwort.status, reicheDurch(antwort), origin);
+        return;
+      }
+
+      case 'status': {
+        const antwort = await rufeApi('GET', API_PFADE.status(route.token));
+        sendeJson(res, antwort.status, reicheDurch(antwort), origin);
+        return;
+      }
+
+      case 'result': {
+        // Das Ergebnis ist CSV, kein JSON - und jeder Abruf zaehlt bei wallee
+        // als Download. Deshalb ruft die App das nur bei Status SUCCESS auf.
+        const antwort = await rufeApi('GET', API_PFADE.result(route.token));
+        if (antwort.status >= 400) {
+          sendeJson(res, antwort.status, reicheDurch(antwort), origin);
+          return;
+        }
+        sendeText(res, 200, antwort.text, 'text/csv; charset=utf-8', origin);
+        return;
+      }
+
+      case 'cancel': {
+        const antwort = await rufeApi('POST', API_PFADE.cancel(route.token));
+        sendeJson(res, antwort.status, reicheDurch(antwort), origin);
+        return;
+      }
+
+      default:
+        sendeJson(res, 404, { ok: false, fehler: 'Unbekannter Endpunkt.' }, origin);
+    }
+  } catch (fehler) {
+    // Nie den Originalfehler durchreichen - er koennte Header oder URL mit
+    // Signaturdaten enthalten.
+    const status = fehler && fehler.status ? fehler.status : 502;
+    sendeJson(res, status, {
+      ok: false,
+      fehler: status === 428
+        ? 'Keine Zugangsdaten hinterlegt. Bitte /setup aufrufen.'
+        : 'Der Aufruf an wallee ist fehlgeschlagen.',
+    }, origin);
+  }
+}
+
+// Antworten der wallee-API moeglichst unveraendert weiterreichen, aber als
+// JSON-Objekt, damit die App eine verlaessliche Form bekommt.
+export function reicheDurch(antwort) {
+  try {
+    return JSON.parse(antwort.text);
+  } catch (e) {
+    return { ok: antwort.status < 400, rohtext: antwort.text };
+  }
+}
+
+// --- Start -----------------------------------------------------------------
+
+export function starteServer({ port = PORT, host = HOST } = {}) {
+  zugangsdaten = ladeZugangsdaten();
+  const server = http.createServer((req, res) => { behandleAnfrage(req, res); });
+  server.listen(port, host, () => {
+    console.log(`wallee-Proxy laeuft auf http://${host}:${port}`);
+    console.log(zugangsdaten
+      ? 'Zugangsdaten sind hinterlegt.'
+      : `Noch keine Zugangsdaten. Bitte http://${host}:${port}/setup oeffnen.`);
+  });
+  return server;
+}
+
+// Nur starten, wenn die Datei direkt aufgerufen wird - beim Import aus den
+// Tests soll kein Server hochkommen.
+const direktAufgerufen = process.argv[1]
+  && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (direktAufgerufen) starteServer();
