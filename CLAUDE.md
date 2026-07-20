@@ -8,6 +8,11 @@ Ergebnis kommt dort als CSV.
 Entstanden aus einer Kundenanfrage im Gastronomie-Umfeld: Tagesabschluss-Abgleich pro
 Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen.
 
+> **Aktueller Arbeitsauftrag (v4):** Umsetzung nach dem Plan
+> `docs/superpowers/plans/2026-07-20-query-builder-v4-report-api.md`
+> (Terminal-Report-Integration, Zwei-Modi-Betrieb Kopieren/API, lokaler Zero-Dependency-Proxy,
+> Cleanup + GitHub-Release v4 + Confluence-Update). Task-für-Task abarbeiten, TDD, Tests grün halten.
+
 ## Dateien
 
 | Datei | Zweck |
@@ -15,6 +20,7 @@ Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen.
 | `wallee_query_builder_v2.html` | **Aktuelle Version.** Fünf Modi, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
+| `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
 
@@ -99,12 +105,19 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
     Transaktion vor-aggregiert (N:1-Beziehung, z. B. Refund in einem späteren
     Settlement-Lauf). Auszahlungsdatum = `bt.valuedate` (**nicht** `bt.paymentdate` — ist
     auf diesem Datenpfad leer!). Kein Filter auf `bt.state`, damit `UPCOMING` sichtbar
-    bleibt; `settlement_state` wird `'PARTIAL'`, wenn sowohl `SETTLED`- als auch
-    andere Records vorkommen — siehe Kommentare im CTE und `sql/settlement_reference_reference.sql`.
+    bleibt, falls es vorkommt — bisher an Produktivdaten aber nicht beobachtet, siehe
+    „Wallee-Referenzwissen"; `settlement_state` wird `'PARTIAL'`, wenn sowohl `SETTLED`- als
+    auch andere Records vorkommen — siehe Kommentare im CTE und
+    `sql/settlement_reference_reference.sql`.
   - **`payoutref`**: Auszahlungsreferenz = `currentaccountwithdrawal.internalreference`,
     zeitlich zugeordnet (früheste Withdrawal im Fenster
     `[bt.valuedate, bt.valuedate + 30 Tage)`) — rein heuristische Zuordnung, da es keinen
     direkten Fremdschlüssel gibt. Langsam (zusätzlicher Range-Join), deshalb default aus.
+    Der Join auf `w` hat zusätzlich zur korrelierten Bedingung ein **absolutes** Zeitfenster
+    aus `start`/`end` (`w.createdon >= TIMESTAMP '<start>' AND w.createdon < TIMESTAMP
+    '<end>' + INTERVAL '30' DAY`) — ohne dieses konstante Prädikat scannt der Optimizer
+    `currentaccountwithdrawal` voll, was an Produktivdaten zum Timeout führte (siehe
+    „Wallee-Referenzwissen").
   - **`tip`** (`tipCte({ spaceIds })`, Helper-Funktion): summiert `lineitem.amountincludingtax`
     pro Transaktion für `lineitem.type = TIP_LINEITEM_TYPE` (Konstante `TIP_LINEITEM_TYPE =
     'TIP'`). Eingegrenzt über `tx`, damit nicht die gesamte `lineitem`-Historie des Space
@@ -162,6 +175,38 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
   (Formeln `tip`/`grossnotip` in `EXPORT_COLUMNS` sind damit fachlich belastbar, keine
   Änderung nötig). `sql/tip_verifikation.sql` bleibt im Repo, um die Aussage bei Bedarf
   (anderer Space, Schema-Änderung) erneut zu prüfen.
+- **Settlement-Annahmen — bisher an Produktivdaten beobachtet (ein Space, ein Zeitraum von
+  mehreren Wochen, mit `sql/settlement_verifikation.sql` geprüft):**
+  - `banktransaction.state` kam ausschliesslich als `SETTLED` vor, kein `UPCOMING` und kein
+    anderer Wert, und jeder Record hatte ein gefülltes `valuedate`. Das deutet darauf hin,
+    dass ein `payfacsettlementrecord` offenbar erst entsteht, wenn tatsächlich abgerechnet
+    wurde — eine Transaktion, die noch auf ihre Auszahlung wartet, hat dann gar keinen
+    Record und erscheint im Settlement-Modus als `NO_RECORD`, nicht als `UPCOMING`.
+    `UPCOMING` und `PARTIAL` bleiben in Code (`settle`/`settle_tx`-CTE) und Doku als
+    mögliche Werte stehen — defensiv, falls ein anderer Space oder Acquirer sich anders
+    verhält —, gelten aber nicht mehr als Normalfall.
+  - `postingamount − valueamount` (Basis von `settlement_fees`/`processing_fees`) war
+    ausnahmslos positiv, keine negativen und keine Null-Werte. Das Vorzeichen der Formel
+    gilt damit als bestätigt.
+  - Keine Transaktion hatte mehr als einen Settlement-Record. Die Vor-Aggregation pro
+    Transaktion (`settle`/`settle_tx`-CTE) war in diesem Fall nicht nötig, bleibt aber
+    bewusst als Absicherung bestehen — Refunds aus einem späteren Settlement-Lauf sind
+    weiterhin denkbar, und ein anderer Space kann sich anders verhalten. Die Spalte
+    `anzahl_settlement_records` bleibt deshalb als Frühwarnung sinnvoll.
+  - **Wichtig für den Umgang mit diesen Punkten:** Sie stammen aus **einem** Space über
+    **einen** Zeitraum — „bisher beobachtet", nicht „gibt es nicht". `sql/
+    settlement_verifikation.sql` bleibt im Repo, um sie bei Bedarf (anderer Space, anderer
+    Acquirer, Schema-Änderung) erneut zu prüfen; Query 5 misst zusätzlich direkt den
+    `NO_RECORD`-Anteil (Transaktionen des Zeitraums ganz ohne Settlement-Record).
+  - Der Range-Join im `payoutref`-CTE auf `currentaccountwithdrawal` ist ohne ein
+    zusätzliches **absolutes** Zeitfenster nicht praktikabel: eine rein korrelierte
+    Bedingung (`w.createdon` relativ zu `bt.valuedate`) gibt dem Optimizer kein konstantes
+    Prädikat, wodurch die Tabelle nicht per Partition beschnitten werden kann und voll
+    gescannt wird. Genau das liess eine Diagnose-Query an dieser Stelle ins Timeout laufen,
+    obwohl sie nur eine Woche Transaktionen umfasste. Der `payoutref`-CTE hat deshalb neben
+    der korrelierten Bedingung zusätzlich ein absolutes Fenster aus dem Berichtszeitraum
+    (`<start>` bis `<ende> + 30 Tage`) — beide Bedingungen sind nötig, keine ersetzt die
+    andere.
 - **Grenzen der Analytics** (nicht lösbar, dem Kunden so kommunizieren):
   - Keine IC++-Aufschlüsselung (DCC/Interchange/Scheme/Acquirer) — nur `totalappliedfees` gesamt.
   - Eine Query läuft in **einem** Account; Spaces fremder Accounts → Permission Error.
@@ -199,15 +244,11 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
 
 - Settlement-Referenz-Zuordnung über Withdrawals ist heuristisch (zeitbasiert) —
   beobachten, ob es einen direkten Verknüpfungspfad gibt.
-- Das 30-Tage-Fenster (maximale Auszahlungslatenz, siehe `payoutref`-CTE) ist eine Annahme
-  — gegen echte Fälle validieren, inkl. mehrerer Settlements pro Transaktion bei
-  unterschiedlichen Brands. Auf der Withdrawal-Seite des Joins fehlt dabei noch eine
-  absolute Obergrenze — aktuell steht dort nur die korrelierte Bedingung
-  (`w.createdon >= bt.valuedate AND w.createdon < bt.valuedate + INTERVAL '30' DAY`).
-- Ein Live-Lauf gegen einen echten Account steht noch aus, um zu bestätigen: die
-  Vorzeichen der Settlement-Gebühren (`settlement_fees` / `processing_fees`), die
-  tatsächlich vorkommenden Werte von `banktransaction.state` und ob das 30-Tage-Fenster
-  in der Praxis passt.
+- Das 30-Tage-Fenster (maximale Auszahlungslatenz, siehe `payoutref`-CTE) ist weiterhin eine
+  Annahme — gegen echte Fälle validieren, inkl. mehrerer Settlements pro Transaktion bei
+  unterschiedlichen Brands, falls das doch vorkommt. `sql/settlement_verifikation.sql`
+  Query 3 misst die reale Verteilung und läuft dank des absoluten Zeitfensters auf
+  `w.createdon` jetzt durch, statt wie zuvor ins Timeout zu laufen.
 - `spacereference`-Join über `accountid` als Weg, alle Spaces eines Accounts automatisch
   zu erfassen — für einen späteren Ausbau des Space-Selektors.
 - Refund-Berücksichtigung (`- SUM(t.refundedamount)`) als Option.

@@ -40,6 +40,27 @@ bzw. direkt als Spalte `gross_excl_tip`).
 Das ist an echten Daten geprüft und bestätigt — mit `sql/tip_verifikation.sql` lässt
 sich das bei Bedarf (anderer Space, Schema-Änderung) erneut nachprüfen.
 
+## Settlement-Status
+
+`settlement_state` zeigt, ob eine Transaktion bereits ausbezahlt ist: **SETTLED** =
+ausbezahlt, **NO_RECORD** = für diese Transaktion existiert noch gar kein
+Settlement-Record. Nach einer Prüfung an Produktivdaten ist **NO_RECORD** bisher der
+beobachtete Normalfall für eine Transaktion, die noch auf ihre Auszahlung wartet — ein
+Settlement-Record scheint erst zu entstehen, wenn tatsächlich abgerechnet wurde.
+**UPCOMING** (noch ausstehend) und **PARTIAL** (teilweise ausbezahlt, z. B. bei einem
+Refund aus einem späteren Settlement-Lauf) bleiben im Generator als mögliche Werte
+vorgesehen, falls sich ein anderer Space oder Acquirer anders verhält, wurden bislang
+aber nicht beobachtet.
+
+Die Gebühren auf Settlement-Ebene (`postingamount − valueamount`) sind an Produktivdaten
+mit durchgehend positivem Vorzeichen bestätigt. Ebenfalls geprüft: keine Transaktion hatte
+in der Stichprobe mehr als einen Settlement-Record — die Vor-Aggregation im Generator
+bleibt trotzdem als Absicherung bestehen, `anzahl_settlement_records` als Frühwarnung.
+
+Diese Ergebnisse stammen aus einem Space über einen Zeitraum — „bisher beobachtet", nicht
+„gibt es nicht". Mit `sql/settlement_verifikation.sql` lässt sich das bei Bedarf (anderer
+Space, anderer Acquirer, Schema-Änderung) erneut nachprüfen.
+
 ## Hinweis zu Apple Pay, Google Pay und tokenisierten Karten
 
 Die letzten vier Ziffern im Wallet sind **nicht** die der physischen Karte —
@@ -63,7 +84,7 @@ Kartennummer noch Autorisierungscode.
 
 ## Entwicklung
 
-Tests laufen ohne Browser und ohne Dependencies (61 Tests in
+Tests laufen ohne Browser und ohne Dependencies (62 Tests in
 `test/queries.test.js` und `test/tip_unsettled.test.js`):
 
 ```bash

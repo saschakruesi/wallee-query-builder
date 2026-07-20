@@ -84,9 +84,30 @@ test('Auszahlungsreferenz zieht ein begrenztes payoutref-CTE nach', () => {
   assert.match(sql, /INTERVAL '30' DAY/);
   assert.match(sql, /min_by\(/);
   assert.doesNotMatch(sql, /ROW_NUMBER\(\)/);
-  // Die psr/bt-Seite des Range-Joins ist ueber tx eingegrenzt. Die w-Seite hat
-  // bislang nur die korrelierte 30-Tage-Bedingung - siehe offener Punkt im Plan.
+  // Die psr/bt-Seite des Range-Joins ist ueber tx eingegrenzt.
   assert.match(sql, /psr\.transaction_id IN \(SELECT id FROM tx\)/);
+});
+
+test('payoutref-CTE: w-Seite des Joins hat sowohl die korrelierte als auch die absolute Zeitbedingung', () => {
+  // Die korrelierte Bedingung (w.createdon relativ zu bt.valuedate) sichert die
+  // fachliche Zuordnung. Ohne zusaetzlich ein absolutes, konstantes Praedikat
+  // auf w.createdon kann der Optimizer currentaccountwithdrawal nicht per
+  // Partition beschneiden und scannt die ganze Tabelle - genau das liess eine
+  // Diagnose-Query (sql/settlement_verifikation.sql, Query 3) ins Timeout
+  // laufen. Beide Bedingungen muessen deshalb nebeneinander im CTE stehen.
+  const cols = ALL_ON();
+  const sql = B.buildExportQuery({ ...RANGE, terminalIds: [], cols });
+  const cteMatch = sql.match(/payoutref AS \(([\s\S]*?)\n\)/);
+  assert.ok(cteMatch, 'payoutref-CTE nicht gefunden');
+  const cte = cteMatch[1];
+
+  // korrelierte Bedingung (bleibt fuer die fachliche Zuordnung bestehen)
+  assert.match(cte, /w\.createdon >= bt\.valuedate/);
+  assert.match(cte, /w\.createdon\s*<\s*bt\.valuedate \+ INTERVAL '30' DAY/);
+
+  // absolute Bedingung, abgeleitet aus dem Berichtszeitraum (RANGE.start/RANGE.end)
+  assert.match(cte, /w\.createdon >= TIMESTAMP '2026-07-01 00:00:00'/);
+  assert.match(cte, /w\.createdon\s*<\s*TIMESTAMP '2026-07-02 00:00:00' \+ INTERVAL '30' DAY/);
 });
 
 test('settle-CTE filtert bt.state nicht in der WHERE-Klausel (UPCOMING bleibt sichtbar)', () => {

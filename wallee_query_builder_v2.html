@@ -769,14 +769,14 @@
 
   <div class="panel cond-section" id="settlementSection">
     <h2>Settlement / Auszahlung</h2>
-    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Zeigt pro Tag, ob die Transaktionen bereits ausbezahlt sind. <code>settlement_state</code>: <strong>SETTLED</strong> = ausbezahlt, <strong>UPCOMING</strong> = noch ausstehend, <strong>PARTIAL</strong> = teilweise ausbezahlt (typisch, wenn ein Refund erst in einem späteren Settlement-Lauf abgerechnet wird), <strong>NO_RECORD</strong> = für diese Transaktion existiert noch gar kein Settlement-Record. Die Gebühren stammen hier aus der Banktransaktion (<code>postingamount − valueamount</code>) und sind für den Kontoabgleich genauer als <code>totalappliedfees</code>.</p>
+    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Zeigt pro Tag, ob die Transaktionen bereits ausbezahlt sind. <code>settlement_state</code>: <strong>SETTLED</strong> = ausbezahlt, <strong>NO_RECORD</strong> = für diese Transaktion existiert noch gar kein Settlement-Record — bisher der beobachtete Normalfall für eine Transaktion, die noch auf ihre Auszahlung wartet. <strong>UPCOMING</strong> (noch ausstehend) und <strong>PARTIAL</strong> (teilweise ausbezahlt, z. B. wenn ein Refund erst in einem späteren Settlement-Lauf abgerechnet wird) sind zusätzlich vorgesehen, falls ein anderer Space oder Acquirer sich anders verhält, wurden bislang aber nicht beobachtet. Die Gebühren stammen hier aus der Banktransaktion (<code>postingamount − valueamount</code>, an Produktivdaten mit durchgehend positivem Vorzeichen bestätigt) und sind für den Kontoabgleich genauer als <code>totalappliedfees</code>.</p>
 
     <label class="check-row">
       <input type="checkbox" id="settlementByTerminal" />
       <span>Zusätzlich nach Terminal aufschlüsseln</span>
     </label>
 
-    <p class="hint" style="margin-top:14px;margin-bottom:0;">Stimmt <code>anzahl_settlement_records</code> nicht mit <code>anzahl_transaktionen</code> überein, gibt es Transaktionen mit mehreren Settlement-Records — typischerweise Refunds oder Korrekturen, die in einem späteren Lauf abgerechnet wurden.</p>
+    <p class="hint" style="margin-top:14px;margin-bottom:0;">Stimmt <code>anzahl_settlement_records</code> nicht mit <code>anzahl_transaktionen</code> überein, gibt es Transaktionen mit mehreren Settlement-Records — typischerweise Refunds oder Korrekturen, die in einem späteren Lauf abgerechnet wurden. In einer Prüfung an Produktivdaten kam dieser Fall nicht vor; die Vor-Aggregation bleibt trotzdem als Absicherung bestehen.</p>
 
     <p class="hint" style="margin-top:14px;margin-bottom:0;"><code>tip_total</code>: Trinkgeld-Anteil (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.</p>
   </div>
@@ -790,7 +790,7 @@
       </div>
     </div>
     <pre id="sqlOutput"></pre>
-    <p class="hint">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> (SETTLED = ausbezahlt, UPCOMING = ausstehend, PARTIAL = teilweise ausbezahlt) im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export. <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
+    <p class="hint">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export: SETTLED = ausbezahlt, <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) = bisher der beobachtete Normalfall für „noch nicht abgerechnet". UPCOMING (ausstehend) und PARTIAL (teilweise ausbezahlt) sind zusätzlich vorgesehen, wurden bislang aber nicht beobachtet. NO_RECORD gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
   </div>
 </div>
 
@@ -829,7 +829,7 @@
     { key:'terminalid',  name:'Terminal-ID (intern)',    sql:'t.terminal_id',                                      alias:'terminal_id',           def:false, desc:'Interne Terminal-ID der Transaktion.' },
     { key:'merchantref', name:'Händlerreferenz',         sql:'t.merchantreference',                                alias:'merchant_reference',    def:false, desc:'merchantreference der Transaktion.' },
     { key:'payout',      name:'Echtes Auszahlungsdatum', sql:'settle.auszahlungsdatum',                            alias:'auszahlungsdatum',      def:true,  desc:'Valutadatum der Auszahlung aus dem Settlement (kann später als der Abschluss sein).', needsSettle:true },
-    { key:'settlestate', name:'Settlement-Status',       sql:'settle.settlement_state',                            alias:'settlement_state',      def:true,  desc:'Status der Banktransaktion: SETTLED = ausbezahlt, UPCOMING = noch ausstehend, PARTIAL = teilweise ausbezahlt (z. B. Refund in einem späteren Settlement-Lauf). Leer = noch kein Settlement-Record vorhanden. Ersetzt die frühere unmatched-Schätzung.', needsSettle:true },
+    { key:'settlestate', name:'Settlement-Status',       sql:'settle.settlement_state',                            alias:'settlement_state',      def:true,  desc:'Status der Banktransaktion: SETTLED = ausbezahlt. Leer = noch kein Settlement-Record vorhanden — bisher der beobachtete Normalfall für eine Transaktion, die noch auf ihre Auszahlung wartet. UPCOMING (noch ausstehend) und PARTIAL (teilweise ausbezahlt, z. B. Refund in einem späteren Settlement-Lauf) sind zusätzlich vorgesehen, falls ein anderer Space oder Acquirer sich anders verhält, wurden bislang aber nicht beobachtet. Ersetzt die frühere unmatched-Schätzung.', needsSettle:true },
     { key:'settlenet',   name:'Auszahlungsbetrag',       sql:'settle.settlement_net',                              alias:'settlement_net',        def:false, desc:'Tatsächlich ausbezahlter Betrag (banktransaction.valueamount).', needsSettle:true },
     { key:'settlefees',  name:'Settlement-Gebühren',     sql:'settle.settlement_fees',                             alias:'settlement_fees',       def:false, desc:'Auf Settlement-Ebene abgerechnete Gebühren (postingamount − valueamount). Für den Bankabgleich genauer als totalappliedfees.', needsSettle:true },
     { key:'settlecount', name:'Anzahl Settlement-Records',sql:'settle.settlement_records',                         alias:'settlement_records',    def:false, desc:'Anzahl Settlement-Records dieser Transaktion. Grösser als 1 bei Refunds oder Korrekturen.', needsSettle:true },
@@ -1529,9 +1529,19 @@ ORDER BY
     -- ACHTUNG: rein zeitliche, heuristische Zuordnung - es gibt keinen direkten
     -- Fremdschluessel von der Banktransaktion zur Withdrawal.
     -- Zugeordnet wird die frueheste Withdrawal, die im Fenster
-    -- [valuedate, valuedate + 30 Tage) erstellt wurde. Ohne diese Obergrenze
-    -- entsteht ein unbegrenzter Range-Join (Cartesian Product) und die Query
-    -- laeuft ins Timeout.
+    -- [valuedate, valuedate + 30 Tage) erstellt wurde.
+    -- Der Join auf w braucht zwei Bedingungen, keine ersetzt die andere:
+    --  - die korrelierte (w.createdon >= bt.valuedate ... + 30 Tage) sichert die
+    --    fachliche Zuordnung "fruehste Withdrawal nach dem Valutadatum";
+    --  - die absolute (w.createdon >= TIMESTAMP <start> ... < TIMESTAMP <ende>
+    --    + 30 Tage) ist fuer den Optimizer da: ohne ein konstantes Praedikat
+    --    auf w kann Presto currentaccountwithdrawal nicht per Partition
+    --    beschneiden und muss die ganze Tabelle scannen. Genau das liess eine
+    --    Diagnose-Query an dieser Stelle in ein Timeout laufen (siehe
+    --    sql/settlement_verifikation.sql, Query 3). Fachlich verliert das
+    --    nichts: w.createdon liegt durch die korrelierte Bedingung ohnehin
+    --    nicht vor bt.valuedate, und ein Valutadatum liegt nicht vor dem
+    --    Beginn des Berichtszeitraums.
     SELECT
         psr.transaction_id,
         min_by(w.internalreference, w.createdon) AS settlement_reference
@@ -1542,6 +1552,8 @@ ORDER BY
     JOIN currentaccountwithdrawal w
       ON w.createdon >= bt.valuedate
      AND w.createdon <  bt.valuedate + INTERVAL '30' DAY
+     AND w.createdon >= TIMESTAMP '${start}'
+     AND w.createdon <  TIMESTAMP '${end}' + INTERVAL '30' DAY
     WHERE psr.transaction_id IN (SELECT id FROM tx)
     GROUP BY psr.transaction_id
 )`);
