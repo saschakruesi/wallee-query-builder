@@ -262,3 +262,125 @@ SELECT
 FROM tx t
 LEFT JOIN settle_exists se
        ON se.transaction_id = t.id;
+
+
+-- =====================================================================
+-- (6) Wie verteilen sich Gebuehr und Settlement-Record wirklich?
+-- =====================================================================
+--
+-- Warum das zaehlt:
+--   Die Spalte unsettled_anzahl in den Brand-Modi zaehlt Transaktionen, auf
+--   denen KEINE Gebuehr liegt UND fuer die KEIN Settlement-Record existiert -
+--   beide Bedingungen gemeinsam.
+--   Gebuehr und Settlement treffen aber asynchron ein, und vermutlich nicht im
+--   Gleichschritt. Kommt die Gebuehr typischerweise frueher, haetten die meisten
+--   noch nicht ausbezahlten Transaktionen bereits eine Gebuehr und fielen aus
+--   dem Zaehler heraus. Er zeigte dann eine viel kleinere Zahl als "wartet noch
+--   auf Auszahlung" vermuten laesst.
+--
+-- Lesart:
+--   Die vier Kombinationen zeigen, was der Zaehler tatsaechlich misst:
+--     mit Gebuehr,  mit Record   -> vollstaendig abgeschlossen
+--     mit Gebuehr,  ohne Record  -> Gebuehr bekannt, Auszahlung ausstehend
+--     ohne Gebuehr, mit Record   -> ungewoehnlich, genauer ansehen
+--     ohne Gebuehr, ohne Record  -> das ist die heutige unsettled_anzahl
+--   Ist die letzte Zeile deutlich kleiner als die Summe der beiden mittleren,
+--   misst der Zaehler enger als "wartet noch auf Auszahlung".
+
+WITH tx AS (
+    SELECT t.id, t.totalappliedfees
+    FROM transaction t
+    WHERE t.spaceid = <SPACE_ID>
+      AND t.completedon >= TIMESTAMP '<START>'
+      AND t.completedon <  TIMESTAMP '<ENDE>'
+      AND t.state IN ('FULFILL', 'COMPLETED')
+),
+settle_exists AS (
+    SELECT DISTINCT psr.transaction_id
+    FROM payfacsettlementrecord psr
+    WHERE psr.transaction_id IN (SELECT id FROM tx)
+)
+SELECT
+    CASE WHEN tx.totalappliedfees IS NULL OR tx.totalappliedfees = 0
+         THEN 'ohne Gebuehr' ELSE 'mit Gebuehr' END        AS gebuehr,
+    CASE WHEN se.transaction_id IS NULL
+         THEN 'ohne Record'  ELSE 'mit Record'  END        AS settlement,
+    count(*)                                               AS anzahl
+FROM tx
+LEFT JOIN settle_exists se ON se.transaction_id = tx.id
+GROUP BY 1, 2
+ORDER BY 1, 2;
+
+
+-- =====================================================================
+-- (7) Ist currentaccountwithdrawal ueberhaupt beherrschbar?
+-- =====================================================================
+--
+-- Warum das zaehlt:
+--   Query (3) lief auch mit absolutem Zeitfenster und mit auf 15 Tage
+--   verkleinertem Messfenster ins Timeout. Damit ist die Fenstergroesse
+--   vermutlich nicht die Ursache, sondern die Tabelle selbst - offenbar laesst
+--   sie sich ueber createdon nicht beschneiden.
+--   Diese Query beruehrt NUR currentaccountwithdrawal, ohne jeden Join. Sie ist
+--   das billigste denkbare Experiment.
+--
+-- Lesart:
+--   Laeuft sie schnell durch und liefert eine ueberschaubare Zahl (Auszahlungen
+--   sind seltene Ereignisse, ein paar Dutzend bis Hunderte pro Zeitraum), dann
+--   ist die Tabelle klein und das Problem liegt in der Art des Joins - dann
+--   lohnt sich Query (8).
+--   Laeuft schon diese Query lange oder gar nicht, ist die Tabelle ueber
+--   Analytics nicht sinnvoll abfragbar. Dann ist die Spalte
+--   settlement_reference auf diesem Weg nicht umsetzbar, und das gehoert so
+--   in die Doku - eine Spalte, die zuverlaessig ins Timeout laeuft, hilft
+--   niemandem.
+
+SELECT
+    count(*)                    AS anzahl_auszahlungen,
+    min(w.createdon)            AS frueheste,
+    max(w.createdon)            AS spaeteste
+FROM currentaccountwithdrawal w
+WHERE w.createdon >= TIMESTAMP '<START>'
+  AND w.createdon <  TIMESTAMP '<ENDE>';
+
+
+-- =====================================================================
+-- (8) Auszahlungsdauer, mit vorab materialisierter Auszahlungsliste
+-- =====================================================================
+--
+-- Nur ausfuehren, wenn Query (7) schnell durchlief.
+--
+-- Warum anders als (3):
+--   (3) stellt den Range-Join direkt gegen die volle Tabelle. Hier wird die
+--   Auszahlungsliste zuerst in einem eigenen CTE auf den Zeitraum und auf die
+--   beiden benoetigten Spalten reduziert. Ist die Liste klein, hat der
+--   Optimizer danach nur noch ein kleines Zwischenergebnis zu verarbeiten.
+--   Funktioniert das, laesst sich derselbe Aufbau in den Generator uebernehmen.
+
+WITH tx AS (
+    SELECT t.id
+    FROM transaction t
+    WHERE t.spaceid = <SPACE_ID>
+      AND t.completedon >= TIMESTAMP '<START>'
+      AND t.completedon <  TIMESTAMP '<ENDE>'
+      AND t.state IN ('FULFILL', 'COMPLETED')
+),
+auszahlungen AS (
+    SELECT w.internalreference, w.createdon
+    FROM currentaccountwithdrawal w
+    WHERE w.createdon >= TIMESTAMP '<START>'
+      AND w.createdon <  TIMESTAMP '<ENDE>'
+)
+SELECT
+    date_diff('day', bt.valuedate, a.createdon)    AS tage_bis_auszahlung,
+    count(*)                                       AS anzahl
+FROM payfacsettlementrecord psr
+JOIN banktransaction bt
+  ON bt.id = psr.banktransaction_id
+ AND bt.state = 'SETTLED'
+JOIN auszahlungen a
+  ON a.createdon >= bt.valuedate
+ AND a.createdon <  bt.valuedate + INTERVAL '15' DAY
+WHERE psr.transaction_id IN (SELECT id FROM tx)
+GROUP BY date_diff('day', bt.valuedate, a.createdon)
+ORDER BY tage_bis_auszahlung;
