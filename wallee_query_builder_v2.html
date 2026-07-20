@@ -3,22 +3,24 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Wallee Analytics – Query Builder v2</title>
+<title>wallee Analytics – Query Builder v2</title>
 <style>
   :root {
-    --bg: #0f172a;
-    --panel: #1e293b;
-    --panel-2: #334155;
-    --border: #475569;
-    --text: #f1f5f9;
-    --muted: #94a3b8;
-    --accent: #38bdf8;
-    --accent-hover: #0ea5e9;
-    --success: #22c55e;
-    --danger: #ef4444;
-    --warn: #f59e0b;
-    --code-bg: #0b1220;
-    --code-text: #e2e8f0;
+    --bg: #f4f9f9;
+    --panel: #ffffff;
+    --panel-2: #e8f4f3;
+    --panel-3: #cbe6e2;
+    --border: #5c8a85;
+    --text: #414141;
+    --muted: #5b6664;
+    --accent: #11d9cc;
+    --accent-hover: #0da69c;
+    --accent-dark: #225956;
+    --success: #15803d;
+    --danger: #b91c1c;
+    --warn: #b45309;
+    --code-bg: #eff6f5;
+    --code-text: #2b3a3d;
   }
   * { box-sizing: border-box; }
   body {
@@ -29,8 +31,9 @@
     line-height: 1.5;
     padding: 24px;
   }
-  .container { max-width: 980px; margin: 0 auto; }
+  .container { max-width: 980px; margin: 0 auto; border-top: 4px solid var(--accent); padding-top: 20px; }
   h1 { margin: 0 0 4px; font-size: 24px; font-weight: 600; }
+  .brand-mark { color: var(--accent-dark); font-weight: 700; }
   .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 14px; }
   .panel {
     background: var(--panel);
@@ -69,7 +72,7 @@
   }
   .mode-btn.active {
     background: var(--accent);
-    color: #0b1220;
+    color: var(--text);
     font-weight: 600;
   }
 
@@ -92,7 +95,7 @@
     outline: none;
     transition: border-color 0.2s;
   }
-  .field input:focus { border-color: var(--accent); }
+  .field input:focus { border-color: var(--accent-dark); }
 
   /* Datetime input */
   .datetime-row {
@@ -111,7 +114,7 @@
     transition: border-color 0.2s;
     height: 32px;
   }
-  .dt-input:focus-within { border-color: var(--accent); }
+  .dt-input:focus-within { border-color: var(--accent-dark); }
   .dt-date {
     flex: 1;
     background: transparent;
@@ -125,7 +128,7 @@
     min-width: 0;
   }
   .dt-date::-webkit-calendar-picker-indicator {
-    filter: invert(1); opacity: 0.6; cursor: pointer;
+    filter: none; opacity: 0.7; cursor: pointer;
     padding: 0; margin-left: 2px;
   }
   .time-group {
@@ -163,7 +166,7 @@
     transition: color 0.15s;
     user-select: none;
   }
-  .spin-btn:hover { color: var(--accent); }
+  .spin-btn:hover { color: var(--accent-dark); }
   .spin-btn:active { color: var(--accent-hover); }
   .time-sep {
     color: var(--muted);
@@ -188,16 +191,16 @@
     align-items: center;
     gap: 6px;
   }
-  .preset-chip:hover { color: var(--text); border-color: var(--accent); }
+  .preset-chip:hover { color: var(--text); border-color: var(--accent-hover); }
   .preset-chip.user-preset {
-    background: rgba(56, 189, 248, 0.12);
-    color: var(--accent);
-    border-color: rgba(56, 189, 248, 0.45);
+    background: rgba(17, 217, 204, 0.14);
+    color: var(--accent-dark);
+    border-color: rgba(34, 89, 86, 0.45);
   }
   .preset-chip.user-preset:hover {
-    background: rgba(56, 189, 248, 0.22);
-    color: #fff;
-    border-color: var(--accent);
+    background: rgba(17, 217, 204, 0.26);
+    color: var(--text);
+    border-color: var(--accent-dark);
   }
   .preset-chip .chip-del {
     background: transparent;
@@ -226,7 +229,7 @@
     font-style: normal;
     font-weight: 600;
   }
-  .label-help:hover { color: var(--accent); }
+  .label-help:hover { color: var(--accent-dark); }
   .label-suffix {
     color: var(--muted);
     font-size: 11px;
@@ -245,7 +248,7 @@
     font-family: "SF Mono", Monaco, monospace;
     transition: all 0.15s;
   }
-  .quick-time:hover { color: var(--accent); border-color: var(--accent); }
+  .quick-time:hover { color: var(--accent-dark); border-color: var(--accent-hover); }
 
   /* Conditional sections */
   .cond-section { display: none; }
@@ -254,8 +257,8 @@
   .wallet-note {
     margin-top: 18px;
     padding: 14px 16px;
-    border-left: 3px solid #d98324;
-    background: rgba(217, 131, 36, 0.07);
+    border-left: 3px solid var(--warn);
+    background: rgba(180, 83, 9, 0.06);
     border-radius: 4px;
     font-size: 13px;
     line-height: 1.55;
@@ -286,7 +289,7 @@
   }
   .tab-btn:hover { color: var(--text); }
   .tab-btn.active {
-    color: var(--accent);
+    color: var(--accent-dark);
     border-bottom-color: var(--accent);
   }
   .tab-pane { display: none; }
@@ -302,12 +305,12 @@
     background: var(--code-bg);
   }
   .import-box:hover {
-    border-color: var(--accent);
-    background: rgba(56, 189, 248, 0.05);
+    border-color: var(--accent-hover);
+    background: rgba(17, 217, 204, 0.06);
   }
   .import-box.dragover {
-    border-color: var(--accent);
-    background: rgba(56, 189, 248, 0.12);
+    border-color: var(--accent-hover);
+    background: rgba(17, 217, 204, 0.14);
   }
   .import-icon { font-size: 32px; margin-bottom: 8px; }
   .import-title { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 6px; }
@@ -322,15 +325,15 @@
     margin-top: 10px;
     padding: 10px 12px;
     border-radius: 6px;
-    background: rgba(34, 197, 94, 0.12);
-    border: 1px solid rgba(34, 197, 94, 0.4);
+    background: rgba(21, 128, 61, 0.12);
+    border: 1px solid rgba(21, 128, 61, 0.4);
     color: var(--success);
     font-size: 13px;
     display: none;
   }
   .import-toast.error {
-    background: rgba(239, 68, 68, 0.12);
-    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(185, 28, 28, 0.12);
+    border-color: rgba(185, 28, 28, 0.4);
     color: var(--danger);
   }
   .import-toast.show { display: block; }
@@ -350,7 +353,7 @@
     font-family: inherit;
     outline: none;
   }
-  .add-row input:focus { border-color: var(--accent); }
+  .add-row input:focus { border-color: var(--accent-dark); }
   .item-list {
     background: var(--code-bg);
     border: 1px solid var(--border);
@@ -433,13 +436,13 @@
     transition: all 0.2s;
     font-family: inherit;
   }
-  .btn:hover { background: var(--border); }
+  .btn:hover { background: var(--panel-3); }
   .btn-primary {
     background: var(--accent);
-    color: #0b1220;
+    color: var(--text);
     border-color: var(--accent);
   }
-  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn-primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: #fff; }
   .btn-copy.copied { background: var(--success); color: #fff; border-color: var(--success); }
   .output-header {
     display: flex;
@@ -474,7 +477,7 @@
   .badge {
     display: inline-block;
     background: var(--panel-2);
-    color: var(--accent);
+    color: var(--accent-dark);
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 11px;
@@ -484,7 +487,7 @@
   .count-pill {
     display: inline-block;
     background: var(--accent);
-    color: #0b1220;
+    color: var(--text);
     padding: 2px 8px;
     border-radius: 10px;
     font-size: 11px;
@@ -513,10 +516,10 @@
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
   }
-  .col-item:hover { border-color: var(--accent); }
-  .col-item.checked { border-color: rgba(56,189,248,0.55); background: rgba(56,189,248,0.06); }
+  .col-item:hover { border-color: var(--accent-hover); }
+  .col-item.checked { border-color: rgba(34,89,86,0.55); background: rgba(17,217,204,0.08); }
   .col-item.sensitive { border-style: dashed; }
-  .col-item.sensitive.checked { border-color: rgba(245,158,11,0.7); background: rgba(245,158,11,0.08); }
+  .col-item.sensitive.checked { border-color: rgba(180,83,9,0.75); background: rgba(180,83,9,0.08); }
   .col-item input[type="checkbox"] {
     width: 16px; height: 16px;
     margin-top: 2px;
@@ -549,7 +552,7 @@
 </head>
 <body>
 <div class="container">
-  <h1>Wallee Analytics – Query Builder <span class="badge">v4</span></h1>
+  <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v4</span></h1>
   <p class="subtitle">Brand-Auswertung · Brand + Terminal-Filter · Transaktions-Export · Kartensuche · Settlement / Auszahlung · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
 
   <div class="panel">
