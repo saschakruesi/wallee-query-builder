@@ -70,6 +70,8 @@ const EXPORTED = [
   'spaceInClause',
   'txCte',
   'cardCte',
+  'tipCte',
+  'settleExistsCte',
   'loadState',
   'saveState',
   'STORAGE_KEY',

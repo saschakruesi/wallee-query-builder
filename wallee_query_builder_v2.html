@@ -549,8 +549,8 @@
 </head>
 <body>
 <div class="container">
-  <h1>Wallee Analytics – Query Builder <span class="badge">v3</span></h1>
-  <p class="subtitle">Brand-Auswertung · Brand + Terminal-Filter · Transaktions-Export · Kartensuche · Settlement / Auszahlung · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
+  <h1>Wallee Analytics – Query Builder <span class="badge">v4</span></h1>
+  <p class="subtitle">Brand-Auswertung · Brand + Terminal-Filter · Transaktions-Export · Kartensuche · Settlement / Auszahlung · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
 
   <div class="panel">
     <h2>Modus</h2>
@@ -796,8 +796,12 @@
   const DESC_MASKED_CARD = '1456765125779';
   const DESC_AUTH_CODE   = '1579287795628';
 
+  // Line-Item-Typ fuer Trinkgeld (lineitem.type). Trinkgeld wird von wallee nicht
+  // als Feld auf transaction gefuehrt, sondern als eigene Line-Item-Position.
+  const TIP_LINEITEM_TYPE = 'TIP';
+
   // Spaltenkatalog für den Transaktions-Export.
-  // flags: needsConn (pcc/pc-Join), needsTerm (pt-Join), needsCard (charge/chargeattempt-CTE), needsSettle (Settlement-CTE), needsPayoutRef (Withdrawal-CTE)
+  // flags: needsConn (pcc/pc-Join), needsTerm (pt-Join), needsCard (charge/chargeattempt-CTE), needsSettle (Settlement-CTE), needsPayoutRef (Withdrawal-CTE), needsTip (Tip-CTE, transaction_lineitem/lineitem)
   const EXPORT_COLUMNS = [
     { key:'spaceid',     name:'Space-ID',                sql:'t.spaceid',                                          alias:'space_id',              def:true,  desc:'Space-ID der Transaktion.' },
     { key:'createdon',   name:'Erstellt',                sql:'t.createdon',                                        alias:'createdon',             def:true,  desc:'Zeitpunkt Erstellung / Autorisierung der Transaktion.' },
@@ -807,6 +811,8 @@
     { key:'gross',       name:'Bruttobetrag',            sql:'t.completedamount',                                  alias:'gross_amount',          def:true,  desc:'Abgeschlossener Bruttobetrag (completedamount).' },
     { key:'fees',        name:'Gebühren',                sql:'COALESCE(t.totalappliedfees, 0)',                    alias:'processing_fees',       def:true,  desc:'Total der angewandten Gebühren (totalappliedfees).' },
     { key:'net',         name:'Nettobetrag',             sql:'t.completedamount - COALESCE(t.totalappliedfees, 0)', alias:'net_amount',           def:true,  desc:'Brutto − Gebühren (berechnet).' },
+    { key:'tip',         name:'Trinkgeld',               sql:'COALESCE(tip.tip_amount, 0)',                        alias:'tip_amount',            def:false, desc:'Trinkgeld der Transaktion (Line Items vom Typ TIP). Annahme (noch nicht empirisch bestätigt, siehe sql/tip_verifikation.sql): bereits im Bruttobetrag enthalten, nicht additiv.', needsTip:true },
+    { key:'grossnotip',  name:'Brutto ohne Trinkgeld',   sql:'t.completedamount - COALESCE(tip.tip_amount, 0)',   alias:'gross_excl_tip',        def:false, desc:'Bruttobetrag abzüglich Trinkgeld. Nur sinnvoll, falls die Annahme "Trinkgeld ist im Brutto enthalten" zutrifft.', needsTip:true },
     { key:'connername',  name:'Connector/Brand-Name',    sql:"COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')",    alias:'payment_connector_name',def:true,  desc:'Name des Connectors / Brand.', needsConn:true },
     { key:'connector',   name:'Connector-ID',            sql:'pcc.connector',                                      alias:'connector',             def:false, desc:'Interne Connector-ID.', needsConn:true },
     { key:'terminalident',name:'Terminal-Identifier',    sql:'pt.identifier',                                      alias:'terminal_identifier',   def:true,  desc:'Auf dem Gerät angezeigter Identifier.', needsTerm:true },
@@ -1280,20 +1286,31 @@
 
   // --- SQL Generation: Brand ----------------------------------------------
   function buildBrandQuery({ spaceIds, start, end }) {
-    return `SELECT
+    // WITH-Klausel fuer unsettled_anzahl (Erweiterung 2) und tip_total
+    // (Erweiterung 1). Beide CTEs sind ueber tx eingegrenzt, damit sie nicht die
+    // gesamte payfacsettlementrecord- bzw. lineitem-Historie des Space scannen.
+    return `WITH ${txCte({ spaceIds, start, end })},
+${settleExistsCte()},
+${tipCte({ spaceIds })}
+SELECT
     t.spaceid                                                    AS space_id,
     COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')              AS brand,
     t.currency                                                   AS waehrung,
     COUNT(*)                                                     AS anzahl_transaktionen,
+    SUM(CASE WHEN (t.totalappliedfees IS NULL OR t.totalappliedfees = 0)
+              AND se.transaction_id IS NULL THEN 1 ELSE 0 END)  AS unsettled_anzahl,
     SUM(t.completedamount)                                       AS brutto_gross,
     SUM(t.totalappliedfees)                                      AS transaction_fee_total,
-    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto
+    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto,
+    COALESCE(SUM(tip.tip_amount), 0)                             AS tip_total
 FROM transaction t
 LEFT JOIN paymentconnectorconfiguration pcc
        ON pcc.id      = t.paymentconnectorconfiguration_id
       AND pcc.spaceid = t.spaceid
 LEFT JOIN paymentconnector pc
        ON pc.id       = pcc.connector
+LEFT JOIN settle_exists se ON se.transaction_id = t.id
+LEFT JOIN tip           ON tip.transaction_id   = t.id
 WHERE ${spaceInClause(spaceIds, 't.spaceid')}
   AND t.completedon >= TIMESTAMP '${start}'
   AND t.completedon <  TIMESTAMP '${end}'
@@ -1315,16 +1332,24 @@ ORDER BY
     const inClause = terminalIds.length === 1
       ? `pt.identifier = ${idList}`
       : `pt.identifier IN (${idList})`;
-    return `SELECT
+    // WITH-Klausel fuer unsettled_anzahl (Erweiterung 2) und tip_total
+    // (Erweiterung 1) - siehe Kommentar in buildBrandQuery.
+    return `WITH ${txCte({ spaceIds, start, end })},
+${settleExistsCte()},
+${tipCte({ spaceIds })}
+SELECT
     t.spaceid                                                    AS space_id,
     pt.identifier                                                AS terminal_identifier,
     pt.name                                                      AS terminal_name,
     COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')              AS brand,
     t.currency                                                   AS waehrung,
     COUNT(*)                                                     AS anzahl_transaktionen,
+    SUM(CASE WHEN (t.totalappliedfees IS NULL OR t.totalappliedfees = 0)
+              AND se.transaction_id IS NULL THEN 1 ELSE 0 END)  AS unsettled_anzahl,
     SUM(t.completedamount)                                       AS brutto_gross,
     SUM(t.totalappliedfees)                                      AS transaction_fee_total,
-    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto
+    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto,
+    COALESCE(SUM(tip.tip_amount), 0)                             AS tip_total
 FROM transaction t
 LEFT JOIN paymentconnectorconfiguration pcc
        ON pcc.id      = t.paymentconnectorconfiguration_id
@@ -1334,6 +1359,8 @@ LEFT JOIN paymentconnector pc
 LEFT JOIN paymentterminal pt
        ON pt.id       = t.terminal_id
       AND pt.spaceid  = t.spaceid
+LEFT JOIN settle_exists se ON se.transaction_id = t.id
+LEFT JOIN tip           ON tip.transaction_id   = t.id
 WHERE ${spaceInClause(spaceIds, 't.spaceid')}
   AND t.completedon >= TIMESTAMP '${start}'
   AND t.completedon <  TIMESTAMP '${end}'
@@ -1382,12 +1409,53 @@ ORDER BY
 )`;
   }
 
+  // Trinkgeld pro Transaktion: Line Items vom Typ TIP aufsummieren.
+  // lineitem NIEMALS direkt ins FROM der Aggregat-Modi joinen - eine Transaktion
+  // hat mehrere Line Items, der Join wuerde Zeilen vervielfachen und COUNT(*)/
+  // SUM(completedamount)/Fees zerstoeren. Deshalb hier vor-aggregiert
+  // (GROUP BY tl.transaction_id), erst danach per LEFT JOIN angehaengt.
+  // Eingrenzung ueber tx, sonst wird die gesamte lineitem-Historie des Space
+  // gescannt - exakt der Fehler, der beim Withdrawal-Join das Timeout verursachte.
+  // Wird von Export, Brand, Terminal und Settlement genutzt - nicht von der
+  // Kartensuche (dort geht es um Einzelfall-Identifikation, nicht um Beträge).
+  function tipCte({ spaceIds }) {
+    return `tip AS (
+    SELECT
+        tl.transaction_id,
+        SUM(li.amountincludingtax) AS tip_amount
+    FROM transaction_lineitem tl
+    JOIN lineitem li
+      ON li.id      = tl.lineitems_id
+     AND li.spaceid = tl.spaceid
+    WHERE ${spaceInClause(spaceIds, 'tl.spaceid')}
+      AND li.type = '${TIP_LINEITEM_TYPE}'
+      AND tl.transaction_id IN (SELECT id FROM tx)
+    GROUP BY tl.transaction_id
+)`;
+  }
+
+  // Existenz-Check pro Transaktion: liegt ueberhaupt schon ein
+  // payfacsettlementrecord vor? Vor-aggregiert (DISTINCT), damit der
+  // anschliessende LEFT JOIN die Transaktion nicht vervielfacht - derselbe
+  // Grund wie bei card/settle/tip. Bewusst OHNE Filter auf psr.spaceid:
+  // Settlement-Records liegen nicht zwingend unter der Merchant-Space-ID
+  // (siehe Kommentar im settle-CTE). Kein spaceIds-Parameter noetig, die
+  // Eingrenzung auf den Report kommt bereits ueber tx.
+  function settleExistsCte() {
+    return `settle_exists AS (
+    SELECT DISTINCT psr.transaction_id
+    FROM payfacsettlementrecord psr
+    WHERE psr.transaction_id IN (SELECT id FROM tx)
+)`;
+  }
+
   // --- SQL Generation: Transaktions-Export --------------------------------
   function buildExportQuery({ spaceIds, start, end, terminalIds, cols }) {
     const chosen = EXPORT_COLUMNS.filter(c => cols[c.key]);
     const needCard   = chosen.some(c => c.needsCard);
     const needSettle = chosen.some(c => c.needsSettle);
     const needPayoutRef = chosen.some(c => c.needsPayoutRef);
+    const needTip    = chosen.some(c => c.needsTip);
     const needConn   = chosen.some(c => c.needsConn);
     const needTerm   = chosen.some(c => c.needsTerm) || terminalIds.length > 0;
     const spaceIn    = spaceInClause(spaceIds, 't.spaceid');
@@ -1402,11 +1470,14 @@ ORDER BY
 
     // CTEs
     const ctes = [];
-    if (needCard || needSettle || needPayoutRef) {
+    if (needCard || needSettle || needPayoutRef || needTip) {
       ctes.push(txCte({ spaceIds, start, end }));
     }
     if (needCard) {
       ctes.push(cardCte({ spaceIds }));
+    }
+    if (needTip) {
+      ctes.push(tipCte({ spaceIds }));
     }
     if (needSettle) {
       ctes.push(`settle AS (
@@ -1489,6 +1560,9 @@ ORDER BY
     }
     if (needPayoutRef) {
       joins.push(`LEFT JOIN payoutref ON payoutref.transaction_id = t.id`);
+    }
+    if (needTip) {
+      joins.push(`LEFT JOIN tip       ON tip.transaction_id       = t.id`);
     }
     const joinClause = joins.length ? '\n' + joins.join('\n') : '';
 
@@ -1626,7 +1700,8 @@ settle_tx AS (
       ON bt.id = psr.banktransaction_id
     WHERE psr.transaction_id IN (SELECT id FROM tx)
     GROUP BY psr.transaction_id
-)
+),
+${tipCte({ spaceIds })}
 SELECT
     t.spaceid                                       AS space_id,
     date(t.completedon)                             AS tag,
@@ -1642,7 +1717,8 @@ SELECT
     SUM(t.completedamount)                          AS brutto_gross,
     SUM(s.net_amount)                               AS netamount,
     SUM(s.processing_fees)                          AS processing_fees,
-    SUM(s.gross_amount)                             AS settlement_gross
+    SUM(s.gross_amount)                             AS settlement_gross,
+    COALESCE(SUM(tip.tip_amount), 0)                AS tip_total
 FROM transaction t
 LEFT JOIN settle_tx s ON s.transaction_id = t.id
 LEFT JOIN paymentconnectorconfiguration pcc
@@ -1650,6 +1726,7 @@ LEFT JOIN paymentconnectorconfiguration pcc
       AND pcc.spaceid = t.spaceid
 LEFT JOIN paymentconnector pc
        ON pc.id       = pcc.connector${termJoin}
+LEFT JOIN tip ON tip.transaction_id = t.id
 ${whereClause}
 GROUP BY
     t.spaceid,
