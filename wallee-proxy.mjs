@@ -36,12 +36,18 @@ export const API_BASE = process.env.WALLEE_API_BASE || 'https://app-wallee.com';
 export const CONFIG_PATH = process.env.WALLEE_PROXY_CONFIG
   || path.join(os.homedir(), '.wallee-proxy.json');
 
-// Analytics-Endpunkte. In Task 10 gegen das offizielle SDK gegengeprueft.
+// Alle API-Pfade tragen diesen Praefix, und genau so gehen sie auch in die
+// Signatur ein (siehe baueToken).
+export const API_PATH = '/api/v2.0';
+
+// Analytics-Endpunkte, ausgelesen aus dem offiziellen python-sdk
+// (wallee/service/analytics_queries_service.py). Der Token wird ueber den
+// PFAD uebergeben, nicht als Query-Parameter.
 export const API_PFADE = {
-  submit: '/api/analytics/submit-query',
-  status: token => `/api/analytics/query-status?id=${encodeURIComponent(token)}`,
-  result: token => `/api/analytics/fetch-result?id=${encodeURIComponent(token)}`,
-  cancel: token => `/api/analytics/cancel-query?id=${encodeURIComponent(token)}`,
+  submit: '/analytics/queries/submit',
+  status: token => `/analytics/queries/queryToken/${encodeURIComponent(token)}`,
+  result: token => `/analytics/queries/queryToken/${encodeURIComponent(token)}/result`,
+  cancel: token => `/analytics/queries/queryToken/${encodeURIComponent(token)}`,
 };
 
 // --- Zugangsdaten ----------------------------------------------------------
@@ -97,31 +103,53 @@ export function pruefeZugangsdaten(werte) {
   return fehler;
 }
 
-// --- Signatur --------------------------------------------------------------
-// ACHTUNG: In Task 10 gegen den offiziellen wallee-API-Client zu verifizieren.
-// Bis dahin gilt das Schema als angenommen, nicht als bestaetigt.
+// --- Authentifizierung -----------------------------------------------------
+// Am offiziellen SDK verifiziert. Drei unabhaengige Implementierungen stimmen
+// ueberein:
+//   php-sdk        lib/Auth/HttpBearerAuth.php
+//   python-sdk     wallee/api_client.py, _apply_auth_params
+//   typescript-sdk src/auth/HttpBearerAuth.ts
 //
-// Erwartet: x-mac-value = base64(HMAC_SHA512(base64decode(secret), nachricht))
-// mit nachricht = "version|userId|timestamp|METHODE|/pfad?query"
+// Es ist ein JWT-Bearer-Token, KEINE x-mac-*-Header. Die aelteren SDKs
+// (magento-1, salesforce-cartridge) signieren noch per HMAC-SHA512 in
+// x-mac-value; das ist das Legacy-Schema und hier bewusst nicht umgesetzt.
+//
+//   header  = { alg: "HS256", typ: "JWT", ver: 1 }
+//   payload = { sub: "<userId>", iat: <unix-sekunden>,
+//               requestPath: "/api/v2.0<pfad>", requestMethod: "GET" }
+//   Schluessel = das BASE64-DEKODIERTE Secret, nicht die Zeichenkette selbst
+//   Header     = Authorization: Bearer <token>
 
-export const MAC_VERSION = '1';
-
-export function macNachricht({ version, userId, timestamp, methode, pfad }) {
-  return [version, userId, timestamp, String(methode).toUpperCase(), pfad].join('|');
+function base64url(wert) {
+  return Buffer.from(wert).toString('base64url');
 }
 
-export function signRequest({ userId, secret, methode, pfad, timestamp }) {
-  const ts = String(timestamp);
-  const nachricht = macNachricht({ version: MAC_VERSION, userId, timestamp: ts, methode, pfad });
-  const schluessel = Buffer.from(secret, 'base64');
-  const mac = crypto.createHmac('sha512', schluessel).update(nachricht, 'utf8').digest('base64');
+// Die eigentliche JWS-Operation, absichtlich getrennt: so laesst sie sich gegen
+// den Testvektor aus RFC 7515 A.1 pruefen, statt nur gegen sich selbst.
+// teile = "<base64url(header)>.<base64url(payload)>", schluessel = Rohbytes.
+export function jwtSignatur(teile, schluessel) {
+  return crypto.createHmac('sha256', schluessel).update(teile).digest('base64url');
+}
 
-  return {
-    'x-mac-version': MAC_VERSION,
-    'x-mac-userid': String(userId),
-    'x-mac-timestamp': ts,
-    'x-mac-value': mac,
+export function baueToken({ userId, secret, methode, pfad, iat }) {
+  const kopf = { alg: 'HS256', typ: 'JWT', ver: 1 };
+  const inhalt = {
+    // Das SDK setzt sub ausdruecklich als Zeichenkette (php castet, typescript
+    // ruft toString auf).
+    sub: String(userId),
+    iat: iat === undefined ? Math.floor(Date.now() / 1000) : iat,
+    requestPath: API_PATH + pfad,
+    requestMethod: String(methode).toUpperCase(),
   };
+
+  const teile = base64url(JSON.stringify(kopf)) + '.' + base64url(JSON.stringify(inhalt));
+  const schluessel = Buffer.from(secret, 'base64');
+
+  return `${teile}.${jwtSignatur(teile, schluessel)}`;
+}
+
+export function authHeader(argumente) {
+  return { Authorization: `Bearer ${baueToken(argumente)}` };
 }
 
 // --- CORS und Missbrauchsschutz -------------------------------------------
@@ -193,20 +221,18 @@ async function rufeApi(methode, pfad, koerper) {
     throw e;
   }
 
-  const timestamp = Math.floor(Date.now() / 1000);
   const kopf = {
-    ...signRequest({
+    ...authHeader({
       userId: zugangsdaten.userId,
       secret: zugangsdaten.secret,
       methode,
       pfad,
-      timestamp,
     }),
     Accept: 'application/json',
   };
   if (koerper !== undefined) kopf['Content-Type'] = 'application/json';
 
-  const antwort = await fetch(API_BASE + pfad, {
+  const antwort = await fetch(API_BASE + API_PATH + pfad, {
     method: methode,
     headers: kopf,
     body: koerper === undefined ? undefined : JSON.stringify(koerper),
@@ -409,7 +435,8 @@ export async function behandleAnfrage(req, res) {
       }
 
       case 'cancel': {
-        const antwort = await rufeApi('POST', API_PFADE.cancel(route.token));
+        // Das SDK bricht per DELETE ab, nicht per POST.
+        const antwort = await rufeApi('DELETE', API_PFADE.cancel(route.token));
         sendeJson(res, antwort.status, reicheDurch(antwort), origin);
         return;
       }
