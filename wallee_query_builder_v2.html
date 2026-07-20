@@ -897,12 +897,50 @@
     <div class="output-header">
       <span class="output-title">Generiertes SQL <span class="badge" id="modeBadge">Brand</span></span>
       <div class="actions">
+        <!-- Im API-Modus wird Submit zur Hauptaktion und das SQL klappt zu.
+             Im Kopieren-Modus bleibt alles wie bisher. -->
+        <button class="btn btn-primary hidden" id="submitBtn">Query ausführen</button>
+        <button class="btn hidden" id="sqlToggleBtn" aria-expanded="false">Query anzeigen</button>
         <button class="btn btn-copy" id="copyBtn">Kopieren</button>
         <button class="btn btn-primary" id="generateBtn">Neu generieren</button>
       </div>
     </div>
+    <p class="hint hidden" id="apiHinweis" style="margin-top:0;"></p>
     <pre id="sqlOutput"></pre>
-    <p class="hint">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export: SETTLED = ausbezahlt, <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) = bisher der beobachtete Normalfall für „noch nicht abgerechnet". UPCOMING (ausstehend) und PARTIAL (teilweise ausbezahlt) sind zusätzlich vorgesehen, wurden bislang aber nicht beobachtet. NO_RECORD gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
+    <p class="hint" id="sqlEinfuegenHinweis">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export: SETTLED = ausbezahlt, <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) = bisher der beobachtete Normalfall für „noch nicht abgerechnet". UPCOMING (ausstehend) und PARTIAL (teilweise ausbezahlt) sind zusätzlich vorgesehen, wurden bislang aber nicht beobachtet. NO_RECORD gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
+  </div>
+
+  <!-- Betriebsmodus: der Kopieren-Modus ist der Default und braucht nichts
+       installiert. Der API-Modus setzt einen lokal laufenden Proxy voraus. -->
+  <div class="panel">
+    <h2>Einstellungen</h2>
+
+    <label class="check-row">
+      <input type="checkbox" id="apiModeToggle">
+      <span><strong>API-Zugriff verwenden</strong> — Query direkt ausführen statt SQL kopieren</span>
+    </label>
+
+    <p class="hint" style="margin-top:6px;">
+      Ohne diesen Schalter arbeitet der Builder wie bisher: SQL erzeugen, kopieren und im Portal
+      unter <em>Account &gt; Analytics &gt; Submit Query</em> einfügen. Dafür ist <strong>nichts zu
+      installieren</strong>.
+    </p>
+
+    <div id="apiSettings" class="hidden">
+      <p class="hint">
+        Der API-Zugriff läuft über einen kleinen Proxy, der <strong>lokal auf diesem Rechner</strong>
+        läuft: <code>node wallee-proxy.mjs</code>. Er ist nötig, weil der Browser Aufrufe an
+        <code>app-wallee.com</code> per CORS blockiert — und weil die Zugangsdaten so den Rechner
+        nie verlassen. Sie werden <strong>nicht</strong> in dieser Seite gespeichert, sondern
+        einmalig beim Proxy hinterlegt.
+      </p>
+
+      <div class="add-row">
+        <input id="proxyUrlInput" type="text" placeholder="http://localhost:8787"
+               title="Adresse des lokal laufenden Proxys." />
+      </div>
+      <p class="hint" id="proxyStatus" style="margin-top:6px;margin-bottom:0;"></p>
+    </div>
   </div>
 </div>
 
@@ -1009,6 +1047,14 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const sqlPanel        = document.getElementById('sqlPanel');
   const modeBadge       = document.getElementById('modeBadge');
   const sqlOutput       = document.getElementById('sqlOutput');
+  const submitBtn       = document.getElementById('submitBtn');
+  const sqlToggleBtn    = document.getElementById('sqlToggleBtn');
+  const apiHinweis      = document.getElementById('apiHinweis');
+  const sqlEinfuegenHinweis = document.getElementById('sqlEinfuegenHinweis');
+  const apiModeToggle   = document.getElementById('apiModeToggle');
+  const apiSettings     = document.getElementById('apiSettings');
+  const proxyUrlInput   = document.getElementById('proxyUrlInput');
+  const proxyStatus     = document.getElementById('proxyStatus');
   const copyBtn         = document.getElementById('copyBtn');
   const generateBtn     = document.getElementById('generateBtn');
 
@@ -1066,7 +1112,15 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
     exportColumns: defaultColumns(),
     cardLast4: '',
     settlementByTerminal: false,
-    userPresets: []
+    userPresets: [],
+    // Betriebsmodus (v4). Default ist bewusst der Kopieren-Modus: er braucht
+    // keine Installation und ist damit das, was ohne Zutun funktioniert.
+    // Neue Felder brauchen keinen neuen STORAGE_KEY - loadState() legt den
+    // gespeicherten State ueber diese Defaults, aeltere States haben die
+    // Felder schlicht nicht und bekommen die Werte von hier.
+    apiMode: false,
+    proxyUrl: 'http://localhost:8787',
+    sqlSichtbar: false            // nur im API-Modus relevant (Toggle "Query anzeigen")
   };
 
   // --- Persistence ---------------------------------------------------------
@@ -2664,6 +2718,38 @@ ORDER BY
     sqlOutput.textContent = sql;
   }
 
+  // --- Betriebsmodus -------------------------------------------------------
+  // Kopieren-Modus (Default): SQL sichtbar, Kopieren-Button - genau wie bisher.
+  // API-Modus: Submit wird zur Hauptaktion, das SQL klappt zu und ist per
+  // Toggle einblendbar. Die Verdrahtung mit dem Proxy folgt in Phase 2; hier
+  // steht erst die Umschaltung.
+  function applyBetriebsmodus() {
+    const api = !!state.apiMode;
+
+    apiModeToggle.checked = api;
+    apiSettings.classList.toggle('hidden', !api);
+    proxyUrlInput.value = state.proxyUrl || '';
+
+    submitBtn.classList.toggle('hidden', !api);
+    sqlToggleBtn.classList.toggle('hidden', !api);
+    apiHinweis.classList.toggle('hidden', !api);
+
+    // Im Report-Modus gibt es gar kein SQL - dort bleibt die Umschaltung ohne
+    // Wirkung, das Panel ist ohnehin ausgeblendet.
+    const sqlZeigen = !api || !!state.sqlSichtbar;
+    sqlOutput.classList.toggle('hidden', !sqlZeigen);
+    sqlEinfuegenHinweis.classList.toggle('hidden', api);
+    copyBtn.classList.toggle('hidden', api && !sqlZeigen);
+
+    sqlToggleBtn.textContent = sqlZeigen ? 'Query ausblenden' : 'Query anzeigen';
+    sqlToggleBtn.setAttribute('aria-expanded', sqlZeigen ? 'true' : 'false');
+
+    if (api) {
+      apiHinweis.textContent = 'Die Query wird über den lokalen Proxy ausgeführt; '
+        + 'das Ergebnis landet direkt im Terminal-Report.';
+    }
+  }
+
   function setMode(mode) {
     state.mode = mode;
     modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
@@ -2734,6 +2820,33 @@ ORDER BY
     const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (!file) return;
     leseDatei(file, ingestReportCsv);
+  });
+
+  // --- Event bindings: Betriebsmodus ---------------------------------------
+  apiModeToggle.addEventListener('change', () => {
+    state.apiMode = apiModeToggle.checked;
+    // Beim Einschalten die Query zunaechst eingeklappt lassen - der Submit-
+    // Button ist die Hauptaktion, das SQL nur noch bei Bedarf.
+    if (state.apiMode) state.sqlSichtbar = false;
+    saveState();
+    applyBetriebsmodus();
+  });
+
+  proxyUrlInput.addEventListener('input', () => {
+    state.proxyUrl = proxyUrlInput.value.trim();
+    saveState();
+  });
+
+  sqlToggleBtn.addEventListener('click', () => {
+    state.sqlSichtbar = !state.sqlSichtbar;
+    saveState();
+    applyBetriebsmodus();
+  });
+
+  submitBtn.addEventListener('click', () => {
+    // Phase 2 verdrahtet das mit dem Proxy (Tasks 11 bis 13).
+    proxyStatus.className = 'hint';
+    proxyStatus.textContent = 'Die Ausführung über den Proxy folgt im nächsten Schritt.';
   });
 
   reportXlsxBtn.addEventListener('click', () => {
@@ -3056,6 +3169,7 @@ ORDER BY
   renderTerminals();
   renderColumns();
   renderUserPresets();
+  applyBetriebsmodus();
   setMode(state.mode || 'brand');
 </script>
 </body>
