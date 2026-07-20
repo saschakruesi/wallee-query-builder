@@ -20,11 +20,25 @@ nichts das eigene Gerät.
 
 | Modus | Ergebnis |
 |---|---|
-| **Brand-Auswertung** | Aggregat pro Space × Brand × Währung |
-| **Brand + Terminal-Filter** | zusätzlich pro Terminal, mit Pflichtfilter |
-| **Transaktions-Export** | eine Zeile pro Transaktion, Spalten frei wählbar |
+| **Brand-Auswertung** | Aggregat pro Space × Brand × Währung, inkl. `tip_total` (Trinkgeld-Anteil) und `unsettled_anzahl` (wartet auf Abrechnung) |
+| **Brand + Terminal-Filter** | zusätzlich pro Terminal, mit Pflichtfilter, ebenfalls inkl. `tip_total` und `unsettled_anzahl` |
+| **Transaktions-Export** | eine Zeile pro Transaktion, Spalten frei wählbar — u. a. `tip_amount` (Trinkgeld) und `gross_excl_tip` (Brutto ohne Trinkgeld) |
 | **Kartensuche** | Transaktionen zu den letzten vier Kartenziffern (für Streitfälle) |
-| **Settlement / Auszahlung** | pro Tag: was ist ausbezahlt, was steht aus, welche Gebühren fielen an |
+| **Settlement / Auszahlung** | pro Tag: was ist ausbezahlt, was steht aus, welche Gebühren fielen an, inkl. `tip_total` |
+
+`unsettled_anzahl` zählt Transaktionen ohne Gebühr (`totalappliedfees` NULL/0) **und** ohne
+bestehenden Settlement-Record — also solche, die noch auf die Abrechnung warten.
+
+## Trinkgeld
+
+wallee führt Trinkgeld nicht als Feld auf der Transaktion, sondern als eigenes Line Item
+vom Typ `TIP` (Pfad `transaction_lineitem` → `lineitem`). **Das Trinkgeld ist bereits im
+Bruttobetrag enthalten und darf nicht zusätzlich addiert werden.** Umsatz ohne Trinkgeld
+ergibt sich also aus `brutto_gross − tip_total` (im Export: `gross_amount − tip_amount`,
+bzw. direkt als Spalte `gross_excl_tip`).
+
+Diese Annahme ist noch **nicht empirisch bestätigt** — sie lässt sich mit
+`sql/tip_verifikation.sql` gegen echte Daten prüfen.
 
 ## Hinweis zu Apple Pay, Google Pay und tokenisierten Karten
 
@@ -43,10 +57,14 @@ Kartennummer noch Autorisierungscode.
 - Die Zuordnung der Auszahlungsreferenz ist zeitbasiert-heuristisch —
   es gibt keinen direkten Fremdschlüssel von der Banktransaktion zur Auszahlung.
   Die entsprechende Spalte ist deshalb standardmässig aus.
+- Dass Trinkgeld bereits im Bruttobetrag enthalten ist (siehe Abschnitt „Trinkgeld"),
+  ist eine noch nicht empirisch bestätigte Annahme — mit Vorsicht behandeln, bis sie
+  gegen echte Daten verifiziert ist.
 
 ## Entwicklung
 
-Tests laufen ohne Browser und ohne Dependencies:
+Tests laufen ohne Browser und ohne Dependencies (61 Tests in
+`test/queries.test.js` und `test/tip_unsettled.test.js`):
 
 ```bash
 node --test "test/*.test.js"

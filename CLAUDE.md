@@ -13,9 +13,9 @@ Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen.
 | Datei | Zweck |
 |---|---|
 | `wallee_query_builder_v2.html` | **Aktuelle Version.** Fünf Modi, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
-| `wallee_query_builder.html` | v1 (nur Brand + Terminal-Modus, ein Space). Nur als Referenz behalten. |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
+| `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Annahme (Trinkgeld bereits im Brutto enthalten) — gegen echte Daten laufen lassen, siehe „Offene Punkte". |
 | `CLAUDE.md` | Diese Datei. |
 
 ## Architektur (v2)
@@ -41,17 +41,20 @@ Kein Framework, keine Dependencies, läuft offline per Doppelklick.
 ### Fünf Modi
 
 1. **`brand`** – Aggregat pro Space × Brand × Währung (`GROUP BY`). Spalten: Anzahl,
-   `unmatched_anzahl` (fee NULL/0 = wartet auf Fee-Update vom Acquirer), Brutto, Fees, Netto.
+   `unsettled_anzahl` (keine Gebühr UND kein Settlement-Record = wartet noch auf die
+   Abrechnung), Brutto, Fees, Netto, `tip_total` (Trinkgeld-Anteil, bereits im Brutto
+   enthalten).
 2. **`terminal`** – wie `brand`, zusätzlich Pflichtfilter + Gruppierung auf
-   `paymentterminal.identifier` / `.name`.
+   `paymentterminal.identifier` / `.name`. Gleiche `unsettled_anzahl`/`tip_total`-Spalten.
 3. **`export`** – **eine Zeile pro Transaktion**, Spalten frei wählbar (Checkbox-Katalog),
-   Terminal-Filter optional.
+   Terminal-Filter optional. Enthält u. a. `tip_amount` und `gross_excl_tip`.
 4. **`card`** – Kartensuche: Transaktionen zu den letzten vier Kartenziffern
    (`buildCardQuery`), für Streitfälle. Eigener Tab statt Option im Export, seit die
    Kartensuche aus dem Transaktions-Export herausgelöst wurde.
 5. **`settlement`** – Auszahlungs-Sicht pro Tag (`buildSettlementQuery`): was ist bereits
    ausbezahlt (`SETTLED`), was steht aus, was ist teilweise ausbezahlt (`PARTIAL`), welche
-   Gebühren fielen an. Optional nach Terminal aufgeschlüsselt (`settlementByTerminal`).
+   Gebühren fielen an, plus `tip_total`. Optional nach Terminal aufgeschlüsselt
+   (`settlementByTerminal`).
 
 Sichtbarkeit der Panels steuert `setMode()` über die CSS-Klasse `.cond-section.active`
 (Terminal-Panel in Modus 2, 3, 4 und 5, Spalten-Panel nur Modus 3, Kartensuche-Panel nur
@@ -63,7 +66,7 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
 
 ```js
 { key, name, sql, alias, def, desc,
-  needsConn?, needsTerm?, needsCard?, needsSettle?, needsPayoutRef?, sensitive? }
+  needsConn?, needsTerm?, needsCard?, needsSettle?, needsPayoutRef?, needsTip?, sensitive? }
 ```
 
 - `sql` = SELECT-Ausdruck, `alias` = CSV-Spaltenname, `def` = default an/aus.
@@ -102,6 +105,41 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
     zeitlich zugeordnet (früheste Withdrawal im Fenster
     `[bt.valuedate, bt.valuedate + 30 Tage)`) — rein heuristische Zuordnung, da es keinen
     direkten Fremdschlüssel gibt. Langsam (zusätzlicher Range-Join), deshalb default aus.
+  - **`tip`** (`tipCte({ spaceIds })`, Helper-Funktion): summiert `lineitem.amountincludingtax`
+    pro Transaktion für `lineitem.type = TIP_LINEITEM_TYPE` (Konstante `TIP_LINEITEM_TYPE =
+    'TIP'`). Eingegrenzt über `tx`, damit nicht die gesamte `lineitem`-Historie des Space
+    gescannt wird. Gesteuert über das Flag `needsTip` in `EXPORT_COLUMNS` (Spalten `tip`,
+    `grossnotip`) sowie fest eingebaut in `buildBrandQuery`, `buildTerminalQuery` und
+    `buildSettlementQuery`.
+    **Zentraler Fallstrick:** Eine Transaktion hat mehrere Line Items. `lineitem` darf
+    **niemals** direkt ins `FROM`/`JOIN` der Aggregat-Modi (`brand`, `terminal`,
+    `settlement`) gehängt werden — das vervielfacht die Zeilen pro Transaktion und macht
+    `COUNT(*)`, `SUM(t.completedamount)` und die Gebührensummen falsch. Deshalb wird immer
+    zuerst pro Transaktion vor-aggregiert (`GROUP BY tl.transaction_id` in `tipCte`) und das
+    Ergebnis danach per `LEFT JOIN tip ON tip.transaction_id = t.id` angehängt — nie ein
+    direkter Join auf `lineitem`/`transaction_lineitem`.
+  - **`settle_exists`** (`settleExistsCte()`, Helper-Funktion): reiner Existenz-Check
+    (`SELECT DISTINCT psr.transaction_id FROM payfacsettlementrecord ... WHERE
+    psr.transaction_id IN (SELECT id FROM tx)`), unabhängig vom eigentlichen `settle`-CTE.
+    Treibt `unsettled_anzahl` in `buildBrandQuery`/`buildTerminalQuery`: gezählt wird eine
+    Transaktion, wenn `t.totalappliedfees IS NULL OR t.totalappliedfees = 0` **UND** kein
+    passender Eintrag in `settle_exists` existiert (`se.transaction_id IS NULL` nach
+    `LEFT JOIN`) — also weder eine Gebühr verbucht noch überhaupt schon ein
+    Settlement-Record vorhanden ist. Bewusst `DISTINCT` statt `GROUP BY` mit Aggregation,
+    da hier nur die Existenz zählt, kein Betrag.
+
+### Optik
+
+Helles Thema in den wallee-Markenfarben. Alle Farbentscheide laufen über die
+CSS-Variablen im `:root`-Block (`--bg`, `--panel`, `--panel-2`, `--panel-3`, `--border`,
+`--text`, `--muted`, `--accent`, `--accent-hover`, `--accent-dark`, `--success`,
+`--danger`, `--warn`, `--code-bg`, `--code-text`) — neue Farbentscheide dort ergänzen,
+nicht als Inline-Hex im Markup/CSS verstreuen.
+
+Leitfarbe ist `#11d9cc` (`--accent`), aber **nur für Flächen** (Buttons, Border-Akzente,
+aktive Zustände) — als Textfarbe auf hellem Grund ist das helle Türkis zu kontrastarm.
+Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum Einsatz:
+`#0da69c` (`--accent-hover`) und `#225956` (`--accent-dark`, z. B. für `.brand-mark`).
 
 ## Wallee-Referenzwissen
 
@@ -149,9 +187,12 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
 
 ## Offene Punkte / Ideen
 
-- **Trinkgeld (TIP) aufnehmen.** Trinkgeld steckt in `lineitem` (Typ `TIP`) via
-  `transaction_lineitem`, nicht auf `transaction`. Immer pro Transaktion voraggregieren
-  (sonst Zeilenvervielfachung in den Aggregat-Modi).
+- **Annahme „Trinkgeld ist im Brutto enthalten" noch nicht empirisch bestätigt.**
+  `EXPORT_COLUMNS` (Spalten `tip`, `grossnotip`) und die Kommentare im Code gehen davon aus,
+  dass `completedamount` das Trinkgeld bereits enthält (nicht additiv) — siehe
+  `sql/tip_verifikation.sql` für die Verifikations-Queries. Sobald an echten Daten geprüft:
+  Ergebnis hier festhalten bzw. bei Widerlegung `tip`/`grossnotip`-Formeln und die
+  zugehörigen Kommentare korrigieren.
 - Settlement-Referenz-Zuordnung über Withdrawals ist heuristisch (zeitbasiert) —
   beobachten, ob es einen direkten Verknüpfungspfad gibt.
 - Das 30-Tage-Fenster (maximale Auszahlungslatenz, siehe `payoutref`-CTE) ist eine Annahme
