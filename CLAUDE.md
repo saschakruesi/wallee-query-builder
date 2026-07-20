@@ -8,11 +8,6 @@ Ergebnis kommt dort als CSV.
 Entstanden aus einer Kundenanfrage im Gastronomie-Umfeld: Tagesabschluss-Abgleich pro
 Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen.
 
-> **Aktueller Arbeitsauftrag (v4):** Umsetzung nach dem Plan
-> `docs/superpowers/plans/2026-07-20-query-builder-v4-report-api.md`
-> (Terminal-Report-Integration, Zwei-Modi-Betrieb Kopieren/API, lokaler Zero-Dependency-Proxy,
-> Cleanup + GitHub-Release v4 + Confluence-Update). Task-für-Task abarbeiten, TDD, Tests grün halten.
-
 ## Dateien
 
 | Datei | Zweck |
