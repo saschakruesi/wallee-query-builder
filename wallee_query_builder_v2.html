@@ -1988,6 +1988,115 @@ ORDER BY
       : 'Wallee';
   }
 
+  // --- Terminal-Report: Modell --------------------------------------------
+  // buildReportModel(rows, config) -> { detail, outletTotals, brandTotals, grandTotal }
+  // config = { outlet: {tid: gruppenname}, brand: {brandstring: gruppenname} }
+  //
+  // Aufbau nach SPEC 7: Detail (Outlet -> Terminal -> Brand, mit Zwischensumme
+  // je Brand-Gruppe), dann Totals je Outlet-Gruppe, dann je Brand-Gruppe, dann
+  // das Gesamttotal. Alle Betraege bleiben in 1e-8-Einheiten; formatiert wird
+  // erst beim Rendern.
+
+  function leereKennzahlen() {
+    return { completeDemand: 0, tip: 0, unmatched: 0, count: 0 };
+  }
+
+  function addiere(ziel, row) {
+    ziel.completeDemand += row.gross;
+    ziel.tip += row.tip;
+    ziel.unmatched += row.unmatched;
+    ziel.count += row.count;
+    return ziel;
+  }
+
+  const nachName = (a, b) => String(a).localeCompare(String(b), 'de');
+
+  // Zusammengefasst wird ueber den Gruppen-NAMEN. Zwei Terminals, die derselben
+  // Gruppe zugeordnet sind, landen dadurch in einer Zeile - auch wenn sie
+  // vorher unterschiedliche Auto-Vorschlaege hatten.
+  function outletGruppeVon(row, config) {
+    const zugeordnet = config && config.outlet && config.outlet[row.tid];
+    return (zugeordnet && String(zugeordnet).trim()) || autoOutletGroup(row.name);
+  }
+
+  function brandGruppeVon(row, config) {
+    const zugeordnet = config && config.brand && config.brand[row.brand];
+    return (zugeordnet && String(zugeordnet).trim()) || autoBrandGroup(row.brand);
+  }
+
+  function buildReportModel(rows, config) {
+    const daten = Array.isArray(rows) ? rows : [];
+    const cfg = config || {};
+
+    const outlets = new Map();      // outletName -> { terminals: Map, brandSummen: Map }
+    const brandTotalsMap = new Map();
+    const grandTotal = leereKennzahlen();
+
+    daten.forEach(row => {
+      const outlet = outletGruppeVon(row, cfg);
+      const brandGruppe = brandGruppeVon(row, cfg);
+
+      if (!outlets.has(outlet)) {
+        outlets.set(outlet, { terminals: new Map(), brandSummen: new Map() });
+      }
+      const o = outlets.get(outlet);
+
+      // Detailebene: Terminal (ueber die stabile TID), darunter die Brands.
+      if (!o.terminals.has(row.tid)) {
+        o.terminals.set(row.tid, { tid: row.tid, name: row.name, brands: [] });
+      }
+      o.terminals.get(row.tid).brands.push({
+        brand: row.brand,
+        brandGroup: brandGruppe,
+        completeDemand: row.gross,
+        tip: row.tip,
+        unmatched: row.unmatched,
+        count: row.count,
+      });
+
+      if (!o.brandSummen.has(brandGruppe)) o.brandSummen.set(brandGruppe, leereKennzahlen());
+      addiere(o.brandSummen.get(brandGruppe), row);
+
+      if (!brandTotalsMap.has(brandGruppe)) brandTotalsMap.set(brandGruppe, leereKennzahlen());
+      addiere(brandTotalsMap.get(brandGruppe), row);
+
+      addiere(grandTotal, row);
+    });
+
+    const outletNamen = [...outlets.keys()].sort(nachName);
+
+    const detail = outletNamen.map(name => {
+      const o = outlets.get(name);
+      return {
+        outlet: name,
+        terminals: [...o.terminals.values()]
+          .sort((a, b) => nachName(a.name, b.name))
+          .map(t => ({
+            tid: t.tid,
+            name: t.name,
+            brands: t.brands.slice().sort((a, b) => nachName(a.brand, b.brand)),
+          })),
+        subtotals: [...o.brandSummen.keys()].sort(nachName).map(bg => (
+          Object.assign({ brandGroup: bg }, o.brandSummen.get(bg))
+        )),
+      };
+    });
+
+    const outletTotals = [];
+    outletNamen.forEach(name => {
+      const o = outlets.get(name);
+      [...o.brandSummen.keys()].sort(nachName).forEach(bg => {
+        outletTotals.push(Object.assign({ outlet: name, brandGroup: bg }, o.brandSummen.get(bg)));
+      });
+    });
+
+    const brandTotals = [...brandTotalsMap.keys()].sort(nachName).map(bg => (
+      Object.assign({ brandGroup: bg }, brandTotalsMap.get(bg))
+    ));
+
+    return { detail, outletTotals, brandTotals, grandTotal };
+  }
+
   function generate() {
     // Der Report-Modus hat kein SQL-Panel und arbeitet auf einer geladenen CSV.
     // Ohne diesen Ausstieg wuerde hier unnoetig eine Brand-Query erzeugt.

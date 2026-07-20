@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const { loadBuilders, plain } = require('./harness');
 
 const app = loadBuilders();
-const { parseReportCsv, autoOutletGroup, autoBrandGroup } = app;
+const { parseReportCsv, autoOutletGroup, autoBrandGroup, buildReportModel } = app;
 
 // Kopfzeile so, wie sie der Terminal-Modus des Generators liefert (unsettled_anzahl).
 const HEADER_APP = '"space_id","terminal_identifier","terminal_name","brand","waehrung",' +
@@ -202,4 +202,160 @@ test('autoBrandGroup trennt Lunch Check von allem uebrigen', () => {
 test('autoBrandGroup ist robust gegen leere Werte', () => {
   assert.strictEqual(autoBrandGroup(''), 'Wallee');
   assert.strictEqual(autoBrandGroup(null), 'Wallee');
+});
+
+// --- Report-Modell gegen den Testdatensatz ---------------------------------
+// Die Sollzahlen stammen aus test/fixtures/beispiel-daten.csv. Dieser Datensatz
+// ist FREI ERFUNDEN (erzeugt von test/fixtures/generate-beispiel-daten.mjs) -
+// der urspruengliche Datensatz aus der SPEC war ein echter Kundenexport und
+// gehoert nicht in ein oeffentliches Repository. Nachgebildet sind die
+// fachlich relevanten Faelle: 10 Outlet-Gruppen, ein Merge ueber zwei Gruppen,
+// und genau eine Lunch-Check-Zeile.
+//
+// Der Report-Kern wurde zusaetzlich lokal gegen die echten Daten geprueft und
+// reproduziert deren Sollzahlen aus SPEC 10 exakt (52'343.04 / 1'804.24 /
+// 1'154 / 1'217, 10 Outlet-Gruppen).
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'beispiel-daten.csv'), 'utf8');
+const S = 1e8;                                  // 1e-8-Einheiten -> Waehrungseinheit
+const chf = units => (units / S).toFixed(2);
+
+function modell(config) {
+  const res = parseReportCsv(FIXTURE);
+  assert.strictEqual(res.error, null, 'Fixture muss lesbar sein');
+  return buildReportModel(res.rows, config || {});
+}
+
+test('Fixture: Auto-Gruppierung ergibt 10 Outlet-Gruppen', () => {
+  const m = modell();
+  assert.strictEqual(m.detail.length, 10);
+  assert.deepStrictEqual(plain(m.detail.map(d => d.outlet)), [
+    'Bar', 'Bistro', 'Dachgarten', 'Empfang', 'Galerie',
+    'Kiosk', 'Saal Nord', 'Saal Süd', 'Terrasse', 'Weinkeller',
+  ]);
+});
+
+test('Fixture: Brand-Gruppen sind Wallee und Lunch-Check', () => {
+  const m = modell();
+  assert.deepStrictEqual(plain(m.brandTotals.map(b => b.brandGroup)), ['Lunch-Check', 'Wallee']);
+});
+
+test('Fixture: Total Wallee', () => {
+  const w = modell().brandTotals.find(b => b.brandGroup === 'Wallee');
+  assert.strictEqual(chf(w.completeDemand), '62725.16');
+  assert.strictEqual(chf(w.tip), '793.46');
+  assert.strictEqual(w.unmatched, 888);
+  assert.strictEqual(w.count, 2068);
+});
+
+test('Fixture: Total Lunch-Check', () => {
+  const lc = modell().brandTotals.find(b => b.brandGroup === 'Lunch-Check');
+  assert.strictEqual(chf(lc.completeDemand), '31.00');
+  assert.strictEqual(lc.unmatched, 1);
+  assert.strictEqual(lc.count, 2);
+});
+
+test('Fixture: Gesamttotal', () => {
+  const g = modell().grandTotal;
+  assert.strictEqual(chf(g.completeDemand), '62756.16');
+  assert.strictEqual(chf(g.tip), '793.46');
+  assert.strictEqual(g.unmatched, 889);
+  assert.strictEqual(g.count, 2070);
+});
+
+test('Fixture: Gesamttotal ist exakt die Summe der Brand-Gruppen', () => {
+  const m = modell();
+  const summe = m.brandTotals.reduce((a, b) => ({
+    completeDemand: a.completeDemand + b.completeDemand,
+    tip: a.tip + b.tip,
+    unmatched: a.unmatched + b.unmatched,
+    count: a.count + b.count,
+  }), { completeDemand: 0, tip: 0, unmatched: 0, count: 0 });
+
+  // Ganzzahlen, deshalb hier wirklich exakt und nicht nur auf zwei Stellen.
+  assert.deepStrictEqual(plain(summe), plain(m.grandTotal));
+});
+
+test('Fixture: Outlet-Totals summieren sich zum Gesamttotal', () => {
+  const m = modell();
+  const summe = m.outletTotals.reduce((a, o) => a + o.completeDemand, 0);
+  assert.strictEqual(summe, m.grandTotal.completeDemand);
+});
+
+test('Sonderfall Lunch-Check: eigene Brand-Gruppe innerhalb einer Outlet-Gruppe', () => {
+  const m = modell();
+  const dachgarten = m.detail.find(d => d.outlet === 'Dachgarten');
+  const gruppen = dachgarten.subtotals.map(s => s.brandGroup);
+
+  assert.deepStrictEqual(plain(gruppen), ['Lunch-Check', 'Wallee'],
+    'Dachgarten muss beide Brand-Gruppen zeigen');
+  const lc = dachgarten.subtotals.find(s => s.brandGroup === 'Lunch-Check');
+  assert.strictEqual(chf(lc.completeDemand), '31.00');
+
+  // ... und nur dort.
+  const andere = m.outletTotals.filter(o => o.brandGroup === 'Lunch-Check');
+  assert.deepStrictEqual(plain(andere.map(o => o.outlet)), ['Dachgarten']);
+});
+
+test('Merge: zwei Outlet-Gruppen auf denselben Namen werden zusammengefuehrt', () => {
+  const res = parseReportCsv(FIXTURE);
+  const tids = {};
+  res.rows.forEach(r => { tids[r.name] = r.tid; });
+
+  const vorher = modell();
+  const saalNord = vorher.detail.find(d => d.outlet === 'Saal Nord');
+  const saalSued = vorher.detail.find(d => d.outlet === 'Saal Süd');
+  assert.ok(saalNord && saalSued, 'Ausgangslage: zwei getrennte Gruppen');
+
+  // Beide Seiten explizit auf "Saal" - analog zu "Klub Tür"/"Klub Garderobe" -> "Klub".
+  const config = { outlet: {
+    [tids['Saal Nord 1']]: 'Saal',
+    [tids['Saal Nord 2']]: 'Saal',
+    [tids['Saal Süd 1']]: 'Saal',
+  }, brand: {} };
+
+  const m = buildReportModel(res.rows, config);
+  const namen = m.detail.map(d => d.outlet);
+
+  assert.strictEqual(m.detail.length, 9, 'aus zwei Gruppen wird eine');
+  assert.ok(namen.includes('Saal'));
+  assert.ok(!namen.includes('Saal Nord') && !namen.includes('Saal Süd'));
+
+  // Das Gesamttotal darf sich durch reines Umgruppieren nicht aendern.
+  assert.deepStrictEqual(plain(m.grandTotal), plain(vorher.grandTotal));
+
+  const saal = m.detail.find(d => d.outlet === 'Saal');
+  assert.strictEqual(saal.terminals.length, 3, 'alle drei Terminals unter "Saal"');
+});
+
+test('Merge fuehrt Brand-Gruppen zusammen', () => {
+  const res = parseReportCsv(FIXTURE);
+  // Alles in eine einzige Brand-Gruppe kippen.
+  const brand = {};
+  res.rows.forEach(r => { brand[r.brand] = 'Alle Marken'; });
+
+  const m = buildReportModel(res.rows, { outlet: {}, brand });
+  assert.strictEqual(m.brandTotals.length, 1);
+  assert.strictEqual(m.brandTotals[0].brandGroup, 'Alle Marken');
+  assert.strictEqual(m.brandTotals[0].completeDemand, m.grandTotal.completeDemand);
+});
+
+test('leere Eingabe ergibt ein leeres, aber wohlgeformtes Modell', () => {
+  const m = buildReportModel([], {});
+  assert.deepStrictEqual(plain(m.detail), []);
+  assert.deepStrictEqual(plain(m.outletTotals), []);
+  assert.deepStrictEqual(plain(m.brandTotals), []);
+  assert.deepStrictEqual(plain(m.grandTotal), { completeDemand: 0, tip: 0, unmatched: 0, count: 0 });
+});
+
+test('Detail: ein Terminal mit mehreren Brands bleibt eine Terminal-Zeile', () => {
+  const m = modell();
+  const dachgarten = m.detail.find(d => d.outlet === 'Dachgarten');
+  const t = dachgarten.terminals.find(x => x.name === 'Dachgarten 2');
+  assert.ok(t.brands.length > 1, 'Terminal muss mehrere Brands tragen');
+  const tids = dachgarten.terminals.map(x => x.tid);
+  assert.strictEqual(new Set(tids).size, tids.length, 'jede TID nur einmal');
 });

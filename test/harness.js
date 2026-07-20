@@ -89,6 +89,7 @@ const EXPORTED = [
   'AMOUNT_SCALE',
   'autoOutletGroup',
   'autoBrandGroup',
+  'buildReportModel',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
