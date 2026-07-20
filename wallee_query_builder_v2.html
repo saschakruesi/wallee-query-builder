@@ -272,6 +272,49 @@
   }
   .report-error { color: var(--danger); font-weight: 600; }
 
+  .report-cfg-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-top: 18px;
+  }
+  @media (max-width: 720px) { .report-cfg-grid { grid-template-columns: 1fr; } }
+  .report-cfg-grid h3 { margin: 0 0 4px; font-size: 15px; }
+  .report-cfg-list { max-height: 260px; overflow-y: auto; }
+  .report-cfg-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 0;
+  }
+  .report-cfg-row .lbl {
+    flex: 1 1 50%; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 13px;
+  }
+  .report-cfg-row .lbl small { color: var(--muted); }
+  .report-cfg-row input { flex: 1 1 50%; min-width: 0; }
+  .report-actions { margin-top: 16px; flex-wrap: wrap; gap: 8px; }
+
+  .report-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  .report-table th, .report-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .report-table th { text-align: left; color: var(--muted); font-weight: 600; }
+  .report-table td.num, .report-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .report-table tr.subtotal td { font-weight: 600; background: var(--panel-2); }
+  .report-table tr.grand td { font-weight: 700; border-top: 2px solid var(--accent); }
+  .report-block { margin-top: 26px; }
+  .report-block h3 { margin: 0 0 2px; font-size: 15px; }
+  .report-outlet { margin-top: 16px; }
+  .report-outlet h4 { margin: 0; font-size: 14px; color: var(--accent-dark); }
+
+  /* Druck/PDF: nur der Report, keine Bedienelemente. */
+  @media print {
+    body { background: #fff; }
+    .mode-selector, .actions, .report-dropzone, #reportConfigArea,
+    .panel.cond-section:not(#reportSection), #sqlPanel, .hint { display: none !important; }
+    .panel { border: none; box-shadow: none; padding: 0; }
+    .report-table { font-size: 11px; }
+    .report-table tr { break-inside: avoid; }
+  }
+
   .wallet-note {
     margin-top: 18px;
     padding: 14px 16px;
@@ -818,6 +861,29 @@
 
     <p class="hint" id="reportStatus" style="margin-bottom:0;"></p>
 
+    <!-- Gruppen-Zuordnung: erscheint erst, wenn eine CSV geladen ist. -->
+    <div id="reportConfigArea" class="hidden">
+      <div class="report-cfg-grid">
+        <div>
+          <h3>Outlet-Gruppen</h3>
+          <p class="hint">Terminals mit gleichem Gruppennamen werden zusammengefasst.</p>
+          <div id="reportOutletCfg" class="report-cfg-list"></div>
+        </div>
+        <div>
+          <h3>Brand-Gruppen</h3>
+          <p class="hint">Kartenmarken mit gleichem Gruppennamen werden zusammengefasst.</p>
+          <div id="reportBrandCfg" class="report-cfg-list"></div>
+        </div>
+      </div>
+
+      <div class="actions report-actions">
+        <button class="btn" id="reportResetCfgBtn">Vorschläge zurücksetzen</button>
+        <button class="btn" id="reportExportCfgBtn">Konfiguration speichern (JSON)</button>
+        <button class="btn" id="reportImportCfgBtn">Konfiguration laden (JSON)</button>
+        <input type="file" id="reportImportCfgInput" accept=".json,application/json" class="hidden">
+      </div>
+    </div>
+
     <div id="reportOutput"></div>
   </div>
 
@@ -924,6 +990,13 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const reportFileInput = document.getElementById('reportFileInput');
   const reportStatus    = document.getElementById('reportStatus');
   const reportOutput    = document.getElementById('reportOutput');
+  const reportConfigArea= document.getElementById('reportConfigArea');
+  const reportOutletCfg = document.getElementById('reportOutletCfg');
+  const reportBrandCfg  = document.getElementById('reportBrandCfg');
+  const reportResetCfgBtn = document.getElementById('reportResetCfgBtn');
+  const reportExportCfgBtn = document.getElementById('reportExportCfgBtn');
+  const reportImportCfgBtn = document.getElementById('reportImportCfgBtn');
+  const reportImportCfgInput = document.getElementById('reportImportCfgInput');
   const sqlPanel        = document.getElementById('sqlPanel');
   const modeBadge       = document.getElementById('modeBadge');
   const sqlOutput       = document.getElementById('sqlOutput');
@@ -1033,7 +1106,7 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           saveState();
         }
         // Unbekannter Modus (z. B. aus einer aelteren Version) faellt auf brand zurueck.
-        if (!['brand','terminal','export','card','settlement'].includes(state.mode)) {
+        if (!['brand','terminal','export','card','settlement','report'].includes(state.mode)) {
           state.mode = 'brand';
         }
       }
@@ -1047,6 +1120,23 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   }
 
   // --- Helpers -------------------------------------------------------------
+
+  // Loest einen Datei-Download aus, ohne die Daten je an einen Server zu geben:
+  // Blob -> Object-URL -> unsichtbarer Klick. Wird von der Konfig-Sicherung und
+  // den Report-Exporten genutzt. Die URL wird danach wieder freigegeben, sonst
+  // haelt der Browser den Blob bis zum Neuladen im Speicher.
+  function downloadDatei(inhalt, dateiname, mimetype) {
+    const blob = inhalt instanceof Blob ? inhalt : new Blob([inhalt], { type: mimetype || 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = dateiname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
   const pad = n => String(n).padStart(2, '0');
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({
@@ -2097,6 +2187,316 @@ ORDER BY
     return { detail, outletTotals, brandTotals, grandTotal };
   }
 
+  // --- Terminal-Report: Zahlformat ----------------------------------------
+  // Schweizer Format, aber bewusst von Hand statt ueber toLocaleString('de-CH'):
+  // welches Zeichen dort als Tausendertrennung kommt, haengt von der
+  // ICU-Version des Browsers ab (mal U+2019, mal U+0027). Bei Betraegen, die
+  // gegen einen Bankauszug gehalten werden, soll die Darstellung nicht vom
+  // Browser abhaengen.
+  const CH_TAUSENDER = '’';
+
+  function gruppiere(ziffern) {
+    return ziffern.replace(/\B(?=(\d{3})+(?!\d))/g, CH_TAUSENDER);
+  }
+
+  // units = ganzzahlige 1e-8-Einheiten (siehe parseAmount).
+  function formatAmountCH(units) {
+    const negativ = units < 0;
+    // Auf Hundertstel runden, symmetrisch fuer positive und negative Betraege:
+    // Math.round(-0.5) waere -0 und damit unsymmetrisch.
+    const hundertstel = Math.round(Math.abs(units) / 1e6);
+    const ganz = Math.floor(hundertstel / 100);
+    const rest = String(hundertstel % 100).padStart(2, '0');
+    return (negativ && hundertstel !== 0 ? '-' : '') + gruppiere(String(ganz)) + '.' + rest;
+  }
+
+  function formatIntCH(n) {
+    const wert = Math.round(Number(n) || 0);
+    return (wert < 0 ? '-' : '') + gruppiere(String(Math.abs(wert)));
+  }
+
+  // --- Terminal-Report: Konfiguration -------------------------------------
+  const REPORT_CFG_KEY = 'wallee_terminal_report_cfg_v1';
+
+  // Baut die Zuordnung fuer den aktuellen Datensatz: gespeicherte Namen gewinnen,
+  // alles Neue bekommt den Auto-Vorschlag. Bewusst nur ueber die Terminals und
+  // Brands der geladenen CSV - so schleppt die Konfig keine Altlasten von
+  // Terminals mit, die es laengst nicht mehr gibt.
+  function mergeReportConfig(rows, gespeichert) {
+    const alt = gespeichert || {};
+    const altOutlet = alt.outlet || {};
+    const altBrand = alt.brand || {};
+    const cfg = { outlet: {}, brand: {} };
+
+    (rows || []).forEach(r => {
+      if (!(r.tid in cfg.outlet)) {
+        const g = altOutlet[r.tid];
+        cfg.outlet[r.tid] = (g && String(g).trim()) || autoOutletGroup(r.name);
+      }
+      if (!(r.brand in cfg.brand)) {
+        const g = altBrand[r.brand];
+        cfg.brand[r.brand] = (g && String(g).trim()) || autoBrandGroup(r.brand);
+      }
+    });
+    return cfg;
+  }
+
+  // localStorage kann blockiert sein (Private Mode). Dann laeuft der Report
+  // ohne Persistenz weiter, statt zu crashen.
+  function loadReportConfig() {
+    try {
+      const raw = localStorage.getItem(REPORT_CFG_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return {
+        outlet: (parsed && parsed.outlet) || {},
+        brand: (parsed && parsed.brand) || {},
+      };
+    } catch (e) { return null; }
+  }
+
+  function saveReportConfig(cfg) {
+    try { localStorage.setItem(REPORT_CFG_KEY, JSON.stringify(cfg)); } catch (e) {}
+  }
+
+  // --- Terminal-Report: UI -------------------------------------------------
+  // Die geladenen Zeilen und die Gruppen-Zuordnung leben bewusst ausserhalb von
+  // "state": sie gehoeren nicht in den Query-State (eigener localStorage-Key),
+  // und die CSV-Daten selbst werden ueberhaupt nicht persistiert.
+  let reportRows = [];
+  let reportConfig = { outlet: {}, brand: {} };
+  let reportModell = null;          // letztes berechnetes Modell, fuer den Export
+
+  function reportZeigeFehler(text) {
+    reportStatus.className = 'hint report-error';
+    reportStatus.textContent = text;
+  }
+
+  function reportZeigeInfo(text) {
+    reportStatus.className = 'hint';
+    reportStatus.textContent = text;
+  }
+
+  // Uebernimmt eine CSV (Datei-Upload oder spaeter das API-Ergebnis).
+  function ingestReportCsv(text) {
+    const res = parseReportCsv(text);
+    if (res.error) {
+      reportRows = [];
+      reportConfigArea.classList.add('hidden');
+      reportOutput.innerHTML = '';
+      reportZeigeFehler(res.error.message);
+      return false;
+    }
+
+    reportRows = res.rows;
+    reportConfig = mergeReportConfig(reportRows, loadReportConfig());
+    saveReportConfig(reportConfig);
+
+    const terminals = new Set(reportRows.map(r => r.tid)).size;
+    const brands = new Set(reportRows.map(r => r.brand)).size;
+    reportZeigeInfo(`${formatIntCH(reportRows.length)} Zeilen · ${terminals} Terminals · ${brands} Kartenmarken`);
+
+    reportConfigArea.classList.remove('hidden');
+    renderReportConfig();
+    renderReport();
+    return true;
+  }
+
+  function renderReportConfig() {
+    // Outlet-Zuordnung: je Terminal ein Feld, sortiert nach Terminalname.
+    const terminals = new Map();
+    reportRows.forEach(r => { if (!terminals.has(r.tid)) terminals.set(r.tid, r.name); });
+
+    reportOutletCfg.innerHTML = '';
+    [...terminals.entries()]
+      .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'de'))
+      .forEach(([tid, name]) => {
+        reportOutletCfg.appendChild(cfgZeile(
+          `${name} · ${tid}`,
+          reportConfig.outlet[tid] || '',
+          wert => { reportConfig.outlet[tid] = wert; },
+        ));
+      });
+
+    reportBrandCfg.innerHTML = '';
+    [...new Set(reportRows.map(r => r.brand))]
+      .sort((a, b) => String(a).localeCompare(String(b), 'de'))
+      .forEach(brand => {
+        reportBrandCfg.appendChild(cfgZeile(
+          brand,
+          reportConfig.brand[brand] || '',
+          wert => { reportConfig.brand[brand] = wert; },
+        ));
+      });
+  }
+
+  function cfgZeile(label, wert, beiAenderung) {
+    const row = document.createElement('div');
+    row.className = 'report-cfg-row';
+
+    const lbl = document.createElement('div');
+    lbl.className = 'lbl';
+    lbl.textContent = label;
+    lbl.title = label;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = wert;
+    input.addEventListener('input', () => {
+      beiAenderung(input.value);
+      saveReportConfig(reportConfig);
+      renderReport();          // reaktiv: gleiche Namen fallen sofort zusammen
+    });
+
+    row.appendChild(lbl);
+    row.appendChild(input);
+    return row;
+  }
+
+  function zelle(reihe, text, alsZahl) {
+    const td = document.createElement('td');
+    if (alsZahl) td.className = 'num';
+    td.textContent = text;
+    reihe.appendChild(td);
+    return td;
+  }
+
+  function kennzahlZellen(reihe, k) {
+    zelle(reihe, formatAmountCH(k.completeDemand), true);
+    zelle(reihe, formatAmountCH(k.tip), true);
+    zelle(reihe, formatIntCH(k.unmatched), true);
+    zelle(reihe, formatIntCH(k.count), true);
+  }
+
+  function tabelle(kopfSpalten) {
+    const table = document.createElement('table');
+    table.className = 'report-table';
+    const thead = document.createElement('thead');
+    const tr = document.createElement('tr');
+    kopfSpalten.forEach(([text, num]) => {
+      const th = document.createElement('th');
+      if (num) th.className = 'num';
+      th.textContent = text;
+      tr.appendChild(th);
+    });
+    thead.appendChild(tr);
+    table.appendChild(thead);
+    table.appendChild(document.createElement('tbody'));
+    return table;
+  }
+
+  const KENNZAHL_KOPF = [['Complete Demand', true], ['Tip', true], ['Unmatched', true], ['Anz.', true]];
+
+  function renderReport() {
+    reportOutput.innerHTML = '';
+    if (!reportRows.length) return;
+
+    const modell = buildReportModel(reportRows, reportConfig);
+    reportModell = modell;                       // fuer den Export (Task 7)
+
+    reportOutput.appendChild(blockDetail(modell));
+    reportOutput.appendChild(blockOutletTotals(modell));
+    reportOutput.appendChild(blockBrandTotals(modell));
+    reportOutput.appendChild(blockGesamttotal(modell));
+  }
+
+  function block(titel, hinweis) {
+    const div = document.createElement('div');
+    div.className = 'report-block';
+    const h = document.createElement('h3');
+    h.textContent = titel;
+    div.appendChild(h);
+    if (hinweis) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = hinweis;
+      div.appendChild(p);
+    }
+    return div;
+  }
+
+  function blockDetail(modell) {
+    const div = block('Detail', 'Je Outlet-Gruppe die einzelnen Terminals und Kartenmarken, darunter die Zwischensumme je Brand-Gruppe.');
+
+    modell.detail.forEach(o => {
+      const wrap = document.createElement('div');
+      wrap.className = 'report-outlet';
+      const h4 = document.createElement('h4');
+      h4.textContent = o.outlet;
+      wrap.appendChild(h4);
+
+      const t = tabelle([['Terminal', false], ['TID', false], ['Marke', false], ...KENNZAHL_KOPF]);
+      const tbody = t.querySelector('tbody');
+
+      o.terminals.forEach(term => {
+        term.brands.forEach(b => {
+          const tr = document.createElement('tr');
+          zelle(tr, term.name);
+          zelle(tr, term.tid);
+          zelle(tr, b.brand);
+          kennzahlZellen(tr, b);
+          tbody.appendChild(tr);
+        });
+      });
+
+      o.subtotals.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.className = 'subtotal';
+        zelle(tr, 'Zwischensumme');
+        zelle(tr, '');
+        zelle(tr, s.brandGroup);
+        kennzahlZellen(tr, s);
+        tbody.appendChild(tr);
+      });
+
+      wrap.appendChild(t);
+      div.appendChild(wrap);
+    });
+    return div;
+  }
+
+  function blockOutletTotals(modell) {
+    const div = block('Total Outlet-Gruppen');
+    const t = tabelle([['Outlet-Gruppe', false], ['Brand-Gruppe', false], ...KENNZAHL_KOPF]);
+    const tbody = t.querySelector('tbody');
+    modell.outletTotals.forEach(o => {
+      const tr = document.createElement('tr');
+      zelle(tr, o.outlet);
+      zelle(tr, o.brandGroup);
+      kennzahlZellen(tr, o);
+      tbody.appendChild(tr);
+    });
+    div.appendChild(t);
+    return div;
+  }
+
+  function blockBrandTotals(modell) {
+    const div = block('Total Brand-Gruppen');
+    const t = tabelle([['Brand-Gruppe', false], ...KENNZAHL_KOPF]);
+    const tbody = t.querySelector('tbody');
+    modell.brandTotals.forEach(b => {
+      const tr = document.createElement('tr');
+      zelle(tr, b.brandGroup);
+      kennzahlZellen(tr, b);
+      tbody.appendChild(tr);
+    });
+    div.appendChild(t);
+    return div;
+  }
+
+  function blockGesamttotal(modell) {
+    const div = block('Gesamttotal');
+    const t = tabelle([['', false], ...KENNZAHL_KOPF]);
+    const tbody = t.querySelector('tbody');
+    const tr = document.createElement('tr');
+    tr.className = 'grand';
+    zelle(tr, 'Total');
+    kennzahlZellen(tr, modell.grandTotal);
+    tbody.appendChild(tr);
+    div.appendChild(t);
+    return div;
+  }
+
   function generate() {
     // Der Report-Modus hat kein SQL-Panel und arbeitet auf einer geladenen CSV.
     // Ohne diesen Ausstieg wuerde hier unnoetig eine Brand-Query erzeugt.
@@ -2164,6 +2564,74 @@ ORDER BY
 
   // --- Event bindings ------------------------------------------------------
   modeButtons.forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+
+  // --- Event bindings: Terminal-Report -------------------------------------
+  function leseDatei(file, weiter) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => weiter(String(reader.result || ''));
+    reader.onerror = () => reportZeigeFehler('Die Datei konnte nicht gelesen werden.');
+    reader.readAsText(file, 'utf-8');
+  }
+
+  reportFileInput.addEventListener('change', () => {
+    leseDatei(reportFileInput.files && reportFileInput.files[0], ingestReportCsv);
+  });
+
+  // Ohne preventDefault auf dragover laesst der Browser die Datei einfach fallen
+  // und navigiert zu ihr - der Drop kaeme nie bei uns an.
+  ['dragenter', 'dragover'].forEach(ev => {
+    reportDropzone.addEventListener(ev, e => {
+      e.preventDefault();
+      reportDropzone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(ev => {
+    reportDropzone.addEventListener(ev, e => {
+      e.preventDefault();
+      reportDropzone.classList.remove('dragover');
+    });
+  });
+  reportDropzone.addEventListener('drop', e => {
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    leseDatei(file, ingestReportCsv);
+  });
+
+  reportResetCfgBtn.addEventListener('click', () => {
+    // Auf die Auto-Vorschlaege zurueck: leere gespeicherte Konfig uebergeben.
+    reportConfig = mergeReportConfig(reportRows, null);
+    saveReportConfig(reportConfig);
+    renderReportConfig();
+    renderReport();
+  });
+
+  reportExportCfgBtn.addEventListener('click', () => {
+    downloadDatei(
+      JSON.stringify(reportConfig, null, 2),
+      'terminal-report-konfiguration.json',
+      'application/json',
+    );
+  });
+
+  reportImportCfgBtn.addEventListener('click', () => reportImportCfgInput.click());
+
+  reportImportCfgInput.addEventListener('change', () => {
+    leseDatei(reportImportCfgInput.files && reportImportCfgInput.files[0], text => {
+      let geladen;
+      try { geladen = JSON.parse(text); } catch (e) { geladen = null; }
+      if (!geladen || typeof geladen !== 'object' || (!geladen.outlet && !geladen.brand)) {
+        reportZeigeFehler('Die Datei enthält keine gültige Report-Konfiguration.');
+        return;
+      }
+      reportConfig = mergeReportConfig(reportRows, geladen);
+      saveReportConfig(reportConfig);
+      renderReportConfig();
+      renderReport();
+      reportZeigeInfo('Konfiguration geladen.');
+    });
+    reportImportCfgInput.value = '';    // gleiche Datei soll erneut waehlbar sein
+  });
 
   cardLast4El.addEventListener('input', () => {
     cardLast4El.value = cardLast4El.value.replace(/\D/g, '').slice(0, 4);

@@ -90,6 +90,15 @@ const EXPORTED = [
   'autoOutletGroup',
   'autoBrandGroup',
   'buildReportModel',
+  'formatAmountCH',
+  'formatIntCH',
+  'mergeReportConfig',
+  'loadReportConfig',
+  'saveReportConfig',
+  'REPORT_CFG_KEY',
+  // DOM-gebunden, aber ueber einen DOM-Ersatz testbar (test/report-render.test.js)
+  'ingestReportCsv',
+  'renderReport',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
@@ -131,7 +140,17 @@ function loadBuilders(options = {}) {
     '\ntry { globalThis.__x.getState = function () { return state; }; } catch (e) {}' +
     '})();';
 
-  const localStorage = makeLocalStorage();
+  // options.blockLocalStorage: simuliert den Private Mode, in dem jeder Zugriff
+  // auf localStorage wirft. Die App muss dann ohne Persistenz weiterlaufen,
+  // statt beim Start oder beim Speichern zu crashen.
+  const localStorage = options.blockLocalStorage
+    ? {
+      getItem() { throw new Error('localStorage blockiert'); },
+      setItem() { throw new Error('localStorage blockiert'); },
+      removeItem() { throw new Error('localStorage blockiert'); },
+      clear() { throw new Error('localStorage blockiert'); },
+    }
+    : makeLocalStorage();
   if (options.seedLocalStorage) {
     Object.keys(options.seedLocalStorage).forEach(key => {
       localStorage.setItem(key, options.seedLocalStorage[key]);
@@ -139,7 +158,11 @@ function loadBuilders(options = {}) {
   }
 
   const sandbox = {
-    document: makeDocument(),
+    // options.document: reicherer DOM-Ersatz fuer Tests, die tatsaechlich
+    // gerenderte Struktur pruefen (siehe test/report-render.test.js). Ohne
+    // diese Option bleibt es beim No-Op-Stub, der nur verhindern soll, dass
+    // das Script beim Laden stolpert.
+    document: options.document || makeDocument(),
     localStorage,
     window: { getSelection: () => ({ removeAllRanges: () => {}, addRange: () => {} }) },
     navigator: { clipboard: { writeText: async () => {} } },

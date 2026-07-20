@@ -6,7 +6,8 @@ const assert = require('node:assert');
 const { loadBuilders, plain } = require('./harness');
 
 const app = loadBuilders();
-const { parseReportCsv, autoOutletGroup, autoBrandGroup, buildReportModel } = app;
+const { parseReportCsv, autoOutletGroup, autoBrandGroup, buildReportModel,
+  formatAmountCH, formatIntCH, mergeReportConfig } = app;
 
 // Kopfzeile so, wie sie der Terminal-Modus des Generators liefert (unsettled_anzahl).
 const HEADER_APP = '"space_id","terminal_identifier","terminal_name","brand","waehrung",' +
@@ -358,4 +359,116 @@ test('Detail: ein Terminal mit mehreren Brands bleibt eine Terminal-Zeile', () =
   assert.ok(t.brands.length > 1, 'Terminal muss mehrere Brands tragen');
   const tids = dachgarten.terminals.map(x => x.tid);
   assert.strictEqual(new Set(tids).size, tids.length, 'jede TID nur einmal');
+});
+
+// --- Schweizer Zahlformat --------------------------------------------------
+// Bewusst von Hand statt ueber toLocaleString('de-CH'): das Trennzeichen haengt
+// dort von der ICU-Version des jeweiligen Browsers ab (mal U+2019, mal U+0027).
+// Bei Geldbetraegen, die der Kunde gegen den Bankauszug haelt, soll die
+// Darstellung nicht vom Browser abhaengen.
+
+test('formatAmountCH: Tausendertrennung und zwei Nachkommastellen', () => {
+  assert.strictEqual(formatAmountCH(143670000000), '1’436.70');
+  assert.strictEqual(formatAmountCH(3100000000), '31.00');
+  assert.strictEqual(formatAmountCH(0), '0.00');
+  assert.strictEqual(formatAmountCH(5234304000000), '52’343.04');
+});
+
+test('formatAmountCH: mehrere Tausendergruppen', () => {
+  assert.strictEqual(formatAmountCH(123456789000000), '1’234’567.89');
+});
+
+test('formatAmountCH: negative Betraege', () => {
+  assert.strictEqual(formatAmountCH(-1234000000), '-12.34');
+  assert.strictEqual(formatAmountCH(-143670000000), '-1’436.70');
+});
+
+test('formatAmountCH: rundet kaufmaennisch auf zwei Stellen', () => {
+  assert.strictEqual(formatAmountCH(1005000), '0.01');    // 0.01005 -> 0.01
+  assert.strictEqual(formatAmountCH(1500000), '0.02');    // 0.015   -> 0.02
+  assert.strictEqual(formatAmountCH(-1500000), '-0.02');  // symmetrisch
+});
+
+test('formatIntCH: Ganzzahlen mit Tausendertrennung', () => {
+  assert.strictEqual(formatIntCH(1154), '1’154');
+  assert.strictEqual(formatIntCH(0), '0');
+  assert.strictEqual(formatIntCH(-5), '-5');
+  assert.strictEqual(formatIntCH(1234567), '1’234’567');
+});
+
+// --- Konfiguration gegen neue Daten ----------------------------------------
+
+test('mergeReportConfig: gespeicherte Zuordnungen gewinnen, Rest kommt vom Vorschlag', () => {
+  const res = parseReportCsv(FIXTURE);
+  const tids = {};
+  res.rows.forEach(r => { tids[r.name] = r.tid; });
+
+  const gespeichert = {
+    outlet: { [tids['Bar 1']]: 'Hauptbar' },
+    brand: { 'TWINT': 'Mobile' },
+  };
+  const cfg = mergeReportConfig(res.rows, gespeichert);
+
+  assert.strictEqual(cfg.outlet[tids['Bar 1']], 'Hauptbar', 'gespeichert');
+  assert.strictEqual(cfg.outlet[tids['Bar 2']], 'Bar', 'neu -> Auto-Vorschlag');
+  assert.strictEqual(cfg.brand['TWINT'], 'Mobile', 'gespeichert');
+  assert.strictEqual(cfg.brand['Visa'], 'Wallee', 'neu -> Auto-Vorschlag');
+});
+
+test('mergeReportConfig: ohne gespeicherte Konfig alles per Auto-Vorschlag', () => {
+  const res = parseReportCsv(FIXTURE);
+  const cfg = mergeReportConfig(res.rows, null);
+  const gruppen = new Set(Object.values(cfg.outlet));
+
+  assert.strictEqual(gruppen.size, 10);
+  assert.deepStrictEqual(plain([...new Set(Object.values(cfg.brand))].sort()),
+    ['Lunch-Check', 'Wallee']);
+});
+
+test('mergeReportConfig: Zuordnungen fuer verschwundene Terminals werden nicht mitgeschleppt', () => {
+  const res = parseReportCsv(FIXTURE);
+  const gespeichert = { outlet: { 'gibt-es-nicht-mehr': 'Alt' }, brand: {} };
+  const cfg = mergeReportConfig(res.rows, gespeichert);
+
+  assert.ok(!('gibt-es-nicht-mehr' in cfg.outlet),
+    'Konfig soll nur Terminals des aktuellen Datensatzes enthalten');
+});
+
+test('mergeReportConfig: leere gespeicherte Namen fallen auf den Vorschlag zurueck', () => {
+  const res = parseReportCsv(FIXTURE);
+  const tids = {};
+  res.rows.forEach(r => { tids[r.name] = r.tid; });
+  const cfg = mergeReportConfig(res.rows, { outlet: { [tids['Bar 1']]: '   ' }, brand: {} });
+
+  assert.strictEqual(cfg.outlet[tids['Bar 1']], 'Bar');
+});
+
+// --- Private Mode ----------------------------------------------------------
+// Bei blockiertem localStorage soll der Report ohne Persistenz weiterlaufen
+// statt zu crashen (SPEC 9).
+
+test('blockiertes localStorage laesst die App trotzdem starten', () => {
+  assert.doesNotThrow(() => {
+    loadBuilders({ blockLocalStorage: true });
+  }, 'Das Laden des Scripts darf im Private Mode nicht werfen');
+});
+
+test('Report-Konfiguration im Private Mode: lesen und schreiben werfen nicht', () => {
+  const blockiert = loadBuilders({ blockLocalStorage: true });
+
+  assert.doesNotThrow(() => {
+    const cfg = blockiert.loadReportConfig();
+    assert.strictEqual(cfg, null, 'ohne lesbaren Speicher gibt es keine Konfig');
+    blockiert.saveReportConfig({ outlet: { T1: 'Bar' }, brand: {} });
+  });
+});
+
+test('Report funktioniert im Private Mode ohne Persistenz', () => {
+  const blockiert = loadBuilders({ blockLocalStorage: true });
+  const res = blockiert.parseReportCsv(FIXTURE);
+  assert.strictEqual(res.error, null);
+
+  const cfg = blockiert.mergeReportConfig(res.rows, blockiert.loadReportConfig());
+  const m = blockiert.buildReportModel(res.rows, cfg);
+  assert.strictEqual(m.detail.length, 10, 'Gruppierung muss auch ohne Speicher stimmen');
 });
