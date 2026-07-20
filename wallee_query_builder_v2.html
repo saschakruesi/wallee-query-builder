@@ -561,6 +561,10 @@
       <button class="mode-btn" data-mode="card">Kartensuche</button>
       <button class="mode-btn" data-mode="settlement">Settlement / Auszahlung</button>
     </div>
+    <p class="hint cond-section" id="tipUnsettledHint" style="margin-top:8px;margin-bottom:0;">
+      <code>tip_total</code>: Trinkgeld-Anteil der Transaktionen (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. Diese Annahme ist noch nicht empirisch bestätigt – prüfbar mit <code>sql/tip_verifikation.sql</code>.
+      <code>unsettled_anzahl</code>: Transaktionen ohne Gebühr (<code>totalappliedfees</code> NULL/0) <strong>und</strong> ohne bestehenden Settlement-Record – wartet noch auf die Abrechnung.
+    </p>
 
     <h2 style="margin-top:4px;">Spaces <span class="count-pill" id="spaceCount">0</span></h2>
     <div class="add-row">
@@ -770,6 +774,8 @@
     </label>
 
     <p class="hint" style="margin-top:14px;margin-bottom:0;">Stimmt <code>anzahl_settlement_records</code> nicht mit <code>anzahl_transaktionen</code> überein, gibt es Transaktionen mit mehreren Settlement-Records — typischerweise Refunds oder Korrekturen, die in einem späteren Lauf abgerechnet wurden.</p>
+
+    <p class="hint" style="margin-top:14px;margin-bottom:0;"><code>tip_total</code>: Trinkgeld-Anteil (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. Diese Annahme ist noch nicht empirisch bestätigt – prüfbar mit <code>sql/tip_verifikation.sql</code>.</p>
   </div>
 
   <div class="panel">
@@ -837,6 +843,7 @@
   const settlementSection = document.getElementById('settlementSection');
   const settlementByTermEl = document.getElementById('settlementByTerminal');
   const terminalModeHint= document.getElementById('terminalModeHint');
+  const tipUnsettledHint= document.getElementById('tipUnsettledHint');
   const modeBadge       = document.getElementById('modeBadge');
   const sqlOutput       = document.getElementById('sqlOutput');
   const copyBtn         = document.getElementById('copyBtn');
@@ -1774,6 +1781,9 @@ ORDER BY
     exportSection.classList.toggle('active', mode === 'export');
     cardSection.classList.toggle('active', mode === 'card');
     settlementSection.classList.toggle('active', mode === 'settlement');
+    // tip_total/unsettled_anzahl erscheinen unbedingt nur in brand/terminal;
+    // der Settlement-Modus hat seinen eigenen (fest sichtbaren) tip_total-Hinweis.
+    tipUnsettledHint.classList.toggle('active', mode === 'brand' || mode === 'terminal');
     if (mode === 'terminal') {
       modeBadge.textContent = 'Brand + Terminal';
       terminalModeHint.innerHTML = '<strong>Pflichtfilter:</strong> Es werden nur Transaktionen der ausgewählten Terminals ausgewertet.';

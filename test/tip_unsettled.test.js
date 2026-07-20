@@ -25,6 +25,35 @@ const NONE_ON = () => {
   return c;
 };
 
+// Extrahiert den Rumpf des tip-CTE ("tip AS ( ... )") aus generiertem SQL.
+// Die schliessende Klammer eines CTE steht im Codestil dieses Projekts immer
+// allein auf ihrer eigenen Zeile (siehe tipCte() in wallee_query_builder_v2.html),
+// daher greift ein nicht-gieriges Match bis zum ersten "\n)" zuverlaessig den
+// vollstaendigen CTE-Rumpf ab - unabhaengig davon, in welchem Modus/Query das
+// tip-CTE eingebettet ist.
+function tipCteBody(sql) {
+  const m = sql.match(/tip AS \(([\s\S]*?)\n\)/);
+  assert.ok(m, 'tip-CTE (tip AS (...)) nicht im generierten SQL gefunden');
+  return m[1];
+}
+
+// Prueft, dass das tip-Konstrukt im generierten SQL vor-aggregiert ist
+// (GROUP BY tl.transaction_id INNERHALB des CTE-Rumpfs). Fehlt die
+// Vor-Aggregation, vervielfacht der anschliessende LEFT JOIN tip die Zeilen
+// der Aussenquery und zerstoert COUNT(*)/SUM(t.completedamount)/Gebuehrensummen
+// still - das ist der Fehler, den dieser Helper in allen vier Modi mit
+// Trinkgeld (brand/terminal/export/settlement) nachweisen soll.
+function assertTipPreAggregated(sql) {
+  const body = tipCteBody(sql);
+  assert.match(body, /transaction_lineitem/, 'transaction_lineitem fehlt im tip-CTE-Rumpf');
+  assert.match(
+    body,
+    /GROUP BY tl\.transaction_id/,
+    'tip-CTE ist nicht pro Transaktion vor-aggregiert (GROUP BY tl.transaction_id fehlt) - ' +
+    'der LEFT JOIN auf tip wuerde Zeilen vervielfachen'
+  );
+}
+
 // --- tipCte direkt ---------------------------------------------------------
 
 test('tipCte: aggregiert Trinkgeld pro Transaktion, eingegrenzt ueber tx', () => {
@@ -50,6 +79,7 @@ test('Export mit tip an: tx- und tip-CTE vorhanden, LEFT JOIN tip, ueber tx eing
   assert.match(sql, /LEFT JOIN tip\s+ON tip\.transaction_id\s+=\s+t\.id/);
   assert.match(sql, /tl\.transaction_id IN \(SELECT id FROM tx\)/);
   assert.match(sql, /COALESCE\(tip\.tip_amount, 0\)\s+AS tip_amount/);
+  assertTipPreAggregated(sql);
 });
 
 test('Export mit grossnotip an: braucht ebenfalls das tip-CTE', () => {
@@ -68,7 +98,7 @@ test('Export mit tip aus: kein tip-CTE, kein Join, kein transaction_lineitem im 
   assert.doesNotMatch(sql, /transaction_lineitem/);
 });
 
-test('Export: tip-Spalte allein zieht kein WITH tx nach, wenn sonst nichts gewaehlt ist - doch, denn needsTip braucht tx', () => {
+test('Export: tip allein erzwingt das tx-CTE', () => {
   // Gegenprobe zum bestehenden Test "ohne Join-Spalten entsteht gar kein WITH":
   // sobald tip gewaehlt ist, MUSS tx da sein (sonst scannt tipCte die ganze
   // lineitem-Historie).
@@ -90,6 +120,10 @@ test('Brand-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GROUP 
   const groupBySection = sql.slice(groupByIdx, orderByIdx === -1 ? undefined : orderByIdx);
   assert.doesNotMatch(groupBySection, /tip\.tip_amount/);
   assert.doesNotMatch(groupBySection, /tip_total/);
+  // Ohne Vor-Aggregation im tip-CTE selbst wuerde der LEFT JOIN tip Zeilen
+  // vervielfachen und COUNT(*)/SUM(t.completedamount) verfaelschen, obwohl die
+  // Aussenquery unveraendert aussieht - siehe assertTipPreAggregated.
+  assertTipPreAggregated(sql);
 });
 
 test('Brand-Query: COUNT(*) und SUM(t.completedamount) unveraendert', () => {
@@ -108,6 +142,7 @@ test('Terminal-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GRO
   const groupBySection = sql.slice(groupByIdx, orderByIdx === -1 ? undefined : orderByIdx);
   assert.doesNotMatch(groupBySection, /tip\.tip_amount/);
   assert.doesNotMatch(groupBySection, /tip_total/);
+  assertTipPreAggregated(sql);
 });
 
 test('Terminal-Query: COUNT(*) und SUM(t.completedamount) unveraendert', () => {
@@ -124,6 +159,7 @@ test('Settlement-Query: tip_total vorhanden, Vor-Aggregation von settle_tx unver
   assert.match(sql, /settle_tx AS \(/);
   assert.match(sql, /GROUP BY psr\.transaction_id/);
   assert.match(sql, /LEFT JOIN settle_tx s ON s\.transaction_id = t\.id/);
+  assertTipPreAggregated(sql);
 });
 
 test('Settlement-Query: genau ein Tip-CTE', () => {
@@ -151,6 +187,16 @@ test('Brand-Query: unsettled_anzahl prueft beide Bedingungen (Fee fehlt UND kein
   assert.match(cond, /t\.totalappliedfees IS NULL OR t\.totalappliedfees = 0/);
   assert.match(cond, /se\.transaction_id IS NULL/);
   assert.match(sql, /LEFT JOIN settle_exists se ON se\.transaction_id = t\.id/);
+  // Beide Teilbedingungen muessen per AND verknuepft sein - nicht nur beide
+  // irgendwo im CASE vorkommen. Ein OR wuerde jede frisch abgeschlossene
+  // Transaktion, die noch auf ihren Settlement-Lauf wartet (Fee fehlt, aber
+  // se.transaction_id ist nicht NULL, weil schon ein Record existiert - oder
+  // umgekehrt), faelschlich mitzaehlen.
+  assert.match(
+    cond,
+    /\(t\.totalappliedfees IS NULL OR t\.totalappliedfees = 0\)\s*AND\s*se\.transaction_id IS NULL/,
+    'Fee- und Settlement-Bedingung muessen per AND verknuepft sein, nicht per OR'
+  );
 });
 
 test('Terminal-Query: unsettled_anzahl prueft beide Bedingungen', () => {
@@ -162,6 +208,12 @@ test('Terminal-Query: unsettled_anzahl prueft beide Bedingungen', () => {
   assert.match(cond, /t\.totalappliedfees IS NULL OR t\.totalappliedfees = 0/);
   assert.match(cond, /se\.transaction_id IS NULL/);
   assert.match(sql, /LEFT JOIN settle_exists se ON se\.transaction_id = t\.id/);
+  // Siehe Kommentar im Brand-Query-Test: AND, nicht OR.
+  assert.match(
+    cond,
+    /\(t\.totalappliedfees IS NULL OR t\.totalappliedfees = 0\)\s*AND\s*se\.transaction_id IS NULL/,
+    'Fee- und Settlement-Bedingung muessen per AND verknuepft sein, nicht per OR'
+  );
 });
 
 test('Brand- und Terminal-Query: kein currentaccountwithdrawal', () => {

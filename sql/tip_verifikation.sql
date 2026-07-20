@@ -11,6 +11,15 @@
 -- (a) Welche lineitem.type-Werte kommen im Space vor, und mit welchen Summen?
 -- Bestaetigt (oder widerlegt), dass der Typ 'TIP' tatsaechlich fuer Trinkgeld
 -- verwendet wird und wie relevant er volumenmaessig ist.
+--
+-- WARNUNG: Diese Query filtert BEWUSST nicht nach Zeitraum und scannt damit die
+-- gesamte lineitem-Historie des Space (im Unterschied zu jeder anderen Query in
+-- diesem Projekt, die immer auf transaction.completedon eingrenzt). Grund: das
+-- Ziel ist ein Ueberblick ueber alle jemals vorgekommenen lineitem.type-Werte,
+-- nicht nur die eines Zeitfensters. Auf grossen Spaces ist das entsprechend
+-- teuer/langsam. Falls das ein Problem ist, entweder per JOIN auf
+-- transaction_lineitem/transaction zeitlich eingrenzen (wie in Query (b) unten)
+-- oder zuerst an einem kleinen/Pilot-Space ausfuehren.
 SELECT
     li.type,
     count(*)                    AS anzahl_lineitems,
@@ -31,7 +40,7 @@ ORDER BY anzahl_lineitems DESC;
 --                                                        enthalten (aktuelle Annahme
 --                                                        in wallee_query_builder_v2.html
 --                                                        bestaetigt).
---   lineitems_total + tip  ≈  t.completedamount       -> Trinkgeld ist ZUSAeTZLICH
+--   lineitems_total + tip  ≈  t.completedamount       -> Trinkgeld ist ZUSÄTZLICH
 --                                                        zum Brutto -> Annahme in
 --                                                        CLAUDE.md / EXPORT_COLUMNS
 --                                                        (tip, grossnotip) korrigieren.
