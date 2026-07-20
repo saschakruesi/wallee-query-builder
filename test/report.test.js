@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const { loadBuilders, plain } = require('./harness');
 
 const app = loadBuilders();
-const { parseReportCsv } = app;
+const { parseReportCsv, autoOutletGroup, autoBrandGroup } = app;
 
 // Kopfzeile so, wie sie der Terminal-Modus des Generators liefert (unsettled_anzahl).
 const HEADER_APP = '"space_id","terminal_identifier","terminal_name","brand","waehrung",' +
@@ -155,4 +155,51 @@ test('Spaltenreihenfolge ist egal, Mapping laeuft ueber den Namen', () => {
   assert.strictEqual(res.rows[0].gross, 700000000);
   assert.strictEqual(res.rows[0].count, 0, 'anzahl_transaktionen ist optional');
   assert.strictEqual(res.rows[0].currency, 'CHF', 'waehrung ist optional, Default CHF');
+});
+
+// --- Auto-Gruppierung ------------------------------------------------------
+// Outlet-Gruppen entstehen aus dem Terminalnamen (abschliessende Ziffern weg),
+// Brand-Gruppen aus dem Brand-String. Beide Vorschlaege sind frei
+// ueberschreibbar; zusammengefuehrt wird spaeter ueber den Gruppen-NAMEN,
+// nicht ueber TID oder Brand.
+
+test('autoOutletGroup entfernt abschliessende Ziffern und Leerzeichen', () => {
+  assert.strictEqual(autoOutletGroup('Lounge 1'), 'Lounge');
+  assert.strictEqual(autoOutletGroup('Wunderbar 6'), 'Wunderbar');
+  assert.strictEqual(autoOutletGroup('Klub Tür 1'), 'Klub Tür');
+  assert.strictEqual(autoOutletGroup('Klub Garderobe 2'), 'Klub Garderobe');
+});
+
+test('autoOutletGroup laesst Namen ohne abschliessende Ziffern unveraendert', () => {
+  assert.strictEqual(autoOutletGroup('Oceanbar'), 'Oceanbar');
+  assert.strictEqual(autoOutletGroup('BSE'), 'BSE');
+});
+
+test('autoOutletGroup: Ziffern in der Mitte bleiben stehen', () => {
+  assert.strictEqual(autoOutletGroup('Bar 21 Lounge'), 'Bar 21 Lounge');
+});
+
+test('autoOutletGroup faellt nicht auf einen leeren Namen zurueck', () => {
+  // Ein rein numerischer Name wuerde sonst zur leeren Gruppe - dann lieber
+  // den Originalnamen behalten, damit die Zeile im Report zuordenbar bleibt.
+  assert.strictEqual(autoOutletGroup('123'), '123');
+  assert.strictEqual(autoOutletGroup('  '), '–');
+  assert.strictEqual(autoOutletGroup(''), '–');
+  assert.strictEqual(autoOutletGroup(null), '–');
+  assert.strictEqual(autoOutletGroup(undefined), '–');
+});
+
+test('autoBrandGroup trennt Lunch Check von allem uebrigen', () => {
+  assert.strictEqual(autoBrandGroup('Lunch Check'), 'Lunch-Check');
+  assert.strictEqual(autoBrandGroup('Visa'), 'Wallee');
+  assert.strictEqual(autoBrandGroup('Mastercard'), 'Wallee');
+  assert.strictEqual(autoBrandGroup('TWINT'), 'Wallee');
+  assert.strictEqual(autoBrandGroup('PostFinance Card'), 'Wallee');
+  assert.strictEqual(autoBrandGroup('Visa V PAY'), 'Wallee');
+  assert.strictEqual(autoBrandGroup('Mastercard Maestro'), 'Wallee');
+});
+
+test('autoBrandGroup ist robust gegen leere Werte', () => {
+  assert.strictEqual(autoBrandGroup(''), 'Wallee');
+  assert.strictEqual(autoBrandGroup(null), 'Wallee');
 });

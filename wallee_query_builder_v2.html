@@ -1960,6 +1960,34 @@ ORDER BY
     return { rows: daten, headers, error: null };
   }
 
+  // --- Terminal-Report: Auto-Gruppierung ----------------------------------
+  // Nur Vorschlaege. Der Nutzer kann jeden Gruppennamen ueberschreiben;
+  // zusammengefasst wird anschliessend ueber den Gruppen-NAMEN, nicht ueber
+  // TID oder Brand. "Klub Tür" und "Klub Garderobe" beide auf "Klub" gesetzt
+  // ergeben also eine gemeinsame Gruppe.
+
+  const OHNE_NAMEN = '–';
+
+  // Terminalnamen sind typischerweise durchnummeriert ("Lounge 1", "Lounge 2").
+  // Die abschliessende Nummer weg ergibt die Outlet-Gruppe.
+  function autoOutletGroup(name) {
+    const s = String(name == null ? '' : name);
+    const gekuerzt = s.replace(/[\s\d]+$/, '').trim();
+    // Ein rein numerischer Name ("123") wuerde sonst zur leeren Gruppe. Dann
+    // lieber den Originalnamen behalten, damit die Zeile zuordenbar bleibt.
+    return gekuerzt || s.trim() || OHNE_NAMEN;
+  }
+
+  const LUNCH_CHECK_BRAND = 'Lunch Check';
+
+  // Lunch Check wird getrennt ausgewiesen, weil es nicht ueber wallee
+  // abgerechnet wird; alles uebrige laeuft unter "Wallee".
+  function autoBrandGroup(brand) {
+    return String(brand == null ? '' : brand).trim() === LUNCH_CHECK_BRAND
+      ? 'Lunch-Check'
+      : 'Wallee';
+  }
+
   function generate() {
     // Der Report-Modus hat kein SQL-Panel und arbeitet auf einer geladenen CSV.
     // Ohne diesen Ausstieg wuerde hier unnoetig eine Brand-Query erzeugt.

@@ -87,6 +87,8 @@ const EXPORTED = [
   'parseReportCsv',
   'parseAmount',
   'AMOUNT_SCALE',
+  'autoOutletGroup',
+  'autoBrandGroup',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
