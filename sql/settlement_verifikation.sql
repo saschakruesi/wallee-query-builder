@@ -278,6 +278,16 @@ LEFT JOIN settle_exists se
 --   dem Zaehler heraus. Er zeigte dann eine viel kleinere Zahl als "wartet noch
 --   auf Auszahlung" vermuten laesst.
 --
+-- Befund (ein Space, ein Zeitraum von mehreren Wochen):
+--   Es traten nur ZWEI der vier Kombinationen auf: "mit Gebuehr, mit Record"
+--   und "ohne Gebuehr, ohne Record". Keine einzige Transaktion hatte eine
+--   Gebuehr ohne Record oder umgekehrt. Gebuehr und Settlement treffen in
+--   diesen Daten also im Gleichschritt ein, nicht zeitversetzt.
+--   Damit misst unsettled_anzahl genau die Transaktionen ohne Settlement-Record
+--   - die Und-Verknuepfung verengt den Zaehler nicht, wie zunaechst befuerchtet.
+--   Sie ist trotzdem sinnvoll: sollten die beiden Signale in einem anderen
+--   Space auseinanderlaufen, zaehlt die Konjunktion konservativ.
+--
 -- Lesart:
 --   Die vier Kombinationen zeigen, was der Zaehler tatsaechlich misst:
 --     mit Gebuehr,  mit Record   -> vollstaendig abgeschlossen

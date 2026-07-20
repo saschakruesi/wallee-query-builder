@@ -176,6 +176,13 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
   (anderer Space, Schema-Änderung) erneut zu prüfen.
 - **Settlement-Annahmen — bisher an Produktivdaten beobachtet (ein Space, ein Zeitraum von
   mehreren Wochen, mit `sql/settlement_verifikation.sql` geprüft):**
+  - **`unsettled_anzahl` misst, was es soll.** Query 6 ergab nur zwei der vier möglichen
+    Kombinationen: „mit Gebühr, mit Record" und „ohne Gebühr, ohne Record". Keine einzige
+    Transaktion hatte eine Gebühr ohne Settlement-Record oder umgekehrt — die beiden Signale
+    treffen im Gleichschritt ein, nicht zeitversetzt. Die zunächst befürchtete Verengung
+    durch die Und-Verknüpfung tritt damit nicht ein; der Zähler entspricht exakt der Menge
+    ohne Settlement-Record. Die Konjunktion bleibt trotzdem stehen: laufen die Signale in
+    einem anderen Space auseinander, zählt sie konservativ.
   - `banktransaction.state` kam ausschliesslich als `SETTLED` vor, kein `UPCOMING` und kein
     anderer Wert, und jeder Record hatte ein gefülltes `valuedate`. Das deutet darauf hin,
     dass ein `payfacsettlementrecord` offenbar erst entsteht, wenn tatsächlich abgerechnet

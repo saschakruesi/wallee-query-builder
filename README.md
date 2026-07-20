@@ -27,7 +27,11 @@ nichts das eigene Gerät.
 | **Settlement / Auszahlung** | pro Tag: was ist ausbezahlt, was steht aus, welche Gebühren fielen an, inkl. `tip_total` |
 
 `unsettled_anzahl` zählt Transaktionen ohne Gebühr (`totalappliedfees` NULL/0) **und** ohne
-bestehenden Settlement-Record — also solche, die noch auf die Abrechnung warten.
+bestehenden Settlement-Record — also solche, die noch auf die Abrechnung warten. An
+Produktivdaten geprüft: Gebühr und Settlement-Record treffen dort im Gleichschritt ein, es
+gab keine Transaktion mit nur einem der beiden. Der Zähler entspricht damit genau der Menge
+ohne Settlement-Record. Die Und-Verknüpfung bleibt trotzdem bestehen — laufen die beiden
+Signale in einem anderen Space auseinander, zählt sie konservativ.
 
 ## Trinkgeld
 
