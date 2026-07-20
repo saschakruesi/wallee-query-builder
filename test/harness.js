@@ -83,6 +83,10 @@ const EXPORTED = [
   'saveState',
   'STORAGE_KEY',
   'STORAGE_KEY_OLD',
+  // Report-Kern (v4), ebenfalls reine Funktionen
+  'parseReportCsv',
+  'parseAmount',
+  'AMOUNT_SCALE',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
@@ -157,4 +161,14 @@ function loadBuilders(options = {}) {
   return sandbox.__x;
 }
 
-module.exports = { loadBuilders };
+// Objekte und Arrays, die im vm-Kontext entstehen, haben die Intrinsics jenes
+// Realms - ihr Prototyp ist nicht derselbe wie hier draussen. assert.deepStrictEqual
+// vergleicht auch den Prototyp und meldet dann "same structure but not
+// reference-equal", obwohl der Inhalt stimmt. plain() zieht den Wert per
+// JSON-Runde in diesen Realm herueber, damit strikte Vergleiche moeglich sind.
+// Nur fuer reine Datenstrukturen gedacht (der Report-Kern liefert genau solche).
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+module.exports = { loadBuilders, plain };

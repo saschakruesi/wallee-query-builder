@@ -1857,6 +1857,109 @@ ORDER BY
     settlement_state;`;
   }
 
+  // --- Terminal-Report: CSV-Parser ----------------------------------------
+  // Reine Funktionen, DOM-frei und ueber test/harness.js testbar.
+
+  // Betraege werden als ganzzahlige Vielfache von 1e-8 gefuehrt, nicht als
+  // Gleitkommazahl. Die Analytics-CSV liefert 8 Nachkommastellen, und die
+  // Summen sind Geldbetraege, die auf den Rappen stimmen muessen - mit float
+  // waere 0.1 + 0.2 !== 0.3 auch hier ein Thema. Ganzzahlen bis 2^53 sind exakt,
+  // das reicht fuer Betraege bis rund 90 Millionen.
+  const AMOUNT_SCALE = 8;
+
+  // Bewusst per String zerlegt statt parseFloat(v) * 1e8: die Multiplikation
+  // wuerde die Ungenauigkeit wieder hereinholen, die wir gerade vermeiden.
+  function parseAmount(value) {
+    const s = String(value == null ? '' : value).trim();
+    const m = /^(-?)(\d*)(?:\.(\d*))?$/.exec(s);
+    if (!m || (m[2] === '' && (m[3] === undefined || m[3] === ''))) return 0;
+    const vorzeichen = m[1] === '-' ? -1 : 1;
+    const ganz = m[2] || '0';
+    const bruch = (m[3] || '').slice(0, AMOUNT_SCALE).padEnd(AMOUNT_SCALE, '0');
+    return vorzeichen * Number(ganz + bruch);
+  }
+
+  function parseCount(value) {
+    const n = parseInt(String(value == null ? '' : value).trim(), 10);
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  // Zeichenweiser Parser: die Analytics-CSV quotet alle Felder, und Terminalnamen
+  // duerfen Kommas und escapte Quotes ("") enthalten - ein split(',') reicht nicht.
+  function parseCsvRows(text) {
+    const rows = [];
+    let feld = '', zeile = [], inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { feld += '"'; i++; }
+          else inQuotes = false;
+        } else feld += c;
+      } else if (c === '"') {
+        inQuotes = true;
+      } else if (c === ',') {
+        zeile.push(feld); feld = '';
+      } else if (c === '\n') {
+        zeile.push(feld); rows.push(zeile); zeile = []; feld = '';
+      } else if (c !== '\r') {
+        feld += c;
+      }
+    }
+    if (feld.length || zeile.length) { zeile.push(feld); rows.push(zeile); }
+    // Leerzeilen (u. a. die uebliche Leerzeile am Dateiende) verwerfen.
+    return rows.filter(r => r.some(x => x !== ''));
+  }
+
+  // Der Terminal-Modus des Generators liefert die Spalte als unsettled_anzahl,
+  // die SPEC und der Prototyp nennen sie unmatched_anzahl. Beide werden
+  // akzeptiert und auf das kanonische Feld "unmatched" abgebildet.
+  const ZAEHLER_SPALTEN = ['unmatched_anzahl', 'unsettled_anzahl'];
+  const ZAEHLER_LABEL = ZAEHLER_SPALTEN.join(' / ');
+
+  function parseReportCsv(text) {
+    const leer = { rows: [], headers: [] };
+    const rows = parseCsvRows(String(text == null ? '' : text));
+    if (!rows.length) {
+      return Object.assign({}, leer, {
+        error: { message: 'Die Datei ist leer oder enthält keine lesbaren Zeilen.', missing: [] },
+      });
+    }
+
+    const headers = rows[0].map(h => h.trim());
+    const ix = {};
+    headers.forEach((h, i) => { if (!(h in ix)) ix[h] = i; });
+
+    const zaehlerSpalte = ZAEHLER_SPALTEN.find(k => k in ix);
+    const missing = ['terminal_identifier', 'terminal_name', 'brand', 'brutto_gross', 'tip_total']
+      .filter(k => !(k in ix));
+    if (!zaehlerSpalte) missing.push(ZAEHLER_LABEL);
+
+    if (missing.length) {
+      return Object.assign({}, leer, {
+        headers,
+        error: {
+          message: 'In der CSV fehlen folgende Spalten: ' + missing.join(', ') + '.',
+          missing,
+        },
+      });
+    }
+
+    const feld = (r, name) => (name in ix ? r[ix[name]] : undefined);
+    const daten = rows.slice(1).map(r => ({
+      tid: (feld(r, 'terminal_identifier') || '').trim(),
+      name: (feld(r, 'terminal_name') || '').trim(),
+      brand: (feld(r, 'brand') || '').trim(),
+      currency: (feld(r, 'waehrung') || 'CHF').trim() || 'CHF',
+      count: parseCount(feld(r, 'anzahl_transaktionen')),
+      unmatched: parseCount(r[ix[zaehlerSpalte]]),
+      gross: parseAmount(feld(r, 'brutto_gross')),
+      tip: parseAmount(feld(r, 'tip_total')),
+    }));
+
+    return { rows: daten, headers, error: null };
+  }
+
   function generate() {
     // Der Report-Modus hat kein SQL-Panel und arbeitet auf einer geladenen CSV.
     // Ohne diesen Ausstieg wuerde hier unnoetig eine Brand-Query erzeugt.
