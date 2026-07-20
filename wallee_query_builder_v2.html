@@ -253,6 +253,24 @@
   /* Conditional sections */
   .cond-section { display: none; }
   .cond-section.active { display: block; }
+  .hidden { display: none !important; }
+
+  /* Terminal-Report */
+  .report-dropzone {
+    margin-top: 16px;
+    padding: 22px 16px;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    background: var(--panel-2);
+    text-align: center;
+    transition: border-color .15s, background .15s;
+  }
+  .report-dropzone p { margin: 0 0 10px; color: var(--muted); }
+  .report-dropzone.dragover {
+    border-color: var(--accent);
+    background: var(--panel-3);
+  }
+  .report-error { color: var(--danger); font-weight: 600; }
 
   .wallet-note {
     margin-top: 18px;
@@ -560,6 +578,7 @@
     <div class="mode-switcher" role="tablist">
       <button class="mode-btn active" data-mode="brand">Brand-Auswertung</button>
       <button class="mode-btn" data-mode="terminal">Brand + Terminal-Filter</button>
+      <button class="mode-btn" data-mode="report">Terminal-Report</button>
       <button class="mode-btn" data-mode="export">Transaktions-Export</button>
       <button class="mode-btn" data-mode="card">Kartensuche</button>
       <button class="mode-btn" data-mode="settlement">Settlement / Auszahlung</button>
@@ -781,7 +800,28 @@
     <p class="hint" style="margin-top:14px;margin-bottom:0;"><code>tip_total</code>: Trinkgeld-Anteil (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.</p>
   </div>
 
-  <div class="panel">
+  <!-- Terminal-Report: buendelt Terminals zu Outlet-Gruppen und Kartenmarken zu
+       Brand-Gruppen. Anders als die uebrigen Modi erzeugt dieser kein SQL, sondern
+       wertet eine CSV aus - deshalb ist hier das SQL-Panel ausgeblendet. -->
+  <div class="panel cond-section" id="reportSection">
+    <h2>Terminal-Report</h2>
+    <p class="hint" style="margin-top:0;">
+      Wertet den CSV-Export aus <em>Brand + Terminal-Filter</em> aus: Terminals werden zu
+      Outlet-Gruppen, Kartenmarken zu Brand-Gruppen zusammengefasst und totalisiert.
+      Die Daten bleiben dabei vollständig auf diesem Rechner.
+    </p>
+
+    <div id="reportDropzone" class="report-dropzone">
+      <p><strong>CSV hierhin ziehen</strong> oder</p>
+      <input type="file" id="reportFileInput" accept=".csv,text/csv">
+    </div>
+
+    <p class="hint" id="reportStatus" style="margin-bottom:0;"></p>
+
+    <div id="reportOutput"></div>
+  </div>
+
+  <div class="panel" id="sqlPanel">
     <div class="output-header">
       <span class="output-title">Generiertes SQL <span class="badge" id="modeBadge">Brand</span></span>
       <div class="actions">
@@ -879,6 +919,12 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const settlementByTermEl = document.getElementById('settlementByTerminal');
   const terminalModeHint= document.getElementById('terminalModeHint');
   const tipUnsettledHint= document.getElementById('tipUnsettledHint');
+  const reportSection   = document.getElementById('reportSection');
+  const reportDropzone  = document.getElementById('reportDropzone');
+  const reportFileInput = document.getElementById('reportFileInput');
+  const reportStatus    = document.getElementById('reportStatus');
+  const reportOutput    = document.getElementById('reportOutput');
+  const sqlPanel        = document.getElementById('sqlPanel');
   const modeBadge       = document.getElementById('modeBadge');
   const sqlOutput       = document.getElementById('sqlOutput');
   const copyBtn         = document.getElementById('copyBtn');
@@ -1812,6 +1858,9 @@ ORDER BY
   }
 
   function generate() {
+    // Der Report-Modus hat kein SQL-Panel und arbeitet auf einer geladenen CSV.
+    // Ohne diesen Ausstieg wuerde hier unnoetig eine Brand-Query erzeugt.
+    if (state.mode === 'report') return;
     const start = `${state.startDate} ${state.startTime}`;
     const end   = `${state.endDate} ${state.endTime}`;
     const spaceIds = selectedSpaceIds();
@@ -1845,6 +1894,10 @@ ORDER BY
     exportSection.classList.toggle('active', mode === 'export');
     cardSection.classList.toggle('active', mode === 'card');
     settlementSection.classList.toggle('active', mode === 'settlement');
+    // Der Report erzeugt kein SQL, sondern wertet eine CSV aus. Deshalb als
+    // einziger Modus mit ausgeblendetem SQL-Panel.
+    reportSection.classList.toggle('active', mode === 'report');
+    sqlPanel.classList.toggle('hidden', mode === 'report');
     // tip_total/unsettled_anzahl erscheinen unbedingt nur in brand/terminal;
     // der Settlement-Modus hat seinen eigenen (fest sichtbaren) tip_total-Hinweis.
     tipUnsettledHint.classList.toggle('active', mode === 'brand' || mode === 'terminal');
@@ -1860,6 +1913,8 @@ ORDER BY
     } else if (mode === 'settlement') {
       modeBadge.textContent = 'Settlement';
       terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl werden alle Terminals der gewählten Spaces ausgewertet.';
+    } else if (mode === 'report') {
+      modeBadge.textContent = 'Terminal-Report';
     } else {
       modeBadge.textContent = 'Brand';
     }
