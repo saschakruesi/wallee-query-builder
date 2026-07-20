@@ -250,6 +250,45 @@
   }
   .quick-time:hover { color: var(--accent-dark); border-color: var(--accent-hover); }
 
+  /* Kopfzeile mit Einstellungs-Zahnrad */
+  .kopfzeile { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .kopfzeile h1 { flex: 1 1 auto; }
+  .icon-btn {
+    flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 38px; height: 38px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel); color: var(--muted);
+    cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .icon-btn:hover { color: var(--accent-hover); border-color: var(--accent); background: var(--panel-2); }
+  .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Dialog */
+  .overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 40px 16px;
+    background: rgba(15, 32, 31, .45);
+    overflow-y: auto;
+  }
+  .dialog {
+    width: 100%; max-width: 620px;
+    background: var(--panel);
+    border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .22);
+  }
+  .dialog-kopf {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dialog-kopf h2 { margin: 0; font-size: 17px; }
+  .dialog-inhalt { padding: 18px 20px 22px; }
+  .dialog-inhalt input[type="text"] { width: 100%; }
+  .feld-label { display: block; margin-bottom: 4px; font-size: 13px; color: var(--muted); }
+
   /* Conditional sections */
   .cond-section { display: none; }
   .cond-section.active { display: block; }
@@ -613,7 +652,17 @@
 </head>
 <body>
 <div class="container">
-  <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v4</span></h1>
+  <div class="kopfzeile">
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v4</span></h1>
+    <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
+         deshalb hier oben und nicht in einem der Panels. -->
+    <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
+            aria-haspopup="dialog" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M19.14 12.94a7.6 7.6 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.62l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.24-1.12.55-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.86a.5.5 0 0 0 .12.62l2.03 1.58a7.6 7.6 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.62l1.92 3.32c.12.21.37.3.6.22l2.39-.96c.5.39 1.04.7 1.62.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.58-.24 1.12-.55 1.62-.94l2.39.96c.23.08.48-.01.6-.22l1.92-3.32a.5.5 0 0 0-.12-.62l-2.03-1.58ZM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2Z"/>
+      </svg>
+    </button>
+  </div>
   <p class="subtitle">Brand-Auswertung · Brand + Terminal-Filter · Transaktions-Export · Kartensuche · Settlement / Auszahlung · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
 
   <div class="panel">
@@ -910,36 +959,50 @@
     <p class="hint" id="sqlEinfuegenHinweis">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export: SETTLED = ausbezahlt, <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) = bisher der beobachtete Normalfall für „noch nicht abgerechnet". UPCOMING (ausstehend) und PARTIAL (teilweise ausbezahlt) sind zusätzlich vorgesehen, wurden bislang aber nicht beobachtet. NO_RECORD gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
   </div>
 
-  <!-- Betriebsmodus: der Kopieren-Modus ist der Default und braucht nichts
-       installiert. Der API-Modus setzt einen lokal laufenden Proxy voraus. -->
-  <div class="panel">
-    <h2>Einstellungen</h2>
+</div>
 
-    <label class="check-row">
-      <input type="checkbox" id="apiModeToggle">
-      <span><strong>API-Zugriff verwenden</strong> — Query direkt ausführen statt SQL kopieren</span>
-    </label>
+<!-- Einstellungen. Gelten modusuebergreifend, deshalb als Dialog ueber dem
+     Zahnrad im Kopf statt als Panel unter einem einzelnen Tab. -->
+<div class="overlay hidden" id="settingsOverlay">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitel">
+    <div class="dialog-kopf">
+      <h2 id="settingsTitel">Einstellungen</h2>
+      <button class="icon-btn" id="settingsCloseBtn" title="Schliessen" aria-label="Schliessen">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+      </button>
+    </div>
 
-    <p class="hint" style="margin-top:6px;">
-      Ohne diesen Schalter arbeitet der Builder wie bisher: SQL erzeugen, kopieren und im Portal
-      unter <em>Account &gt; Analytics &gt; Submit Query</em> einfügen. Dafür ist <strong>nichts zu
-      installieren</strong>.
-    </p>
+    <div class="dialog-inhalt">
+      <p class="hint" style="margin-top:0;">Diese Einstellungen gelten für alle Modi.</p>
 
-    <div id="apiSettings" class="hidden">
-      <p class="hint">
-        Der API-Zugriff läuft über einen kleinen Proxy, der <strong>lokal auf diesem Rechner</strong>
-        läuft: <code>node wallee-proxy.mjs</code>. Er ist nötig, weil der Browser Aufrufe an
-        <code>app-wallee.com</code> per CORS blockiert — und weil die Zugangsdaten so den Rechner
-        nie verlassen. Sie werden <strong>nicht</strong> in dieser Seite gespeichert, sondern
-        einmalig beim Proxy hinterlegt.
+      <label class="check-row">
+        <input type="checkbox" id="apiModeToggle">
+        <span><strong>API-Zugriff verwenden</strong> — Query direkt ausführen statt SQL kopieren</span>
+      </label>
+
+      <p class="hint" style="margin-top:6px;">
+        Ohne diesen Schalter arbeitet der Builder wie bisher: SQL erzeugen, kopieren und im Portal
+        unter <em>Account &gt; Analytics &gt; Submit Query</em> einfügen. Dafür ist <strong>nichts zu
+        installieren</strong>.
       </p>
 
-      <div class="add-row">
+      <div id="apiSettings" class="hidden">
+        <p class="hint">
+          Der API-Zugriff läuft über einen kleinen Proxy, der <strong>lokal auf diesem Rechner</strong>
+          läuft: <code>node wallee-proxy.mjs</code>. Er ist nötig, weil der Browser Aufrufe an
+          <code>app-wallee.com</code> per CORS blockiert — und weil die Zugangsdaten so den Rechner
+          nie verlassen. Sie werden <strong>nicht</strong> in dieser Seite gespeichert, sondern
+          einmalig beim Proxy hinterlegt.
+        </p>
+
+        <label class="feld-label" for="proxyUrlInput">Adresse des Proxys</label>
         <input id="proxyUrlInput" type="text" placeholder="http://localhost:8787"
                title="Adresse des lokal laufenden Proxys." />
+        <p class="hint" id="proxyStatus" style="margin-top:6px;margin-bottom:0;"></p>
       </div>
-      <p class="hint" id="proxyStatus" style="margin-top:6px;margin-bottom:0;"></p>
     </div>
   </div>
 </div>
@@ -1051,6 +1114,9 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const sqlToggleBtn    = document.getElementById('sqlToggleBtn');
   const apiHinweis      = document.getElementById('apiHinweis');
   const sqlEinfuegenHinweis = document.getElementById('sqlEinfuegenHinweis');
+  const settingsBtn     = document.getElementById('settingsBtn');
+  const settingsOverlay = document.getElementById('settingsOverlay');
+  const settingsCloseBtn = document.getElementById('settingsCloseBtn');
   const apiModeToggle   = document.getElementById('apiModeToggle');
   const apiSettings     = document.getElementById('apiSettings');
   const proxyUrlInput   = document.getElementById('proxyUrlInput');
@@ -2822,6 +2888,41 @@ ORDER BY
     leseDatei(file, ingestReportCsv);
   });
 
+  // --- Event bindings: Einstellungs-Dialog ---------------------------------
+  function settingsOeffnen() {
+    settingsOverlay.classList.remove('hidden');
+    settingsBtn.setAttribute('aria-expanded', 'true');
+    // Fokus in den Dialog, damit Tastaturbedienung nicht hinter dem Overlay
+    // weiterlaeuft.
+    apiModeToggle.focus();
+  }
+
+  // Ohne Fokuswechsel - beim Start soll der Dialog zwar zu sein, aber nichts
+  // den Fokus an sich reissen.
+  function settingsZustandZu() {
+    settingsOverlay.classList.add('hidden');
+    settingsBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  function settingsSchliessen() {
+    settingsZustandZu();
+    settingsBtn.focus();
+  }
+
+  settingsBtn.addEventListener('click', settingsOeffnen);
+  settingsCloseBtn.addEventListener('click', settingsSchliessen);
+
+  // Klick auf den Hintergrund schliesst; ein Klick IM Dialog nicht.
+  settingsOverlay.addEventListener('click', e => {
+    if (e.target === settingsOverlay) settingsSchliessen();
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !settingsOverlay.classList.contains('hidden')) {
+      settingsSchliessen();
+    }
+  });
+
   // --- Event bindings: Betriebsmodus ---------------------------------------
   apiModeToggle.addEventListener('change', () => {
     state.apiMode = apiModeToggle.checked;
@@ -3169,6 +3270,9 @@ ORDER BY
   renderTerminals();
   renderColumns();
   renderUserPresets();
+  // Ausgangszustand des Dialogs bewusst im Code setzen und nicht nur ueber die
+  // Klasse im Markup: faellt die dort mal weg, stuende der Dialog beim Laden offen.
+  settingsZustandZu();
   applyBetriebsmodus();
   setMode(state.mode || 'brand');
 </script>

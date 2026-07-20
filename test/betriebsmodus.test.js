@@ -132,3 +132,64 @@ test('Report-Modus ueberlebt einen Neustart', () => {
   });
   assert.strictEqual(app.getState().mode, 'report');
 });
+
+// --- Einstellungs-Dialog ---------------------------------------------------
+// Die Einstellungen gelten modusuebergreifend, deshalb sitzen sie hinter dem
+// Zahnrad im Kopf und nicht in einem der Tab-Panels.
+
+test('Einstellungen sind beim Start geschlossen', () => {
+  const { el } = starte();
+  assert.ok(!sichtbar(el('settingsOverlay')), 'Dialog darf nicht offen starten');
+  assert.strictEqual(el('settingsBtn').getAttribute('aria-expanded'), 'false');
+});
+
+test('Zahnrad oeffnet den Dialog, X schliesst ihn', () => {
+  const { el } = starte();
+
+  el('settingsBtn').dispatch('click');
+  assert.ok(sichtbar(el('settingsOverlay')));
+  assert.strictEqual(el('settingsBtn').getAttribute('aria-expanded'), 'true');
+
+  el('settingsCloseBtn').dispatch('click');
+  assert.ok(!sichtbar(el('settingsOverlay')));
+  assert.strictEqual(el('settingsBtn').getAttribute('aria-expanded'), 'false');
+});
+
+test('Klick auf den Hintergrund schliesst, Klick im Dialog nicht', () => {
+  const { el } = starte();
+  const overlay = el('settingsOverlay');
+
+  el('settingsBtn').dispatch('click');
+  // Klick im Dialog: target ist nicht das Overlay selbst.
+  overlay.dispatch('click', { target: el('apiModeToggle') });
+  assert.ok(sichtbar(overlay), 'ein Klick im Dialog darf ihn nicht schliessen');
+
+  overlay.dispatch('click', { target: overlay });
+  assert.ok(!sichtbar(overlay), 'Klick auf den Hintergrund schliesst');
+});
+
+test('ESC schliesst den Dialog', () => {
+  const { dokument, el } = starte();
+
+  el('settingsBtn').dispatch('click');
+  assert.ok(sichtbar(el('settingsOverlay')));
+
+  dokument.dispatch('keydown', { key: 'Escape' });
+  assert.ok(!sichtbar(el('settingsOverlay')));
+});
+
+test('ESC bei geschlossenem Dialog tut nichts', () => {
+  const { dokument, el } = starte();
+  assert.doesNotThrow(() => dokument.dispatch('keydown', { key: 'Escape' }));
+  assert.ok(!sichtbar(el('settingsOverlay')));
+});
+
+test('Einstellungen sind unabhaengig vom aktiven Modus erreichbar', () => {
+  // Der Betriebsmodus gilt fuer alle Tabs - auch im Report-Modus, der selbst
+  // gar kein SQL erzeugt, muss man an die Einstellungen kommen.
+  ['brand', 'terminal', 'report', 'export', 'card', 'settlement'].forEach(modus => {
+    const { el } = starte({ wallee_query_builder_v5: JSON.stringify({ mode: modus }) });
+    el('settingsBtn').dispatch('click');
+    assert.ok(sichtbar(el('settingsOverlay')), `Dialog nicht erreichbar im Modus ${modus}`);
+  });
+});

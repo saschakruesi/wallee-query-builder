@@ -93,7 +93,19 @@ function makeDocument() {
     querySelector() { return makeNode('div'); },
     querySelectorAll() { return []; },
     createRange: () => ({ selectNodeContents() {} }),
-    addEventListener() {},
+    // Auch auf Dokument-Ebene merken wir uns Handler - die App bindet dort
+    // z. B. die ESC-Taste an, und das soll pruefbar bleiben.
+    _listeners: {},
+    addEventListener(typ, fn) {
+      (this._listeners[typ] = this._listeners[typ] || []).push(fn);
+    },
+    removeEventListener(typ, fn) {
+      const l = this._listeners[typ];
+      if (l) this._listeners[typ] = l.filter(x => x !== fn);
+    },
+    dispatch(typ, event) {
+      (this._listeners[typ] || []).forEach(fn => fn(event || {}));
+    },
   };
 }
 
