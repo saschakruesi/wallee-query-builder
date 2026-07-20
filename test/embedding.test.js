@@ -41,16 +41,58 @@ test('Vendor-Block ist syntaktisch heiles JavaScript (keine $-Korruption)', () =
   );
 });
 
-test('Vendor-Block ist SheetJS und wird nur im DOM-Pfad gebraucht', () => {
+test('Vendor-Block ist SheetJS', () => {
   const vendor = blockInhalt('vendor-xlsx');
   assert.match(vendor, /SheetJS/, 'Vendor-Block sieht nicht nach SheetJS aus');
-
-  // Die reinen Funktionen duerfen SheetJS nicht brauchen - sonst waeren die
-  // Node-Tests auf den Vendor-Block angewiesen. Der App-Block darf XLSX also
-  // nur in Event-Handlern benutzen, nicht auf Modul-Ebene beim Laden.
-  const app = blockInhalt('app-logic');
-  assert.doesNotMatch(app, /^\s*XLSX\./m, 'XLSX wird auf Modul-Ebene benutzt');
 });
+
+test('App-Block laeuft ohne SheetJS - XLSX wird erst im Event-Pfad gebraucht', () => {
+  // Die eigentlich interessante Eigenschaft: der App-Code muss sich laden und
+  // initialisieren lassen, ohne dass XLSX ueberhaupt existiert. Nur so bleiben
+  // die Node-Tests unabhaengig vom 930-KB-Vendor-Block.
+  //
+  // Frueher stand hier ein Textvergleich (kein Zeilenanfang "XLSX."), der aber
+  // nur ein schlechter Stellvertreter war: er schlug auch bei einem voellig
+  // korrekten XLSX-Aufruf INNERHALB einer Funktion an. Jetzt wird die
+  // Eigenschaft direkt geprueft - Script ausfuehren, ohne XLSX bereitzustellen.
+  const app = blockInhalt('app-logic');
+  const sandbox = {
+    document: {
+      getElementById: () => stubElement(),
+      querySelector: () => stubElement(),
+      querySelectorAll: () => [],
+      createElement: () => stubElement(),
+      createRange: () => ({ selectNodeContents() {} }),
+      addEventListener() {},
+      body: stubElement(),
+    },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {}, clear() {} },
+    window: { getSelection: () => ({ removeAllRanges() {}, addRange() {} }) },
+    navigator: { clipboard: { writeText: async () => {} } },
+    console, setTimeout, clearTimeout,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+
+  assert.doesNotThrow(
+    () => vm.runInContext(app, sandbox, { filename: 'app-logic.js' }),
+    'App-Code darf SheetJS nicht schon beim Laden brauchen',
+  );
+  assert.strictEqual(typeof sandbox.XLSX, 'undefined', 'XLSX war in diesem Lauf nie vorhanden');
+});
+
+function stubElement() {
+  const el = {
+    textContent: '', innerHTML: '', value: '', checked: false,
+    dataset: {}, style: {},
+    classList: { toggle() {}, add() {}, remove() {}, contains: () => false },
+    addEventListener() {}, removeEventListener() {}, appendChild() {},
+    setAttribute() {}, getAttribute: () => null, removeAttribute() {},
+    focus() {}, blur() {}, select() {}, closest: () => null,
+    querySelector: () => stubElement(), querySelectorAll: () => [],
+  };
+  return el;
+}
 
 test('App-Block laesst sich isoliert kompilieren', () => {
   const app = blockInhalt('app-logic');

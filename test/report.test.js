@@ -7,7 +7,8 @@ const { loadBuilders, plain } = require('./harness');
 
 const app = loadBuilders();
 const { parseReportCsv, autoOutletGroup, autoBrandGroup, buildReportModel,
-  formatAmountCH, formatIntCH, mergeReportConfig } = app;
+  formatAmountCH, formatIntCH, mergeReportConfig,
+  reportExportBloecke, buildReportCsv } = app;
 
 // Kopfzeile so, wie sie der Terminal-Modus des Generators liefert (unsettled_anzahl).
 const HEADER_APP = '"space_id","terminal_identifier","terminal_name","brand","waehrung",' +
@@ -471,4 +472,98 @@ test('Report funktioniert im Private Mode ohne Persistenz', () => {
   const cfg = blockiert.mergeReportConfig(res.rows, blockiert.loadReportConfig());
   const m = blockiert.buildReportModel(res.rows, cfg);
   assert.strictEqual(m.detail.length, 10, 'Gruppierung muss auch ohne Speicher stimmen');
+});
+
+// --- Export-Bloecke --------------------------------------------------------
+// reportExportBloecke() liefert die Export-Struktur als reine Daten - dieselbe
+// Grundlage fuer XLSX und CSV. Betraege stehen darin als ZAHL, nicht als
+// formatierter String: der Kunde soll im Excel weiterrechnen und sortieren
+// koennen. Das Schweizer Aussehen macht das Excel-Zahlformat (#,##0.00), nicht
+// eine vorformatierte Zeichenkette.
+
+test('Export-Bloecke: alle vier Bloecke in fester Reihenfolge', () => {
+  const bloecke = reportExportBloecke(modell());
+  assert.deepStrictEqual(plain(bloecke.map(b => b.name)), [
+    'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal', 'Detail',
+  ]);
+});
+
+test('Export-Bloecke: Betraege sind Zahlen, keine Strings', () => {
+  const gesamt = reportExportBloecke(modell()).find(b => b.name === 'Gesamttotal');
+  const zeile = gesamt.rows[0];
+
+  zeile.slice(1).forEach((wert, i) => {
+    assert.strictEqual(typeof wert, 'number', `Spalte ${i + 1} muss eine Zahl sein, ist ${typeof wert}`);
+  });
+});
+
+test('Export-Bloecke: Gesamttotal traegt die Sollzahlen', () => {
+  const gesamt = reportExportBloecke(modell()).find(b => b.name === 'Gesamttotal');
+  assert.deepStrictEqual(plain(gesamt.header), ['', 'Complete Demand', 'Tip', 'Unmatched', 'Anz.']);
+  assert.deepStrictEqual(plain(gesamt.rows), [['Total', 62756.16, 793.46, 889, 2070]]);
+});
+
+test('Export-Bloecke: Brand-Totals vollstaendig', () => {
+  const brands = reportExportBloecke(modell()).find(b => b.name === 'Total Brand-Gruppen');
+  assert.deepStrictEqual(plain(brands.rows), [
+    ['Lunch-Check', 31, 0, 1, 2],
+    ['Wallee', 62725.16, 793.46, 888, 2068],
+  ]);
+});
+
+test('Export-Bloecke: Outlet-Totals decken alle Gruppen ab', () => {
+  const m = modell();
+  const outlets = reportExportBloecke(m).find(b => b.name === 'Total Outlet-Gruppen');
+  assert.strictEqual(outlets.rows.length, m.outletTotals.length);
+  // Summe der Betragsspalte muss das Gesamttotal ergeben.
+  const summe = outlets.rows.reduce((a, r) => a + r[2], 0);
+  assert.strictEqual(Math.round(summe * 100) / 100, 62756.16);
+});
+
+test('Export-Bloecke: Detail enthaelt eine Zeile je Terminal und Marke', () => {
+  const m = modell();
+  const detail = reportExportBloecke(m).find(b => b.name === 'Detail');
+  const erwartet = m.detail.reduce((a, o) =>
+    a + o.terminals.reduce((b, t) => b + t.brands.length, 0), 0);
+  assert.strictEqual(detail.rows.length, erwartet);
+});
+
+test('Export-Bloecke: Rundung auf zwei Stellen, ohne Gleitkomma-Rauschen', () => {
+  const rows = [
+    { tid: 'T1', name: 'A 1', brand: 'Visa', currency: 'CHF', count: 1, unmatched: 0,
+      gross: 10000000, tip: 0 },                       // 0.10
+    { tid: 'T2', name: 'A 2', brand: 'Visa', currency: 'CHF', count: 1, unmatched: 0,
+      gross: 20000000, tip: 0 },                       // 0.20
+  ];
+  const gesamt = reportExportBloecke(buildReportModel(rows, {}))
+    .find(b => b.name === 'Gesamttotal');
+  assert.strictEqual(gesamt.rows[0][1], 0.3, 'muss exakt 0.3 sein, nicht 0.30000000000000004');
+});
+
+// --- CSV-Export ------------------------------------------------------------
+
+test('CSV-Export: BOM, Semikolon und alle Bloecke', () => {
+  const csv = buildReportCsv(modell());
+
+  assert.ok(csv.startsWith('﻿'), 'UTF-8-BOM fehlt (Excel liest sonst falsch)');
+  assert.ok(csv.includes(';'), 'Semikolon als Trennzeichen erwartet');
+  ['Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal', 'Detail']
+    .forEach(t => assert.ok(csv.includes(t), `Block "${t}" fehlt im CSV`));
+});
+
+test('CSV-Export: Zahlen mit Punkt und ohne Tausendertrennung', () => {
+  const csv = buildReportCsv(modell());
+
+  assert.ok(csv.includes('62756.16'), 'Gesamtbetrag muss maschinenlesbar bleiben');
+  assert.ok(!csv.includes('62’756.16'), 'keine Tausendertrennung im CSV - das bricht den Import');
+});
+
+test('CSV-Export: Felder mit Semikolon oder Quote werden maskiert', () => {
+  const rows = [
+    { tid: 'T1', name: 'Bar; "Eck" 1', brand: 'Visa', currency: 'CHF',
+      count: 1, unmatched: 0, gross: 100000000, tip: 0 },
+  ];
+  const csv = buildReportCsv(buildReportModel(rows, {}));
+
+  assert.ok(csv.includes('"Bar; ""Eck"" 1"'), 'Semikolon und Quotes muessen maskiert sein');
 });

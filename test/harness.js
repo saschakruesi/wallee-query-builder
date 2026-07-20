@@ -99,6 +99,9 @@ const EXPORTED = [
   // DOM-gebunden, aber ueber einen DOM-Ersatz testbar (test/report-render.test.js)
   'ingestReportCsv',
   'renderReport',
+  'reportExportBloecke',
+  'buildReportCsv',
+  'exportReportXlsx',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
