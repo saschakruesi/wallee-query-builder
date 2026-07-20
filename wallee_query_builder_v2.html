@@ -565,7 +565,7 @@
       <button class="mode-btn" data-mode="settlement">Settlement / Auszahlung</button>
     </div>
     <p class="hint cond-section" id="tipUnsettledHint" style="margin-top:8px;margin-bottom:0;">
-      <code>tip_total</code>: Trinkgeld-Anteil der Transaktionen (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. Diese Annahme ist noch nicht empirisch bestätigt – prüfbar mit <code>sql/tip_verifikation.sql</code>.
+      <code>tip_total</code>: Trinkgeld-Anteil der Transaktionen (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.
       <code>unsettled_anzahl</code>: Transaktionen ohne Gebühr (<code>totalappliedfees</code> NULL/0) <strong>und</strong> ohne bestehenden Settlement-Record – wartet noch auf die Abrechnung.
     </p>
 
@@ -778,7 +778,7 @@
 
     <p class="hint" style="margin-top:14px;margin-bottom:0;">Stimmt <code>anzahl_settlement_records</code> nicht mit <code>anzahl_transaktionen</code> überein, gibt es Transaktionen mit mehreren Settlement-Records — typischerweise Refunds oder Korrekturen, die in einem späteren Lauf abgerechnet wurden.</p>
 
-    <p class="hint" style="margin-top:14px;margin-bottom:0;"><code>tip_total</code>: Trinkgeld-Anteil (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. Diese Annahme ist noch nicht empirisch bestätigt – prüfbar mit <code>sql/tip_verifikation.sql</code>.</p>
+    <p class="hint" style="margin-top:14px;margin-bottom:0;"><code>tip_total</code>: Trinkgeld-Anteil (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.</p>
   </div>
 
   <div class="panel">
@@ -820,8 +820,8 @@
     { key:'gross',       name:'Bruttobetrag',            sql:'t.completedamount',                                  alias:'gross_amount',          def:true,  desc:'Abgeschlossener Bruttobetrag (completedamount).' },
     { key:'fees',        name:'Gebühren',                sql:'COALESCE(t.totalappliedfees, 0)',                    alias:'processing_fees',       def:true,  desc:'Total der angewandten Gebühren (totalappliedfees).' },
     { key:'net',         name:'Nettobetrag',             sql:'t.completedamount - COALESCE(t.totalappliedfees, 0)', alias:'net_amount',           def:true,  desc:'Brutto − Gebühren (berechnet).' },
-    { key:'tip',         name:'Trinkgeld',               sql:'COALESCE(tip.tip_amount, 0)',                        alias:'tip_amount',            def:false, desc:'Trinkgeld der Transaktion (Line Items vom Typ TIP). Annahme (noch nicht empirisch bestätigt, siehe sql/tip_verifikation.sql): bereits im Bruttobetrag enthalten, nicht additiv.', needsTip:true },
-    { key:'grossnotip',  name:'Brutto ohne Trinkgeld',   sql:'t.completedamount - COALESCE(tip.tip_amount, 0)',   alias:'gross_excl_tip',        def:false, desc:'Bruttobetrag abzüglich Trinkgeld. Nur sinnvoll, falls die Annahme "Trinkgeld ist im Brutto enthalten" zutrifft.', needsTip:true },
+    { key:'tip',         name:'Trinkgeld',               sql:'COALESCE(tip.tip_amount, 0)',                        alias:'tip_amount',            def:false, desc:'Trinkgeld der Transaktion (Line Items vom Typ TIP). An echten Daten geprüft und bestätigt (siehe sql/tip_verifikation.sql): bereits im Bruttobetrag enthalten, nicht additiv.', needsTip:true },
+    { key:'grossnotip',  name:'Brutto ohne Trinkgeld',   sql:'t.completedamount - COALESCE(tip.tip_amount, 0)',   alias:'gross_excl_tip',        def:false, desc:'Bruttobetrag abzüglich Trinkgeld.', needsTip:true },
     { key:'connername',  name:'Connector/Brand-Name',    sql:"COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')",    alias:'payment_connector_name',def:true,  desc:'Name des Connectors / Brand.', needsConn:true },
     { key:'connector',   name:'Connector-ID',            sql:'pcc.connector',                                      alias:'connector',             def:false, desc:'Interne Connector-ID.', needsConn:true },
     { key:'terminalident',name:'Terminal-Identifier',    sql:'pt.identifier',                                      alias:'terminal_identifier',   def:true,  desc:'Auf dem Gerät angezeigter Identifier.', needsTerm:true },

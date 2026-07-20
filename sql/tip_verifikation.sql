@@ -1,8 +1,10 @@
--- Verifikations-Queries fuer die Trinkgeld-Annahme (Erweiterung 1, siehe CLAUDE.md).
+-- Verifikations-Queries fuer die Trinkgeld-Frage (Erweiterung 1, siehe CLAUDE.md).
 --
--- Offene Annahme: Das Trinkgeld (lineitem.type = 'TIP') ist im completedamount der
--- Transaktion bereits enthalten (nicht additiv). Diese Annahme ist noch nicht
--- empirisch bestaetigt. Die beiden Queries unten pruefen sie an echten Daten.
+-- Bereits geklaert: Das Trinkgeld (lineitem.type = 'TIP') ist im completedamount der
+-- Transaktion bereits enthalten (nicht additiv). Das ist an Produktivdaten geprueft
+-- und bestaetigt (siehe CLAUDE.md, Abschnitt "Wallee-Referenzwissen"). Die beiden
+-- Queries unten dienen der erneuten Gegenpruefung, z. B. in einem anderen Space oder
+-- nach Schema-Aenderungen.
 --
 -- <SPACE_ID> durch die zu pruefende Space-ID ersetzen. Jede Query einzeln im
 -- wallee-Portal unter Account > Analytics > Submit Query ausfuehren.
@@ -37,13 +39,15 @@ ORDER BY anzahl_lineitems DESC;
 --
 -- Auswertung pro Transaktion:
 --   lineitems_total  ≈  t.completedamount            -> Trinkgeld ist im Brutto
---                                                        enthalten (aktuelle Annahme
---                                                        in wallee_query_builder_v2.html
---                                                        bestaetigt).
---   lineitems_total + tip  ≈  t.completedamount       -> Trinkgeld ist ZUSÄTZLICH
---                                                        zum Brutto -> Annahme in
+--                                                        enthalten (bereits bestaetigt,
+--                                                        siehe CLAUDE.md; diese Query
+--                                                        dient der Gegenpruefung).
+--   lineitems_total + tip  ≈  t.completedamount       -> Trinkgeld waere ZUSÄTZLICH
+--                                                        zum Brutto -> in diesem Fall
 --                                                        CLAUDE.md / EXPORT_COLUMNS
---                                                        (tip, grossnotip) korrigieren.
+--                                                        (tip, grossnotip) korrigieren
+--                                                        und den bisherigen Befund
+--                                                        revidieren.
 --
 -- Zeitraum/Limit nach Bedarf anpassen - bewusst eng gehalten, damit die Stichprobe
 -- schnell durchsuchbar bleibt.

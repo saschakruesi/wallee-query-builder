@@ -15,7 +15,7 @@ Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen.
 | `wallee_query_builder_v2.html` | **Aktuelle Version.** Fünf Modi, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
-| `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Annahme (Trinkgeld bereits im Brutto enthalten) — gegen echte Daten laufen lassen, siehe „Offene Punkte". |
+| `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
 
 ## Architektur (v2)
@@ -152,6 +152,16 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
   - PAR: `1739873828282` · Expiry (yearMonthContent): `1456765711187`
   - Nachschlagen: `https://app-wallee.com/en-us/doc/api/label-descriptor/view/<ID>`
 - **Sales-Channel-IDs:** Ecommerce `1582816223150`, Physical Terminal `1582819151330`.
+- **Trinkgeld ist im Bruttobetrag enthalten — an echten Daten bestätigt.** Mit
+  `sql/tip_verifikation.sql` gegen Produktivdaten geprüft: (a) im geprüften Space kommen nur
+  die `lineitem.type`-Werte `PRODUCT` und `TIP` vor — der Wert `TIP` ist damit als korrekt
+  bestätigt; (b) über eine Stichprobe von Transaktionen mit Trinkgeld war
+  `completedamount` durchgehend exakt gleich `lineitems_total` (Differenz `0.00000000` in
+  jedem einzelnen Fall). Trinkgeld ist also bereits im Bruttobetrag enthalten und **nicht**
+  zusätzlich zu addieren; Umsatz ohne Trinkgeld ergibt sich aus `brutto_gross − tip_total`
+  (Formeln `tip`/`grossnotip` in `EXPORT_COLUMNS` sind damit fachlich belastbar, keine
+  Änderung nötig). `sql/tip_verifikation.sql` bleibt im Repo, um die Aussage bei Bedarf
+  (anderer Space, Schema-Änderung) erneut zu prüfen.
 - **Grenzen der Analytics** (nicht lösbar, dem Kunden so kommunizieren):
   - Keine IC++-Aufschlüsselung (DCC/Interchange/Scheme/Acquirer) — nur `totalappliedfees` gesamt.
   - Eine Query läuft in **einem** Account; Spaces fremder Accounts → Permission Error.
@@ -187,12 +197,6 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
 
 ## Offene Punkte / Ideen
 
-- **Annahme „Trinkgeld ist im Brutto enthalten" noch nicht empirisch bestätigt.**
-  `EXPORT_COLUMNS` (Spalten `tip`, `grossnotip`) und die Kommentare im Code gehen davon aus,
-  dass `completedamount` das Trinkgeld bereits enthält (nicht additiv) — siehe
-  `sql/tip_verifikation.sql` für die Verifikations-Queries. Sobald an echten Daten geprüft:
-  Ergebnis hier festhalten bzw. bei Widerlegung `tip`/`grossnotip`-Formeln und die
-  zugehörigen Kommentare korrigieren.
 - Settlement-Referenz-Zuordnung über Withdrawals ist heuristisch (zeitbasiert) —
   beobachten, ob es einen direkten Verknüpfungspfad gibt.
 - Das 30-Tage-Fenster (maximale Auszahlungslatenz, siehe `payoutref`-CTE) ist eine Annahme

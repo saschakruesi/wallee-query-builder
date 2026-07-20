@@ -37,8 +37,8 @@ Bruttobetrag enthalten und darf nicht zusätzlich addiert werden.** Umsatz ohne 
 ergibt sich also aus `brutto_gross − tip_total` (im Export: `gross_amount − tip_amount`,
 bzw. direkt als Spalte `gross_excl_tip`).
 
-Diese Annahme ist noch **nicht empirisch bestätigt** — sie lässt sich mit
-`sql/tip_verifikation.sql` gegen echte Daten prüfen.
+Das ist an echten Daten geprüft und bestätigt — mit `sql/tip_verifikation.sql` lässt
+sich das bei Bedarf (anderer Space, Schema-Änderung) erneut nachprüfen.
 
 ## Hinweis zu Apple Pay, Google Pay und tokenisierten Karten
 
@@ -58,8 +58,8 @@ Kartennummer noch Autorisierungscode.
   es gibt keinen direkten Fremdschlüssel von der Banktransaktion zur Auszahlung.
   Die entsprechende Spalte ist deshalb standardmässig aus.
 - Dass Trinkgeld bereits im Bruttobetrag enthalten ist (siehe Abschnitt „Trinkgeld"),
-  ist eine noch nicht empirisch bestätigte Annahme — mit Vorsicht behandeln, bis sie
-  gegen echte Daten verifiziert ist.
+  ist an echten Daten geprüft und bestätigt — es darf trotzdem nicht zusätzlich zum
+  Bruttobetrag addiert werden, sonst wird der Umsatz doppelt gezählt.
 
 ## Entwicklung
 
