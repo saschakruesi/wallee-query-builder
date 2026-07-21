@@ -94,8 +94,9 @@ test('bereiter Proxy: Statusmeldung ist positiv', async () => {
   el('apiModeToggle').dispatch('change');
   await ruhe();
 
-  assert.match(el('proxyStatus').textContent, /erreichbar und einsatzbereit/i);
+  assert.match(el('proxyStatusText').textContent, /erreichbar und einsatzbereit/i);
   assert.strictEqual(el('proxyStatus').dataset.art, 'ok');
+  assert.strictEqual(el('proxyStatusDot').dataset.art, 'ok');
 });
 
 test('Proxy laeuft, aber ohne Zugangsdaten: Hinweis auf Setup', async () => {
@@ -105,7 +106,7 @@ test('Proxy laeuft, aber ohne Zugangsdaten: Hinweis auf Setup', async () => {
   await ruhe();
 
   assert.strictEqual(el('proxyStatus').dataset.art, 'warn');
-  assert.match(el('proxyStatus').textContent, /Zugangsdaten/);
+  assert.match(el('proxyStatusText').textContent, /Zugangsdaten/);
 });
 
 test('Proxy nicht erreichbar: klarer Hinweis mit Startbefehl, kein Wurf', async () => {
@@ -115,9 +116,9 @@ test('Proxy nicht erreichbar: klarer Hinweis mit Startbefehl, kein Wurf', async 
   await ruhe();
 
   assert.strictEqual(el('proxyStatus').dataset.art, 'fehler');
-  assert.match(el('proxyStatus').textContent, /node wallee-proxy\.mjs/,
+  assert.match(el('proxyStatusText').textContent, /node wallee-proxy\.mjs/,
     'die Meldung muss sagen, wie man den Proxy startet');
-  assert.match(el('proxyStatus').textContent, /Kopiermodus/,
+  assert.match(el('proxyStatusText').textContent, /Kopiermodus/,
     'und dass man ersatzweise im Kopiermodus arbeiten kann');
 });
 
@@ -154,17 +155,24 @@ test('Submit bei totem Proxy blockiert nicht, sondern oeffnet die Einstellungen'
   assert.notStrictEqual(el('submitBtn').disabled, true);
 });
 
-test('Setup-Link zeigt auf die konfigurierte Proxy-URL', async () => {
-  const { el } = starteMitFetch(() => jsonAntwort(200, { ok: true, zugangsdaten: true }));
+test('Oeffnen des Dialogs laedt vorhandene Zugangsdaten in die Felder', async () => {
+  const { el } = starteMitFetch((url) => {
+    if (String(url).endsWith('/health')) return jsonAntwort(200, { ok: true, zugangsdaten: true });
+    if (String(url).endsWith('/credentials')) {
+      return jsonAntwort(200, { ok: true, userId: '140525', accountId: '32891', hasSecret: true });
+    }
+    return jsonAntwort(404, {});
+  });
   el('apiModeToggle').checked = true;
   el('apiModeToggle').dispatch('change');
   await ruhe();
 
-  assert.strictEqual(el('proxySetupLink').href, 'http://localhost:8787/setup');
+  el('settingsBtn').dispatch('click');
+  await ruhe();
 
-  el('proxyUrlInput').value = 'http://localhost:9000';
-  el('proxyUrlInput').dispatch('input');
-  assert.strictEqual(el('proxySetupLink').href, 'http://localhost:9000/setup');
+  assert.strictEqual(el('credUserId').value, '140525');
+  assert.strictEqual(el('credAccount').value, '32891');
+  assert.strictEqual(el('credSecret').value, '');
 });
 
 test('Kopiermodus fragt den Proxy nie ab', async () => {
@@ -467,4 +475,30 @@ test('Token-Abruf: 202 (noch nicht bereit) wird verstaendlich gemeldet', async (
 
   assert.match(el('submitFortschrittText').textContent, /noch nicht bereit/);
   assert.strictEqual(el('reportOutput').children.length, 0, 'kein Report bei 202');
+});
+
+// --- Zugangsdaten (Task 3/4) -----------------------------------------------
+
+test('speichereCredentials postet JSON an /credentials', async () => {
+  const calls = [];
+  const fetchStub = async (url, opts) => {
+    calls.push({ url, opts });
+    return { status: 200, json: async () => ({ ok: true, fehler: [] }) };
+  };
+  const x = loadBuilders({ fetch: fetchStub });
+  x.getState().proxyUrl = 'http://localhost:8787';
+  const res = await x.speichereCredentials({ userId: '1', accountId: '2', secret: 'S' });
+  assert.strictEqual(res.status, 200);
+  assert.match(calls[0].url, /\/credentials$/);
+  assert.strictEqual(calls[0].opts.method, 'POST');
+  assert.deepStrictEqual(JSON.parse(calls[0].opts.body), { userId: '1', accountId: '2', secret: 'S' });
+});
+
+test('leseCredentials holt per GET', async () => {
+  const fetchStub = async () => ({ status: 200, json: async () => ({ ok: true, userId: '7', accountId: '9', hasSecret: true }) });
+  const x = loadBuilders({ fetch: fetchStub });
+  x.getState().proxyUrl = 'http://localhost:8787';
+  const res = await x.leseCredentials();
+  assert.strictEqual(res.daten.userId, '7');
+  assert.strictEqual(res.daten.hasSecret, true);
 });

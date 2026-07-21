@@ -587,6 +587,15 @@
     word-break: break-word;
   }
   .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .status-dot {
+    display:inline-block; width:10px; height:10px; border-radius:50%;
+    margin-right:6px; vertical-align:middle; background:var(--muted);
+  }
+  .status-dot[data-art="ok"]     { background:var(--success); }
+  .status-dot[data-art="warn"]   { background:var(--warn); }
+  .status-dot[data-art="fehler"] { background:var(--danger); }
+  .status-dot[data-art="info"]   { background:var(--muted); }
+  .dialog-trenner { border:none; border-top:1px solid var(--border); margin:16px 0; }
   .badge {
     display: inline-block;
     background: var(--panel-2);
@@ -1037,9 +1046,30 @@
 
         <div class="actions" style="margin-top:10px;">
           <button class="btn" id="proxyCheckBtn">Verbindung prüfen</button>
-          <a class="btn" id="proxySetupLink" href="#" target="_blank" rel="noopener">Zugangsdaten einrichten</a>
         </div>
-        <p class="hint" id="proxyStatus" style="margin-top:8px;margin-bottom:0;"></p>
+        <p class="hint" id="proxyStatus" style="margin-top:8px;margin-bottom:0;">
+          <span class="status-dot" id="proxyStatusDot" data-art="info" aria-hidden="true"></span>
+          <span id="proxyStatusText">Status unbekannt.</span>
+        </p>
+
+        <hr class="dialog-trenner">
+
+        <h3 style="margin-bottom:4px;">Zugangsdaten</h3>
+        <p class="hint" style="margin-top:0;">
+          Werden nur beim Proxy hinterlegt (Datei <code>~/.wallee-proxy.json</code>, Rechte 600),
+          nie in dieser Seite gespeichert. Das Secret wird nie zurückgegeben; leer lassen behält
+          das hinterlegte bei.
+        </p>
+        <label class="feld-label" for="credUserId">Application User ID</label>
+        <input id="credUserId" type="text" inputmode="numeric" autocomplete="off" placeholder="z.B. 140525">
+        <label class="feld-label" for="credAccount">Account</label>
+        <input id="credAccount" type="text" inputmode="numeric" autocomplete="off" placeholder="z.B. 32891">
+        <label class="feld-label" for="credSecret">Secret (HMAC-Key)</label>
+        <input id="credSecret" type="password" autocomplete="off" placeholder="••••••••  (hinterlegt — leer lassen zum Beibehalten)">
+        <div class="actions" style="margin-top:10px;">
+          <button class="btn btn-primary" id="credSaveBtn">Zugangsdaten speichern</button>
+        </div>
+        <p class="hint" id="credStatus" style="margin-top:8px;margin-bottom:0;"></p>
       </div>
     </div>
   </div>
@@ -1160,7 +1190,13 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const proxyUrlInput   = document.getElementById('proxyUrlInput');
   const proxyStatus     = document.getElementById('proxyStatus');
   const proxyCheckBtn   = document.getElementById('proxyCheckBtn');
-  const proxySetupLink  = document.getElementById('proxySetupLink');
+  const proxyStatusDot  = document.getElementById('proxyStatusDot');
+  const proxyStatusText = document.getElementById('proxyStatusText');
+  const credUserId      = document.getElementById('credUserId');
+  const credAccount     = document.getElementById('credAccount');
+  const credSecret      = document.getElementById('credSecret');
+  const credSaveBtn     = document.getElementById('credSaveBtn');
+  const credStatus      = document.getElementById('credStatus');
   const submitFortschritt = document.getElementById('submitFortschritt');
   const submitFortschrittText = document.getElementById('submitFortschrittText');
   const submitAbbrechenBtn = document.getElementById('submitAbbrechenBtn');
@@ -2444,8 +2480,8 @@ ORDER BY
 
   function setzeProxyStatus(art, text) {
     // art: 'ok' | 'warn' | 'fehler' | 'info'
-    proxyStatus.className = 'hint' + (art === 'fehler' ? ' report-error' : '');
-    proxyStatus.textContent = text;
+    proxyStatusDot.dataset.art = art;
+    proxyStatusText.textContent = text;
     proxyStatus.dataset.art = art;
   }
 
@@ -2460,7 +2496,7 @@ ORDER BY
     if (zustand.erreichbar && !zustand.bereit) {
       setzeProxyStatus('warn',
         'Proxy läuft, aber es sind noch keine Zugangsdaten hinterlegt. '
-        + 'Bitte unter „Zugangsdaten einrichten" eintragen.');
+        + 'Bitte unten unter „Zugangsdaten" eintragen.');
       return false;
     }
     setzeProxyStatus('fehler',
@@ -2511,6 +2547,30 @@ ORDER BY
     let daten = null;
     try { daten = await antwort.json(); } catch (e) { daten = null; }
     return { status: antwort.status, daten };
+  }
+
+  async function leseCredentials() {
+    return proxyJson('/credentials', 'GET');
+  }
+  async function speichereCredentials(werte) {
+    return proxyJson('/credentials', 'POST', werte);
+  }
+
+  // Vorhandene Zugangsdaten in den Dialog laden: userId/accountId im Klartext,
+  // Secret bleibt leer (Platzhalter signalisiert "hinterlegt").
+  async function ladeCredentialsInDialog() {
+    if (!state.apiMode) return;
+    const zustand = await pruefeProxy(state.proxyUrl);
+    if (!zustand.erreichbar) return;             // Proxy aus - Felder leer lassen
+    const { status, daten } = await leseCredentials();
+    if (status === 200 && daten) {
+      credUserId.value = daten.userId || '';
+      credAccount.value = daten.accountId || '';
+      credSecret.value = '';
+      credSecret.placeholder = daten.hasSecret
+        ? '••••••••  (hinterlegt — leer lassen zum Beibehalten)'
+        : 'Secret (Base64)';
+    }
   }
 
   const warte = ms => new Promise(r => setTimeout(r, ms));
@@ -3238,6 +3298,7 @@ ORDER BY
     // Fokus in den Dialog, damit Tastaturbedienung nicht hinter dem Overlay
     // weiterlaeuft.
     apiModeToggle.focus();
+    ladeCredentialsInDialog();
   }
 
   // Ohne Fokuswechsel - beim Start soll der Dialog zwar zu sein, aber nichts
@@ -3268,11 +3329,6 @@ ORDER BY
 
   // --- Event bindings: Betriebsmodus ---------------------------------------
 
-  // Haelt den Link auf die Setup-Seite an der aktuellen Proxy-URL aktuell.
-  function aktualisiereSetupLink() {
-    proxySetupLink.href = proxyEndpunkt(state.proxyUrl, '/setup');
-  }
-
   apiModeToggle.addEventListener('change', () => {
     state.apiMode = apiModeToggle.checked;
     // Beim Einschalten die Query zunaechst eingeklappt lassen - der Submit-
@@ -3283,7 +3339,7 @@ ORDER BY
     // Beim Aktivieren einmal proben, damit der Nutzer sofort weiss, ob der
     // Proxy laeuft - noch bevor er auf Submit geht.
     if (state.apiMode) {
-      aktualisiereSetupLink();
+      ladeCredentialsInDialog();
       setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
       pruefeProxy(state.proxyUrl).then(meldeProxyZustand);
     }
@@ -3292,12 +3348,31 @@ ORDER BY
   proxyUrlInput.addEventListener('input', () => {
     state.proxyUrl = proxyUrlInput.value.trim();
     saveState();
-    aktualisiereSetupLink();
   });
 
   proxyCheckBtn.addEventListener('click', async () => {
     setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
     meldeProxyZustand(await pruefeProxy(state.proxyUrl));
+  });
+
+  credSaveBtn.addEventListener('click', async () => {
+    credStatus.className = 'hint';
+    credStatus.textContent = 'Wird gespeichert …';
+    const { status, daten } = await speichereCredentials({
+      userId: credUserId.value.trim(),
+      accountId: credAccount.value.trim(),
+      secret: credSecret.value,          // leer = unveraendert
+    });
+    if (status === 200 && daten && daten.ok) {
+      credStatus.className = 'hint';
+      credStatus.textContent = 'Gespeichert. Der Proxy ist jetzt einsatzbereit.';
+      credSecret.value = '';
+      meldeProxyZustand(await pruefeProxy(state.proxyUrl));
+    } else {
+      credStatus.className = 'hint report-error';
+      const f = daten && daten.fehler ? (Array.isArray(daten.fehler) ? daten.fehler.join(' ') : String(daten.fehler)) : '';
+      credStatus.textContent = 'Speichern fehlgeschlagen. ' + f;
+    }
   });
 
   sqlToggleBtn.addEventListener('click', () => {
@@ -3654,7 +3729,12 @@ ORDER BY
   // Klasse im Markup: faellt die dort mal weg, stuende der Dialog beim Laden offen.
   settingsZustandZu();
   applyBetriebsmodus();
-  aktualisiereSetupLink();
+  // Beim Start einmal kurz proben, wenn der API-Modus aktiv ist - so weiss der
+  // Nutzer sofort, ob der Proxy laeuft, ohne selbst zu klicken.
+  if (state.apiMode) {
+    setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
+    pruefeProxy(state.proxyUrl, 2000).then(meldeProxyZustand);
+  }
   setMode(state.mode || 'brand');
 </script>
 </body>

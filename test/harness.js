@@ -111,6 +111,8 @@ const EXPORTED = [
   'istEndzustand',
   'istErfolg',
   'apiPollConfig',
+  'leseCredentials',
+  'speichereCredentials',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
