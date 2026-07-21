@@ -172,9 +172,23 @@ export const ERLAUBTE_ORIGINS = new Set(
     .split(',').map(s => s.trim()).filter(Boolean),
 );
 
+// Die eigenen Adressen des Proxys. Die Setup-Seite wird vom Proxy selbst
+// ausgeliefert; ihr Formular-POST auf /setup ist damit same-origin und traegt
+// die Herkunft des Proxys (z. B. http://localhost:8787). Ohne diese Origins
+// wuerde der Missbrauchsschutz die eigene Setup-Seite abweisen. localhost und
+// 127.0.0.1 sind beide dabei, weil der Nutzer die Seite unter beiden Namen
+// oeffnen kann. Reingelassen wird trotzdem nur die eigene Herkunft - keine
+// fremde Seite.
+export function selbstOrigins(host = HOST, port = PORT) {
+  const namen = new Set([host, 'localhost', '127.0.0.1']);
+  const origins = new Set();
+  namen.forEach(n => origins.add(`http://${n}:${port}`));
+  return origins;
+}
+
 export function originErlaubt(origin) {
   if (origin === undefined || origin === null || origin === '') return true;  // kein Browser
-  return ERLAUBTE_ORIGINS.has(origin);
+  return ERLAUBTE_ORIGINS.has(origin) || selbstOrigins().has(origin);
 }
 
 export function corsHeader(origin) {

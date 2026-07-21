@@ -405,3 +405,28 @@ test('Proxy /submit: ausgehende Anfrage an wallee stimmt (Pfad, JWT, Body)', asy
   assert.strictEqual(inhalt.requestMethod, 'POST');
   assert.strictEqual(inhalt.sub, '12345');
 });
+
+// --- Selbst-Herkunft der Setup-Seite --------------------------------------
+// Die Setup-Seite wird vom Proxy ausgeliefert; ihr Formular-POST auf /setup ist
+// same-origin und traegt die Herkunft des Proxys. Diese muss erlaubt sein,
+// sonst weist der Proxy seine eigene Seite ab (der Fall "Herkunft nicht
+// erlaubt." beim Speichern).
+
+test('Selbst-Herkunft: die eigene Adresse des Proxys ist erlaubt', () => {
+  assert.strictEqual(P.originErlaubt('http://localhost:8787'), true);
+  assert.strictEqual(P.originErlaubt('http://127.0.0.1:8787'), true);
+});
+
+test('Selbst-Herkunft: fremde Seiten bleiben abgewiesen', () => {
+  // Gleicher Host, anderer Port ist NICHT der Proxy - bleibt draussen.
+  assert.strictEqual(P.originErlaubt('http://localhost:3000'), false);
+  assert.strictEqual(P.originErlaubt('https://boese.example'), false);
+  // Auch die eigene Adresse ueber https (nicht das, was der Proxy spricht).
+  assert.strictEqual(P.originErlaubt('https://localhost:8787'), false);
+});
+
+test('selbstOrigins deckt localhost und 127.0.0.1 am Proxy-Port ab', () => {
+  const o = P.selbstOrigins('127.0.0.1', 8787);
+  assert.ok(o.has('http://localhost:8787'));
+  assert.ok(o.has('http://127.0.0.1:8787'));
+});
