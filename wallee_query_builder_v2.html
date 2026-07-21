@@ -1001,7 +1001,12 @@
         <label class="feld-label" for="proxyUrlInput">Adresse des Proxys</label>
         <input id="proxyUrlInput" type="text" placeholder="http://localhost:8787"
                title="Adresse des lokal laufenden Proxys." />
-        <p class="hint" id="proxyStatus" style="margin-top:6px;margin-bottom:0;"></p>
+
+        <div class="actions" style="margin-top:10px;">
+          <button class="btn" id="proxyCheckBtn">Verbindung prüfen</button>
+          <a class="btn" id="proxySetupLink" href="#" target="_blank" rel="noopener">Zugangsdaten einrichten</a>
+        </div>
+        <p class="hint" id="proxyStatus" style="margin-top:8px;margin-bottom:0;"></p>
       </div>
     </div>
   </div>
@@ -1121,6 +1126,8 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const apiSettings     = document.getElementById('apiSettings');
   const proxyUrlInput   = document.getElementById('proxyUrlInput');
   const proxyStatus     = document.getElementById('proxyStatus');
+  const proxyCheckBtn   = document.getElementById('proxyCheckBtn');
+  const proxySetupLink  = document.getElementById('proxySetupLink');
   const copyBtn         = document.getElementById('copyBtn');
   const generateBtn     = document.getElementById('generateBtn');
 
@@ -2344,6 +2351,85 @@ ORDER BY
     return (wert < 0 ? '-' : '') + gruppiere(String(Math.abs(wert)));
   }
 
+  // --- API-Anbindung: reine Helfer ----------------------------------------
+  // Alles, was ohne DOM und ohne Netz testbar ist. Die eigentlichen Aufrufe
+  // (fetch) liegen weiter unten im Event-Pfad.
+
+  // Trailing-Slashes weg, damit proxyUrl + '/health' nicht zu '//health' wird.
+  // Leere/kaputte Eingabe faellt auf den Default zurueck.
+  function normalisiereProxyUrl(url) {
+    const s = String(url == null ? '' : url).trim().replace(/\/+$/, '');
+    return s || 'http://localhost:8787';
+  }
+
+  function proxyEndpunkt(url, pfad) {
+    return normalisiereProxyUrl(url) + pfad;
+  }
+
+  // Wertet die Antwort von GET /health aus. Erreichbar heisst noch nicht
+  // einsatzbereit: ohne hinterlegte Zugangsdaten kann der Proxy zwar antworten,
+  // aber keine Query ausfuehren.
+  function deuteHealth(status, koerper) {
+    if (status !== 200 || !koerper || koerper.ok !== true) {
+      return { erreichbar: false, bereit: false };
+    }
+    return { erreichbar: true, bereit: !!koerper.zugangsdaten };
+  }
+
+  // Muss zum Header aus wallee-proxy.mjs passen (PROXY_HEADER). Ohne ihn
+  // weist der Proxy /submit & Co. mit 403 ab.
+  const PROXY_HEADER_NAME = 'x-wallee-proxy';
+
+  // Fragt GET {proxyUrl}/health ab. Netzwerkfehler (Proxy nicht gestartet)
+  // werden bewusst nicht geworfen, sondern als "nicht erreichbar" gemeldet -
+  // der Aufrufer soll ohne try/catch auf einen Fallback entscheiden koennen.
+  // timeoutMs verhindert, dass ein haengender Proxy die App blockiert.
+  async function pruefeProxy(url, timeoutMs = 4000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const antwort = await fetch(proxyEndpunkt(url, '/health'), {
+        method: 'GET',
+        headers: { [PROXY_HEADER_NAME]: '1' },
+        signal: controller.signal,
+      });
+      let koerper = null;
+      try { koerper = await antwort.json(); } catch (e) { koerper = null; }
+      return deuteHealth(antwort.status, koerper);
+    } catch (e) {
+      return { erreichbar: false, bereit: false };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function setzeProxyStatus(art, text) {
+    // art: 'ok' | 'warn' | 'fehler' | 'info'
+    proxyStatus.className = 'hint' + (art === 'fehler' ? ' report-error' : '');
+    proxyStatus.textContent = text;
+    proxyStatus.dataset.art = art;
+  }
+
+  // Meldung + Fallback-Entscheidung, wenn der Proxy nicht bereit ist. Gibt
+  // true zurueck, wenn der Proxy einsatzbereit ist, sonst false - der Aufrufer
+  // faellt dann auf "SQL kopieren" zurueck und blockiert nie.
+  function meldeProxyZustand(zustand) {
+    if (zustand.erreichbar && zustand.bereit) {
+      setzeProxyStatus('ok', 'Proxy erreichbar und einsatzbereit.');
+      return true;
+    }
+    if (zustand.erreichbar && !zustand.bereit) {
+      setzeProxyStatus('warn',
+        'Proxy läuft, aber es sind noch keine Zugangsdaten hinterlegt. '
+        + 'Bitte unter „Zugangsdaten einrichten" eintragen.');
+      return false;
+    }
+    setzeProxyStatus('fehler',
+      'Proxy nicht erreichbar. Bitte in einem Terminal „node wallee-proxy.mjs" starten '
+      + '– oder im Kopiermodus arbeiten und das SQL von Hand ins Portal einfügen.');
+    return false;
+  }
+
   // --- Terminal-Report: Konfiguration -------------------------------------
   const REPORT_CFG_KEY = 'wallee_terminal_report_cfg_v1';
 
@@ -2924,6 +3010,12 @@ ORDER BY
   });
 
   // --- Event bindings: Betriebsmodus ---------------------------------------
+
+  // Haelt den Link auf die Setup-Seite an der aktuellen Proxy-URL aktuell.
+  function aktualisiereSetupLink() {
+    proxySetupLink.href = proxyEndpunkt(state.proxyUrl, '/setup');
+  }
+
   apiModeToggle.addEventListener('change', () => {
     state.apiMode = apiModeToggle.checked;
     // Beim Einschalten die Query zunaechst eingeklappt lassen - der Submit-
@@ -2931,11 +3023,24 @@ ORDER BY
     if (state.apiMode) state.sqlSichtbar = false;
     saveState();
     applyBetriebsmodus();
+    // Beim Aktivieren einmal proben, damit der Nutzer sofort weiss, ob der
+    // Proxy laeuft - noch bevor er auf Submit geht.
+    if (state.apiMode) {
+      aktualisiereSetupLink();
+      setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
+      pruefeProxy(state.proxyUrl).then(meldeProxyZustand);
+    }
   });
 
   proxyUrlInput.addEventListener('input', () => {
     state.proxyUrl = proxyUrlInput.value.trim();
     saveState();
+    aktualisiereSetupLink();
+  });
+
+  proxyCheckBtn.addEventListener('click', async () => {
+    setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
+    meldeProxyZustand(await pruefeProxy(state.proxyUrl));
   });
 
   sqlToggleBtn.addEventListener('click', () => {
@@ -2944,10 +3049,19 @@ ORDER BY
     applyBetriebsmodus();
   });
 
-  submitBtn.addEventListener('click', () => {
-    // Phase 2 verdrahtet das mit dem Proxy (Tasks 11 bis 13).
-    proxyStatus.className = 'hint';
-    proxyStatus.textContent = 'Die Ausführung über den Proxy folgt im nächsten Schritt.';
+  submitBtn.addEventListener('click', async () => {
+    // Vor jedem Submit den Proxy pruefen. Ist er nicht bereit, wird nicht
+    // blockiert: die Meldung nennt den Weg, und im Kopiermodus geht es ohne
+    // Proxy weiter. Die eigentliche Ausfuehrung folgt in Task 12.
+    submitBtn.disabled = true;
+    setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
+    const bereit = meldeProxyZustand(await pruefeProxy(state.proxyUrl));
+    submitBtn.disabled = false;
+    if (!bereit) {
+      settingsOeffnen();       // Aufmerksamkeit auf die Einstellungen lenken
+      return;
+    }
+    setzeProxyStatus('ok', 'Proxy bereit. Ausführung folgt im nächsten Schritt.');
   });
 
   reportXlsxBtn.addEventListener('click', () => {
@@ -3274,6 +3388,7 @@ ORDER BY
   // Klasse im Markup: faellt die dort mal weg, stuende der Dialog beim Laden offen.
   settingsZustandZu();
   applyBetriebsmodus();
+  aktualisiereSetupLink();
   setMode(state.mode || 'brand');
 </script>
 </body>

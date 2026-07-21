@@ -102,6 +102,10 @@ const EXPORTED = [
   'reportExportBloecke',
   'buildReportCsv',
   'exportReportXlsx',
+  // API-Anbindung (Task 11), reine Helfer
+  'normalisiereProxyUrl',
+  'proxyEndpunkt',
+  'deuteHealth',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
@@ -172,6 +176,11 @@ function loadBuilders(options = {}) {
     console,
     setTimeout,
     clearTimeout,
+    // options.fetch: gefaelschtes fetch fuer Tests der API-Anbindung. Ohne die
+    // Option gibt es kein fetch im Sandbox - reiner SQL-/Report-Code braucht es
+    // nicht, und ein echtes fetch soll aus Tests nie ins Netz gehen.
+    fetch: options.fetch,
+    AbortController,
     __x: {},
   };
   sandbox.globalThis = sandbox;
