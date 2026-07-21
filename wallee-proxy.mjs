@@ -249,6 +249,8 @@ export function findeRoute(methode, pfad) {
   if (m === 'GET' && p === '/health') return { name: 'health' };
   if (m === 'GET' && p === '/setup') return { name: 'setup-seite' };
   if (m === 'POST' && p === '/setup') return { name: 'setup-speichern' };
+  if (m === 'GET' && p === '/credentials') return { name: 'credentials-lesen' };
+  if (m === 'POST' && p === '/credentials') return { name: 'credentials-speichern' };
   if (m === 'POST' && p === '/submit') return { name: 'submit' };
 
   let treffer = /^\/status\/(.+)$/.exec(p);
@@ -474,6 +476,25 @@ export async function behandleAnfrage(req, res) {
           meldung: ergebnis.ok ? 'Gespeichert. Der Query Builder kann den Proxy jetzt nutzen.' : '',
           fehler: ergebnis.fehler,
         }), 'text/html; charset=utf-8', origin);
+        return;
+      }
+
+      case 'credentials-lesen':
+        sendeJson(res, 200, { ok: true, ...credentialsAnzeige(zugangsdaten) }, origin);
+        return;
+
+      case 'credentials-speichern': {
+        const roh = await leseKoerper(req);
+        let werte;
+        try { werte = JSON.parse(roh); } catch (e) { werte = null; }
+        if (!werte || typeof werte !== 'object') {
+          sendeJson(res, 400, { ok: false, fehler: ['Ungueltiger JSON-Koerper.'] }, origin);
+          return;
+        }
+        const gemischt = mischeZugangsdaten(zugangsdaten, werte);
+        const ergebnis = await speichereZugangsdaten(gemischt);
+        sendeJson(res, ergebnis.ok ? 200 : 400,
+          { ok: ergebnis.ok, fehler: ergebnis.fehler }, origin);
         return;
       }
 

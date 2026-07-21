@@ -57,6 +57,12 @@ test('Routing: falsche Methode trifft nicht die richtige Route', () => {
   assert.strictEqual(P.findeRoute('GET', '/gibtsnicht').name, 'unbekannt');
 });
 
+test('findeRoute erkennt /credentials GET und POST', () => {
+  assert.strictEqual(P.findeRoute('GET', '/credentials').name, 'credentials-lesen');
+  assert.strictEqual(P.findeRoute('POST', '/credentials').name, 'credentials-speichern');
+  assert.strictEqual(P.findeRoute('GET', '/credentials?x=1').name, 'credentials-lesen');
+});
+
 // --- Zugangsdaten ----------------------------------------------------------
 
 test('Zugangsdaten: gueltige Eingabe wird angenommen', () => {
