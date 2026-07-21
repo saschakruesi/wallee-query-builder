@@ -113,6 +113,15 @@ const EXPORTED = [
   'apiPollConfig',
   'leseCredentials',
   'speichereCredentials',
+  // Verlauf (Task 5), reine Funktionen
+  'HISTORY_KEY',
+  'HISTORY_MAX',
+  'modusLabel',
+  'historyEintragBauen',
+  'historyEinfuegen',
+  'historyFuerModus',
+  'historyLaden',
+  'historySpeichern',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.

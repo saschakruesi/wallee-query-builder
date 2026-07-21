@@ -2519,6 +2519,69 @@ ORDER BY
   // jeder Versuch kann bis 97 s blockieren).
   const apiPollConfig = { maxVersuche: 400, retryStandardSek: 2 };
 
+  // --- Abfrage-Verlauf -----------------------------------------------------
+  // Eigener localStorage-Key, unabhaengig von "state": ueberlebt State-Bumps,
+  // haelt nur Token + Anzeige-Metadaten - kein SQL, kein Ergebnis.
+  const HISTORY_KEY = 'wallee_query_history_v1';
+  const HISTORY_MAX = 50;
+
+  const MODUS_LABELS = {
+    brand: 'Brand-Auswertung',
+    terminal: 'Terminal-Report',
+    export: 'Transaktions-Export',
+    card: 'Kartensuche',
+    settlement: 'Settlement / Auszahlung',
+  };
+  function modusLabel(mode) { return MODUS_LABELS[mode] || String(mode || ''); }
+
+  function zsfSpaces(spaces) {
+    const sel = (spaces || []).filter(s => s.selected);
+    if (!sel.length) return 'keine Space gewählt';
+    if (sel.length === 1) return 'Space ' + sel[0].id;
+    return sel.length + ' Spaces';
+  }
+
+  function historyEintragBauen(mode, token, st, jetztIso, status) {
+    const s = st || {};
+    const term = (s.terminals || []).filter(t => t.selected).length;
+    let filterSummary = '';
+    if (mode === 'card') filterSummary = s.cardLast4 ? 'Karte …' + s.cardLast4 : '';
+    else if (mode === 'terminal' || mode === 'export' || mode === 'settlement') {
+      filterSummary = term ? term + ' Terminal(s)' : 'alle Terminals';
+    }
+    return {
+      id: String(token),
+      mode,
+      token: String(token),
+      submittedAt: jetztIso,
+      spacesSummary: zsfSpaces(s.spaces),
+      timeframeSummary: (s.startDate || '') + ' → ' + (s.endDate || ''),
+      filterSummary,
+      status: status || 'SUCCESS',
+    };
+  }
+
+  function historyEinfuegen(list, eintrag) {
+    const ohneDup = (list || []).filter(e => e.token !== eintrag.token);
+    return [eintrag, ...ohneDup].slice(0, HISTORY_MAX);
+  }
+
+  function historyFuerModus(list, mode) {
+    return (list || []).filter(e => e.mode === mode);
+  }
+
+  function historyLaden() {
+    try {
+      const roh = localStorage.getItem(HISTORY_KEY);
+      const arr = roh ? JSON.parse(roh) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  }
+
+  function historySpeichern(list) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch (e) {}
+  }
+
   function zeigeFortschritt(text, art) {
     submitFortschritt.classList.remove('hidden', 'fehler', 'erfolg');
     if (art) submitFortschritt.classList.add(art);
