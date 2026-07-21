@@ -70,9 +70,10 @@ test('Zugangsdaten: gueltige Eingabe wird angenommen', () => {
 
 test('Zugangsdaten: fehlende Felder werden benannt', () => {
   const fehler = P.pruefeZugangsdaten({});
-  assert.strictEqual(fehler.length, 2);
+  assert.strictEqual(fehler.length, 3);
   assert.ok(fehler.some(f => /User-ID/.test(f)));
   assert.ok(fehler.some(f => /Secret/.test(f)));
+  assert.ok(fehler.some(f => /Account-ID/.test(f)));
 });
 
 test('Zugangsdaten: nicht-numerische User-ID faellt auf', () => {
@@ -85,12 +86,15 @@ test('Zugangsdaten: Secret, das kein Base64 ist, faellt auf', () => {
   assert.ok(fehler.some(f => /Base64/.test(f)));
 });
 
-test('Zugangsdaten: Account-ID ist optional, muss aber numerisch sein', () => {
+test('Zugangsdaten: Account-ID ist Pflicht (Analytics verlangt den Account-Header)', () => {
   const ohne = P.pruefeZugangsdaten({ userId: '1', secret: 'c2VjcmV0LXdlcnQtZnVlcg==' });
-  assert.deepStrictEqual(ohne, []);
+  assert.ok(ohne.some(f => /Account-ID fehlt/.test(f)), 'fehlende Account-ID muss auffallen');
 
   const falsch = P.pruefeZugangsdaten({ userId: '1', secret: 'c2VjcmV0LXdlcnQtZnVlcg==', accountId: 'x' });
-  assert.ok(falsch.some(f => /Account-ID/.test(f)));
+  assert.ok(falsch.some(f => /Account-ID muss eine Zahl/.test(f)));
+
+  const gut = P.pruefeZugangsdaten({ userId: '1', secret: 'c2VjcmV0LXdlcnQtZnVlcg==', accountId: '99001' });
+  assert.deepStrictEqual(gut, []);
 });
 
 test('Zugangsdaten: Datei bekommt Rechte 600', async () => {
@@ -397,6 +401,8 @@ test('Proxy /submit: ausgehende Anfrage an wallee stimmt (Pfad, JWT, Body)', asy
     'JWT-Bearer-Header');
   assert.deepStrictEqual(JSON.parse(gesehen.opts.body), { sql: 'SELECT 1' },
     'Body traegt genau das Feld sql');
+  assert.strictEqual(gesehen.opts.headers.Account, '1',
+    'Account-Header muss gesetzt sein - alle Analytics-Endpunkte verlangen ihn');
 
   // Und die Signatur im Token passt zum requestPath.
   const token = gesehen.opts.headers.Authorization.replace('Bearer ', '');

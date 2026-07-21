@@ -97,8 +97,11 @@ export function pruefeZugangsdaten(werte) {
     fehler.push('Secret sieht nicht nach einem Base64-Wert aus.');
   }
 
+  // Account-ID ist fuer die Analytics-Endpunkte Pflicht (Header "Account").
+  // Ohne sie antwortet wallee mit 400 account_invalid.
   const account = String(w.accountId || '').trim();
-  if (account && !/^\d+$/.test(account)) fehler.push('Account-ID muss eine Zahl sein.');
+  if (!account) fehler.push('Account-ID fehlt.');
+  else if (!/^\d+$/.test(account)) fehler.push('Account-ID muss eine Zahl sein.');
 
   return fehler;
 }
@@ -253,6 +256,11 @@ async function rufeApi(methode, pfad, koerper) {
     }),
     Accept: 'application/json',
   };
+  // Alle Analytics-Endpunkte verlangen die Account-ID als Header "Account"
+  // (im SDK: AnalyticsQueriesService, headerParameters['Account']). Ohne ihn
+  // antwortet wallee mit 400 account_invalid. Der Header ist NICHT Teil der
+  // JWT-Signatur, deshalb genuegt es, ihn zusaetzlich zu setzen.
+  if (zugangsdaten.accountId) kopf.Account = String(zugangsdaten.accountId);
   if (koerper !== undefined) kopf['Content-Type'] = 'application/json';
 
   const antwort = await fetch(API_BASE + API_PATH + pfad, {
@@ -358,8 +366,8 @@ ${fehlerHtml}
   <label>Authentication-Key / Secret (Base64)
     <input name="secret" type="password" autocomplete="off" required>
   </label>
-  <label>Account-ID (optional)
-    <input name="accountId" inputmode="numeric" autocomplete="off">
+  <label>Account-ID
+    <input name="accountId" inputmode="numeric" autocomplete="off" required>
   </label>
   <button type="submit">Speichern</button>
 </form>
