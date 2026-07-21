@@ -124,13 +124,17 @@ test('alter State ohne die neuen Felder faellt sauber auf den Kopieren-Modus', (
   assert.ok(!sichtbar(el('submitBtn')));
 });
 
-test('Report-Modus ueberlebt einen Neustart', () => {
-  // Regression: die Modus-Whitelist in loadState() kannte 'report' zunaechst
-  // nicht, der Tab waere nach jedem Neuladen auf 'brand' zurueckgesprungen.
-  const { app } = starte({
-    wallee_query_builder_v5: JSON.stringify({ mode: 'report' }),
-  });
-  assert.strictEqual(app.getState().mode, 'report');
+test('alter report-Modus migriert zu terminal', () => {
+  // Der eigenstaendige Report-Tab ist aufgeloest (Terminal-Report ist jetzt
+  // die Ausgabe von 'terminal'). Ein alter State mit mode:'report' darf nicht
+  // auf 'brand' zurueckfallen, sondern muss gezielt nach 'terminal' migrieren.
+  const x = loadBuilders({ seedLocalStorage: { 'wallee_query_builder_v5': JSON.stringify({ mode: 'report' }) } });
+  assert.strictEqual(x.getState().mode, 'terminal');
+});
+
+test('STORAGE_KEY ist v6', () => {
+  const x = loadBuilders();
+  assert.strictEqual(x.STORAGE_KEY, 'wallee_query_builder_v6');
 });
 
 // --- Einstellungs-Dialog ---------------------------------------------------
@@ -185,9 +189,9 @@ test('ESC bei geschlossenem Dialog tut nichts', () => {
 });
 
 test('Einstellungen sind unabhaengig vom aktiven Modus erreichbar', () => {
-  // Der Betriebsmodus gilt fuer alle Tabs - auch im Report-Modus, der selbst
-  // gar kein SQL erzeugt, muss man an die Einstellungen kommen.
-  ['brand', 'terminal', 'report', 'export', 'card', 'settlement'].forEach(modus => {
+  // Der Betriebsmodus gilt fuer alle Tabs - auch im Terminal-Report muss man
+  // an die Einstellungen kommen.
+  ['brand', 'terminal', 'export', 'card', 'settlement'].forEach(modus => {
     const { el } = starte({ wallee_query_builder_v5: JSON.stringify({ mode: modus }) });
     el('settingsBtn').dispatch('click');
     assert.ok(sichtbar(el('settingsOverlay')), `Dialog nicht erreichbar im Modus ${modus}`);

@@ -48,14 +48,13 @@ test('jede per getElementById angefragte ID existiert im Markup', () => {
   assert.deepStrictEqual(verwaist, [], 'Verwaiste getElementById-Referenzen: ' + verwaist.join(', '));
 });
 
-test('Report-Modus ist im Mode-Selector und hat sein Panel', () => {
-  assert.match(markup, /data-mode="report"/, 'Report-Button fehlt im Mode-Selector');
+test('Terminal-Report ist im terminal-Modus aufgegangen, kein eigener Report-Tab mehr', () => {
+  // Der eigenstaendige Report-Tab wurde aufgeloest (siehe CLAUDE.md): der
+  // 'terminal'-Modus heisst jetzt "Terminal-Report" und zeigt Filter + Report
+  // im selben Panel. Ein eigener data-mode="report"-Button darf nicht mehr
+  // existieren, das reportSection-Panel (jetzt ohne CSV-Upload) bleibt.
+  assert.doesNotMatch(markup, /data-mode="report"/, 'Report-Button haette entfernt werden muessen');
   assert.match(markup, /id="reportSection"/, 'Report-Panel fehlt');
-
-  // Reihenfolge laut Plan: Terminal-Report steht rechts neben "Brand + Terminal-Filter".
-  const terminal = markup.indexOf('data-mode="terminal"');
-  const report   = markup.indexOf('data-mode="report"');
-  const exportM  = markup.indexOf('data-mode="export"');
-  assert.ok(terminal < report && report < exportM,
-    'Report-Button steht nicht zwischen Terminal-Filter und Transaktions-Export');
+  assert.doesNotMatch(markup, /id="reportDropzone"/, 'CSV-Upload-Dropzone haette entfernt werden muessen');
+  assert.doesNotMatch(markup, /id="reportFileInput"/, 'CSV-Datei-Input haette entfernt werden muessen');
 });

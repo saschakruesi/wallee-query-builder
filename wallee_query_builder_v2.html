@@ -295,20 +295,6 @@
   .hidden { display: none !important; }
 
   /* Terminal-Report */
-  .report-dropzone {
-    margin-top: 16px;
-    padding: 22px 16px;
-    border: 2px dashed var(--border);
-    border-radius: 8px;
-    background: var(--panel-2);
-    text-align: center;
-    transition: border-color .15s, background .15s;
-  }
-  .report-dropzone p { margin: 0 0 10px; color: var(--muted); }
-  .report-dropzone.dragover {
-    border-color: var(--accent);
-    background: var(--panel-3);
-  }
   .report-error { color: var(--danger); font-weight: 600; }
 
   .submit-fortschritt {
@@ -366,7 +352,7 @@
   /* Druck/PDF: nur der Report, keine Bedienelemente. */
   @media print {
     body { background: #fff; }
-    .mode-selector, .actions, .report-dropzone, #reportConfigArea,
+    .mode-selector, .actions, #reportConfigArea,
     .panel.cond-section:not(#reportSection), #sqlPanel, .hint { display: none !important; }
     .panel { border: none; box-shadow: none; padding: 0; }
     .report-table { font-size: 11px; }
@@ -691,14 +677,13 @@
       </svg>
     </button>
   </div>
-  <p class="subtitle">Brand-Auswertung · Brand + Terminal-Filter · Terminal-Report (XLSX) · Transaktions-Export · Kartensuche · Settlement / Auszahlung · Kopieren- oder API-Modus · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
+  <p class="subtitle">Brand-Auswertung · Terminal-Report (XLSX) · Transaktions-Export · Kartensuche · Settlement / Auszahlung · Kopieren- oder API-Modus · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
 
   <div class="panel">
     <h2>Modus</h2>
     <div class="mode-switcher" role="tablist">
       <button class="mode-btn active" data-mode="brand">Brand-Auswertung</button>
-      <button class="mode-btn" data-mode="terminal">Brand + Terminal-Filter</button>
-      <button class="mode-btn" data-mode="report">Terminal-Report</button>
+      <button class="mode-btn" data-mode="terminal">Terminal-Report</button>
       <button class="mode-btn" data-mode="export">Transaktions-Export</button>
       <button class="mode-btn" data-mode="card">Kartensuche</button>
       <button class="mode-btn" data-mode="settlement">Settlement / Auszahlung</button>
@@ -921,21 +906,9 @@
   </div>
 
   <!-- Terminal-Report: buendelt Terminals zu Outlet-Gruppen und Kartenmarken zu
-       Brand-Gruppen. Anders als die uebrigen Modi erzeugt dieser kein SQL, sondern
-       wertet eine CSV aus - deshalb ist hier das SQL-Panel ausgeblendet. -->
+       Brand-Gruppen. Ausgabe des 'terminal'-Modus - die Daten kommen aus dem
+       API-Ergebnis (ingestReportCsv), kein eigener CSV-Upload mehr. -->
   <div class="panel cond-section" id="reportSection">
-    <h2>Terminal-Report</h2>
-    <p class="hint" style="margin-top:0;">
-      Wertet den CSV-Export aus <em>Brand + Terminal-Filter</em> aus: Terminals werden zu
-      Outlet-Gruppen, Kartenmarken zu Brand-Gruppen zusammengefasst und totalisiert.
-      Die Daten bleiben dabei vollständig auf diesem Rechner.
-    </p>
-
-    <div id="reportDropzone" class="report-dropzone">
-      <p><strong>CSV hierhin ziehen</strong> oder</p>
-      <input type="file" id="reportFileInput" accept=".csv,text/csv">
-    </div>
-
     <p class="hint" id="reportStatus" style="margin-bottom:0;"></p>
 
     <!-- Gruppen-Zuordnung: erscheint erst, wenn eine CSV geladen ist. -->
@@ -1129,11 +1102,11 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
 </script>
 
 <script id="app-logic">
-  const STORAGE_KEY = 'wallee_query_builder_v5';
-  // Vorheriger Schluessel (v4): wird bei Fehlen von v5 einmalig fuer die Migration
+  const STORAGE_KEY = 'wallee_query_builder_v6';
+  // Vorheriger Schluessel (v5): wird bei Fehlen von v6 einmalig fuer die Migration
   // gelesen, aber NIE geloescht - falls jemand nochmal die alte HTML-Datei oeffnet,
   // soll die dort weiter funktionieren.
-  const STORAGE_KEY_OLD = 'wallee_query_builder_v4';
+  const STORAGE_KEY_OLD = 'wallee_query_builder_v5';
 
   // Label-Descriptors (Credit Card Information)
   const DESC_MASKED_CARD = '1456765125779';
@@ -1182,8 +1155,6 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const terminalModeHint= document.getElementById('terminalModeHint');
   const tipUnsettledHint= document.getElementById('tipUnsettledHint');
   const reportSection   = document.getElementById('reportSection');
-  const reportDropzone  = document.getElementById('reportDropzone');
-  const reportFileInput = document.getElementById('reportFileInput');
   const reportStatus    = document.getElementById('reportStatus');
   const reportOutput    = document.getElementById('reportOutput');
   const reportConfigArea= document.getElementById('reportConfigArea');
@@ -1299,8 +1270,8 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   function loadState() {
     try {
       // Erst den aktuellen Schluessel versuchen. Nur wenn der leer ist, auf den
-      // alten (v4) zurueckfallen und von dort migrieren - sonst wuerde jeder
-      // Start eines frischen v5-States faelschlich nochmal "migrieren".
+      // alten (v5) zurueckfallen und von dort migrieren - sonst wuerde jeder
+      // Start eines frischen v6-States faelschlich nochmal "migrieren".
       let raw = localStorage.getItem(STORAGE_KEY);
       let migrating = false;
       if (!raw) {
@@ -1323,7 +1294,7 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         }
         state.exportColumns = merged;
         if (migrating) {
-          // Migration aus dem alten Schluessel (_v4 -> _v5):
+          // Migration aus dem alten Schluessel (_v5 -> _v6):
           // Kartensuche ist vom Export in einen eigenen Tab (cardLast4) gewandert.
           if (!state.cardLast4 && parsed.cardSearch) {
             state.cardLast4 = String(parsed.cardSearch).replace(/\D/g, '').slice(0, 4);
@@ -1336,12 +1307,16 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           // bewusst wieder ein.
           state.exportColumns.payoutref = false;
           // Migriertes Ergebnis sofort unter dem neuen Schluessel sichern, damit
-          // der naechste Start direkt von v5 liest (der alte Schluessel bleibt
+          // der naechste Start direkt von v6 liest (der alte Schluessel bleibt
           // trotzdem unangetastet stehen).
           saveState();
         }
+        // Der eigenstaendige Report-Tab ist aufgeloest - Terminal-Report ist jetzt
+        // die Ausgabe von 'terminal'. Ein alter State mit mode:'report' migriert
+        // deshalb gezielt dorthin statt auf brand zurueckzufallen.
+        if (state.mode === 'report') state.mode = 'terminal';
         // Unbekannter Modus (z. B. aus einer aelteren Version) faellt auf brand zurueck.
-        if (!['brand','terminal','export','card','settlement','report'].includes(state.mode)) {
+        if (!['brand','terminal','export','card','settlement'].includes(state.mode)) {
           state.mode = 'brand';
         }
       }
@@ -2779,10 +2754,12 @@ ORDER BY
     return standard + status + detail;
   }
 
-  // CSV ins Report-Modell uebernehmen und in den Report-Tab wechseln.
+  // CSV ins Report-Modell uebernehmen. Wird nur aus dem terminal-Modus heraus
+  // aufgerufen (siehe unten) - der Report ist dessen Ausgabe, kein eigener Tab
+  // mehr, deshalb reicht ein setMode('terminal') zum Auffrischen der Ansicht.
   function uebergibReportCsv(csv) {
     const ok = ingestReportCsv(csv);
-    if (ok) setMode('report');
+    if (ok) setMode('terminal');
     return ok;
   }
 
@@ -3367,9 +3344,6 @@ ORDER BY
   }
 
   function generate() {
-    // Der Report-Modus hat kein SQL-Panel und arbeitet auf einer geladenen CSV.
-    // Ohne diesen Ausstieg wuerde hier unnoetig eine Brand-Query erzeugt.
-    if (state.mode === 'report') return;
     const start = `${state.startDate} ${state.startTime}`;
     const end   = `${state.endDate} ${state.endTime}`;
     const spaceIds = selectedSpaceIds();
@@ -3413,8 +3387,6 @@ ORDER BY
     tokenAbrufBereich.classList.toggle('hidden', !api);
     queryHistoryPanel.classList.toggle('hidden', !api);
 
-    // Im Report-Modus gibt es gar kein SQL - dort bleibt die Umschaltung ohne
-    // Wirkung, das Panel ist ohnehin ausgeblendet.
     const sqlZeigen = !api || !!state.sqlSichtbar;
     sqlOutput.classList.toggle('hidden', !sqlZeigen);
     sqlEinfuegenHinweis.classList.toggle('hidden', api);
@@ -3437,16 +3409,14 @@ ORDER BY
     exportSection.classList.toggle('active', mode === 'export');
     cardSection.classList.toggle('active', mode === 'card');
     settlementSection.classList.toggle('active', mode === 'settlement');
-    // Der Report erzeugt kein SQL, sondern wertet eine CSV aus. Deshalb als
-    // einziger Modus mit ausgeblendetem SQL-Panel.
-    reportSection.classList.toggle('active', mode === 'report');
-    sqlPanel.classList.toggle('hidden', mode === 'report');
+    // Terminal-Report ist die Ausgabe von 'terminal': Filter oben, Report unten.
+    reportSection.classList.toggle('active', mode === 'terminal');
     // tip_total/unsettled_anzahl erscheinen unbedingt nur in brand/terminal;
     // der Settlement-Modus hat seinen eigenen (fest sichtbaren) tip_total-Hinweis.
     tipUnsettledHint.classList.toggle('active', mode === 'brand' || mode === 'terminal');
     if (mode === 'terminal') {
-      modeBadge.textContent = 'Brand + Terminal';
-      terminalModeHint.innerHTML = '<strong>Pflichtfilter:</strong> Es werden nur Transaktionen der ausgewählten Terminals ausgewertet.';
+      modeBadge.textContent = 'Terminal-Report';
+      terminalModeHint.innerHTML = '<strong>Pflichtfilter:</strong> Es werden nur Transaktionen der ausgewählten Terminals ausgewertet. Das Ergebnis läuft direkt in den Report.';
     } else if (mode === 'export') {
       modeBadge.textContent = 'Transaktions-Export';
       terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl werden alle Terminals der gewählten Spaces exportiert.';
@@ -3456,8 +3426,6 @@ ORDER BY
     } else if (mode === 'settlement') {
       modeBadge.textContent = 'Settlement';
       terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl werden alle Terminals der gewählten Spaces ausgewertet.';
-    } else if (mode === 'report') {
-      modeBadge.textContent = 'Terminal-Report';
     } else {
       modeBadge.textContent = 'Brand';
     }
@@ -3477,30 +3445,6 @@ ORDER BY
     reader.onerror = () => reportZeigeFehler('Die Datei konnte nicht gelesen werden.');
     reader.readAsText(file, 'utf-8');
   }
-
-  reportFileInput.addEventListener('change', () => {
-    leseDatei(reportFileInput.files && reportFileInput.files[0], ingestReportCsv);
-  });
-
-  // Ohne preventDefault auf dragover laesst der Browser die Datei einfach fallen
-  // und navigiert zu ihr - der Drop kaeme nie bei uns an.
-  ['dragenter', 'dragover'].forEach(ev => {
-    reportDropzone.addEventListener(ev, e => {
-      e.preventDefault();
-      reportDropzone.classList.add('dragover');
-    });
-  });
-  ['dragleave', 'drop'].forEach(ev => {
-    reportDropzone.addEventListener(ev, e => {
-      e.preventDefault();
-      reportDropzone.classList.remove('dragover');
-    });
-  });
-  reportDropzone.addEventListener('drop', e => {
-    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (!file) return;
-    leseDatei(file, ingestReportCsv);
-  });
 
   // --- Event bindings: Einstellungs-Dialog ---------------------------------
   function settingsOeffnen() {
