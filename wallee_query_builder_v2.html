@@ -324,6 +324,12 @@
   .token-abruf { margin: 12px 0; }
   .token-abruf .add-row { margin-top: 4px; }
 
+  .history-table { width:100%; border-collapse:collapse; font-size:.85rem; }
+  .history-table th, .history-table td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+  .history-table th { color:var(--muted); font-weight:600; }
+  .history-table td .btn { padding:3px 8px; font-size:.8rem; margin-right:4px; }
+  .query-history { margin-top:14px; }
+
   .report-cfg-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -966,7 +972,7 @@
 
   <div class="panel" id="sqlPanel">
     <div class="output-header">
-      <span class="output-title">Generiertes SQL <span class="badge" id="modeBadge">Brand</span></span>
+      <span class="output-title">Abfrage <span class="badge" id="modeBadge">Brand</span></span>
       <div class="actions">
         <!-- Im API-Modus wird Submit zur Hauptaktion und das SQL klappt zu.
              Im Kopieren-Modus bleibt alles wie bisher. -->
@@ -995,6 +1001,21 @@
         <button class="btn" id="tokenAbrufBtn">Ergebnis abrufen</button>
       </div>
       <p class="hint" style="margin-top:6px;margin-bottom:0;">Holt das Ergebnis einer bereits ausgeführten Query direkt in den Report – ohne sie erneut abzusetzen.</p>
+    </div>
+
+    <!-- Abfrage-Verlauf: nur im API-Modus. Pro Modus gefiltert. -->
+    <div id="queryHistoryPanel" class="hidden query-history">
+      <div class="output-header" style="margin-top:4px;">
+        <span class="output-title" style="font-size:.95rem;">Abfrage-Verlauf</span>
+        <button class="btn" id="queryHistoryRefreshBtn">Aktualisieren</button>
+      </div>
+      <table class="history-table">
+        <thead>
+          <tr><th>Zeit</th><th>Modus</th><th>Zusammenfassung</th><th>Status</th><th>Aktionen</th></tr>
+        </thead>
+        <tbody id="queryHistoryBody"></tbody>
+      </table>
+      <p class="hint" style="margin-top:6px;margin-bottom:0;">Der Download-Link von wallee ist kurzlebig; „CSV/Excel" holt das Ergebnis frisch über den Token. Nach Ablauf des Tokens die Abfrage neu absetzen.</p>
     </div>
 
     <pre id="sqlOutput"></pre>
@@ -1203,6 +1224,9 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const tokenAbrufBereich = document.getElementById('tokenAbrufBereich');
   const tokenInput      = document.getElementById('tokenInput');
   const tokenAbrufBtn   = document.getElementById('tokenAbrufBtn');
+  const queryHistoryPanel = document.getElementById('queryHistoryPanel');
+  const queryHistoryRefreshBtn = document.getElementById('queryHistoryRefreshBtn');
+  const queryHistoryBody = document.getElementById('queryHistoryBody');
   const copyBtn         = document.getElementById('copyBtn');
   const generateBtn     = document.getElementById('generateBtn');
 
@@ -2804,6 +2828,62 @@ ORDER BY
       fehler: `Token abgelaufen oder Fehler (Status ${antwort.status})${detail}. Bitte die Abfrage neu absetzen.` };
   }
 
+  function ergebnisDateiname(mode, endung) {
+    const d = new Date();
+    const stempel = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return `${mode}_${stempel}.${endung}`;
+  }
+
+  async function historyDownloadCsv(token, mode) {
+    const r = await holeErgebnisText(token);
+    if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
+    downloadDatei(r.text, ergebnisDateiname(mode, 'csv'), 'text/csv');
+  }
+
+  // XLSX ohne Logik: CSV 1:1 in Zellen. (Der Terminal-Report nutzt stattdessen
+  // exportReportXlsx mit Gruppierung - siehe historyAlsReport.)
+  async function historyDownloadXlsx(token, mode) {
+    const r = await holeErgebnisText(token);
+    if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
+    const zeilen = csvZuZeilen(r.text);
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(zeilen);
+    XLSX.utils.book_append_sheet(wb, ws, 'Ergebnis');
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    downloadDatei(
+      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      ergebnisDateiname(mode, 'xlsx'));
+  }
+
+  async function historyAlsReport(token) {
+    const r = await holeErgebnisText(token);
+    if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
+    if (ingestReportCsv(r.text)) setMode('terminal');
+  }
+
+  function renderHistory() {
+    const list = historyFuerModus(historyLaden(), state.mode);
+    queryHistoryBody.innerHTML = '';
+    if (!list.length) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td colspan="5" class="hint">Noch keine Abfragen in diesem Modus.</td>';
+      queryHistoryBody.appendChild(tr);
+      return;
+    }
+    list.forEach(e => {
+      const tr = document.createElement('tr');
+      const zeit = (e.submittedAt || '').replace('T', ' ').slice(0, 16);
+      const zsf = [e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · ');
+      const reportBtn = e.mode === 'terminal'
+        ? `<button class="btn" data-act="report" data-token="${e.token}">Als Report öffnen</button>` : '';
+      tr.innerHTML =
+        `<td>${zeit}</td><td>${modusLabel(e.mode)}</td><td>${zsf}</td><td>${e.status || ''}</td>` +
+        `<td><button class="btn" data-act="csv" data-token="${e.token}" data-mode="${e.mode}">CSV</button>` +
+        `<button class="btn" data-act="xlsx" data-token="${e.token}" data-mode="${e.mode}">Excel</button>${reportBtn}</td>`;
+      queryHistoryBody.appendChild(tr);
+    });
+  }
+
   // Ruft das Ergebnis zu einem von Hand eingegebenen queryToken ab - fuer
   // Queries, die bereits im Portal gelaufen sind. Kein Submit, kein Polling.
   async function tokenAbrufen(rohToken) {
@@ -3318,6 +3398,7 @@ ORDER BY
     sqlToggleBtn.classList.toggle('hidden', !api);
     apiHinweis.classList.toggle('hidden', !api);
     tokenAbrufBereich.classList.toggle('hidden', !api);
+    queryHistoryPanel.classList.toggle('hidden', !api);
 
     // Im Report-Modus gibt es gar kein SQL - dort bleibt die Umschaltung ohne
     // Wirkung, das Panel ist ohnehin ausgeblendet.
@@ -3369,6 +3450,7 @@ ORDER BY
     }
     saveState();
     generate();
+    renderHistory();
   }
 
   // --- Event bindings ------------------------------------------------------
@@ -3524,6 +3606,16 @@ ORDER BY
   tokenAbrufBtn.addEventListener('click', () => tokenAbrufen(tokenInput.value));
   tokenInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); tokenAbrufen(tokenInput.value); }
+  });
+
+  queryHistoryRefreshBtn.addEventListener('click', renderHistory);
+  queryHistoryBody.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const token = btn.dataset.token;
+    if (btn.dataset.act === 'csv') historyDownloadCsv(token, btn.dataset.mode);
+    else if (btn.dataset.act === 'xlsx') historyDownloadXlsx(token, btn.dataset.mode);
+    else if (btn.dataset.act === 'report') historyAlsReport(token);
   });
 
   reportXlsxBtn.addEventListener('click', () => {
