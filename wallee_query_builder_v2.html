@@ -321,6 +321,8 @@
   .submit-fortschritt-kopf { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .submit-fortschritt.fehler { border-color: var(--danger); }
   .submit-fortschritt.erfolg { border-color: var(--accent); }
+  .token-abruf { margin: 12px 0; }
+  .token-abruf .add-row { margin-top: 4px; }
 
   .report-cfg-grid {
     display: grid;
@@ -975,6 +977,17 @@
       </div>
     </div>
 
+    <!-- Ergebnis einer bereits (z. B. im Portal) gelaufenen Query per Token
+         abrufen. Nur im API-Modus sichtbar. -->
+    <div id="tokenAbrufBereich" class="hidden token-abruf">
+      <label class="feld-label" for="tokenInput">Vorhandenen queryToken abrufen</label>
+      <div class="add-row">
+        <input type="text" id="tokenInput" placeholder="queryToken aus einer bereits gelaufenen Query">
+        <button class="btn" id="tokenAbrufBtn">Ergebnis abrufen</button>
+      </div>
+      <p class="hint" style="margin-top:6px;margin-bottom:0;">Holt das Ergebnis einer bereits ausgeführten Query direkt in den Report – ohne sie erneut abzusetzen.</p>
+    </div>
+
     <pre id="sqlOutput"></pre>
     <p class="hint" id="sqlEinfuegenHinweis">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export: SETTLED = ausbezahlt, <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) = bisher der beobachtete Normalfall für „noch nicht abgerechnet". UPCOMING (ausstehend) und PARTIAL (teilweise ausbezahlt) sind zusätzlich vorgesehen, wurden bislang aber nicht beobachtet. NO_RECORD gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
   </div>
@@ -1151,6 +1164,9 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const submitFortschritt = document.getElementById('submitFortschritt');
   const submitFortschrittText = document.getElementById('submitFortschrittText');
   const submitAbbrechenBtn = document.getElementById('submitAbbrechenBtn');
+  const tokenAbrufBereich = document.getElementById('tokenAbrufBereich');
+  const tokenInput      = document.getElementById('tokenInput');
+  const tokenAbrufBtn   = document.getElementById('tokenAbrufBtn');
   const copyBtn         = document.getElementById('copyBtn');
   const generateBtn     = document.getElementById('generateBtn');
 
@@ -2555,21 +2571,9 @@ ORDER BY
         return;
       }
 
-      // Ergebnis abholen - Reintext (CSV). Erst JETZT, weil jeder Result-Abruf
-      // bei wallee als Download zaehlt.
-      zeigeFortschritt('Ergebnis wird geladen …');
-      const antwort = await proxyGet('/result/' + encodeURIComponent(token));
-      if (antwort.status >= 400) {
-        zeigeFortschritt('Das Ergebnis konnte nicht geladen werden (Status '
-          + antwort.status + ').', 'fehler');
-        return;
-      }
-      const csv = await antwort.text();
-      const ok = uebergibReportCsv(csv);
-      zeigeFortschritt(ok
-        ? 'Ergebnis geladen – Report erstellt.'
-        : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
-        ok ? 'erfolg' : 'fehler');
+      // Ergebnis abholen. Erst JETZT, weil jeder Result-Abruf bei wallee als
+      // Download zaehlt.
+      await holeErgebnisInReport(token);
     } catch (e) {
       zeigeFortschritt('Die Ausführung ist fehlgeschlagen. Läuft der Proxy noch?', 'fehler');
     } finally {
@@ -2594,6 +2598,58 @@ ORDER BY
     const ok = ingestReportCsv(csv);
     if (ok) setMode('report');
     return ok;
+  }
+
+  // Holt das Ergebnis eines Query-Tokens und uebergibt es dem Report. Von der
+  // Submit-Kette (nach SUCCESS) und vom Token-Abruf gemeinsam genutzt. Wirft
+  // nicht; meldet ueber die Fortschrittsanzeige und gibt Erfolg als boolean.
+  async function holeErgebnisInReport(token) {
+    zeigeFortschritt('Ergebnis wird geladen …');
+    const antwort = await proxyGet('/result/' + encodeURIComponent(token));
+    const text = await antwort.text();
+
+    if (antwort.status === 202) {
+      zeigeFortschritt('Die Query läuft noch – das Ergebnis ist noch nicht bereit. '
+        + 'Bitte kurz warten und erneut abrufen.', 'fehler');
+      return false;
+    }
+    if (antwort.status >= 400) {
+      let detail = '';
+      try { const j = JSON.parse(text); if (j && j.fehler) detail = ': ' + String(j.fehler); } catch (e) {}
+      zeigeFortschritt(`Das Ergebnis konnte nicht geladen werden (Status ${antwort.status})${detail}.`, 'fehler');
+      return false;
+    }
+
+    const ok = uebergibReportCsv(text);
+    zeigeFortschritt(ok
+      ? 'Ergebnis geladen – Report erstellt.'
+      : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
+      ok ? 'erfolg' : 'fehler');
+    return ok;
+  }
+
+  // Ruft das Ergebnis zu einem von Hand eingegebenen queryToken ab - fuer
+  // Queries, die bereits im Portal gelaufen sind. Kein Submit, kein Polling.
+  async function tokenAbrufen(rohToken) {
+    const token = String(rohToken || '').trim();
+    if (!token) {
+      zeigeFortschritt('Bitte einen queryToken eingeben.', 'fehler');
+      return;
+    }
+    if (apiLauf) return;                       // waehrend eines Submits nicht
+
+    tokenAbrufBtn.disabled = true;
+    submitBtn.disabled = true;
+    try {
+      const bereit = meldeProxyZustand(await pruefeProxy(state.proxyUrl));
+      if (!bereit) { settingsOeffnen(); return; }
+      await holeErgebnisInReport(token);
+    } catch (e) {
+      zeigeFortschritt('Der Abruf ist fehlgeschlagen. Läuft der Proxy noch?', 'fehler');
+    } finally {
+      tokenAbrufBtn.disabled = false;
+      submitBtn.disabled = false;
+    }
   }
 
   // Bricht den laufenden Lauf ab: lokal sofort, und dem Proxy per DELETE Bescheid
@@ -3085,6 +3141,7 @@ ORDER BY
     submitBtn.classList.toggle('hidden', !api);
     sqlToggleBtn.classList.toggle('hidden', !api);
     apiHinweis.classList.toggle('hidden', !api);
+    tokenAbrufBereich.classList.toggle('hidden', !api);
 
     // Im Report-Modus gibt es gar kein SQL - dort bleibt die Umschaltung ohne
     // Wirkung, das Panel ist ohnehin ausgeblendet.
@@ -3267,6 +3324,11 @@ ORDER BY
   });
 
   submitAbbrechenBtn.addEventListener('click', brichSubmitAb);
+
+  tokenAbrufBtn.addEventListener('click', () => tokenAbrufen(tokenInput.value));
+  tokenInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); tokenAbrufen(tokenInput.value); }
+  });
 
   reportXlsxBtn.addEventListener('click', () => {
     if (!reportModell) return;

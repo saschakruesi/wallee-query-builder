@@ -403,3 +403,68 @@ test('202 mit retryAfter blockiert nicht und fuehrt schliesslich zum Report', as
 
   assert.match(el('submitFortschrittText').textContent, /Report erstellt/i);
 });
+
+// --- Vorhandenen queryToken abrufen ---------------------------------------
+// Holt das Ergebnis einer bereits gelaufenen Query direkt in den Report - ohne
+// Submit, ohne Polling. Nur im API-Modus sichtbar.
+
+test('Token-Abruf-Feld ist nur im API-Modus sichtbar', async () => {
+  const { el } = starteMitFetch(() => jsonAntwort(200, { ok: true, zugangsdaten: true }));
+  assert.ok(!sichtbar(el('tokenAbrufBereich')), 'im Kopiermodus verborgen');
+
+  el('apiModeToggle').checked = true;
+  el('apiModeToggle').dispatch('change');
+  await ruhe();
+  assert.ok(sichtbar(el('tokenAbrufBereich')), 'im API-Modus sichtbar');
+});
+
+test('Token-Abruf laedt das Ergebnis direkt in den Report (nur /result)', async () => {
+  const rufe = [];
+  const { el } = await starteApiModus(async (url, o) => {
+    rufe.push(String(url));
+    if (String(url).endsWith('/health')) return jsonAntwort(200, { ok: true, zugangsdaten: true });
+    if (String(url).includes('/result/')) return textAntwort(200, CSV);
+    return jsonAntwort(404, {});
+  });
+
+  el('tokenInput').value = 'tok-portal-123';
+  el('tokenAbrufBtn').dispatch('click');
+  await langeRuhe();
+
+  // Genau der result-Aufruf mit dem eingegebenen Token, kein submit/status.
+  assert.ok(rufe.some(u => u.includes('/result/tok-portal-123')), 'result mit dem Token');
+  assert.ok(!rufe.some(u => u.endsWith('/submit')), 'kein Submit');
+  assert.ok(!rufe.some(u => u.includes('/status/')), 'kein Polling');
+  assert.ok(el('reportOutput').textContent.includes('62’756.16'), 'Report gefuellt');
+});
+
+test('Token-Abruf ohne Eingabe meldet einen Hinweis', async () => {
+  const { el, rufe } = await starteApiModus(apiRouter({}));
+  const vorher = rufe.length;
+
+  el('tokenInput').value = '   ';
+  el('tokenAbrufBtn').dispatch('click');
+  await ruhe();
+
+  assert.match(el('submitFortschrittText').textContent, /Token eingeben/);
+  assert.strictEqual(rufe.length, vorher, 'kein Netzaufruf ohne Token');
+});
+
+test('Token-Abruf: 202 (noch nicht bereit) wird verstaendlich gemeldet', async () => {
+  const { el } = await starteApiModus(async (url) => {
+    if (String(url).endsWith('/health')) return jsonAntwort(200, { ok: true, zugangsdaten: true });
+    if (String(url).includes('/result/')) {
+      // 202-Antwort wie vom Proxy: JSON-Body, den die App per text() liest.
+      const body = JSON.stringify({ ok: false, fehler: 'Das Ergebnis ist noch nicht bereit.' });
+      return { status: 202, text: async () => body, json: async () => JSON.parse(body) };
+    }
+    return jsonAntwort(404, {});
+  });
+
+  el('tokenInput').value = 'tok-1';
+  el('tokenAbrufBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /noch nicht bereit/);
+  assert.strictEqual(el('reportOutput').children.length, 0, 'kein Report bei 202');
+});
