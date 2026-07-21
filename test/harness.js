@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const APP = path.join(__dirname, '..', 'wallee_query_builder_v2.html');
+const APP = path.join(__dirname, '..', 'wallee_query_builder.html');
 
 // Ein No-Op-Element, das jeden Zugriff des App-Scripts vertraegt.
 function makeElement() {

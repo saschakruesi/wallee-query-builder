@@ -27,7 +27,7 @@ const NONE_ON = () => {
 
 // Extrahiert den Rumpf des tip-CTE ("tip AS ( ... )") aus generiertem SQL.
 // Die schliessende Klammer eines CTE steht im Codestil dieses Projekts immer
-// allein auf ihrer eigenen Zeile (siehe tipCte() in wallee_query_builder_v2.html),
+// allein auf ihrer eigenen Zeile (siehe tipCte() in wallee_query_builder.html),
 // daher greift ein nicht-gieriges Match bis zum ersten "\n)" zuverlaessig den
 // vollstaendigen CTE-Rumpf ab - unabhaengig davon, in welchem Modus/Query das
 // tip-CTE eingebettet ist.

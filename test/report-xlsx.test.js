@@ -14,7 +14,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { plain } = require('./harness');
 
-const APP = path.join(__dirname, '..', 'wallee_query_builder_v2.html');
+const APP = path.join(__dirname, '..', 'wallee_query_builder.html');
 const html = fs.readFileSync(APP, 'utf8');
 
 function blockInhalt(id) {

@@ -15,7 +15,7 @@ API-Anbindung.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder_v2.html` | **Aktuelle Version (v4).** Sechs Modi inkl. Terminal-Report, zwei Betriebsmodi, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v4).** Sechs Modi inkl. Terminal-Report, zwei Betriebsmodi, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`. Start: `node wallee-proxy.mjs`. |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
@@ -342,7 +342,7 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
 
 ## Entwicklungs-Workflow
 
-1. Änderungen direkt in `wallee_query_builder_v2.html`.
+1. Änderungen direkt in `wallee_query_builder.html`.
 2. **Testen ohne Browser:**
 
    ```bash

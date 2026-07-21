@@ -13,7 +13,7 @@ Zwei Betriebsmodi:
 
 ## Nutzung
 
-1. `wallee_query_builder_v2.html` herunterladen und im Browser öffnen.
+1. `wallee_query_builder.html` herunterladen und im Browser öffnen.
 2. Space-ID(s) und Zeitraum eintragen.
 3. Modus wählen, SQL kopieren, im Portal ausführen — oder im API-Modus direkt absetzen.
 
