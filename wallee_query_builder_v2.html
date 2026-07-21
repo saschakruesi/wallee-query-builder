@@ -2846,13 +2846,17 @@ ORDER BY
     const r = await holeErgebnisText(token);
     if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
     const zeilen = csvZuZeilen(r.text);
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(zeilen);
-    XLSX.utils.book_append_sheet(wb, ws, 'Ergebnis');
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-    downloadDatei(
-      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-      ergebnisDateiname(mode, 'xlsx'));
+    try {
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(zeilen);
+      XLSX.utils.book_append_sheet(wb, ws, 'Ergebnis');
+      const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+      downloadDatei(
+        new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+        ergebnisDateiname(mode, 'xlsx'));
+    } catch (e) {
+      zeigeFortschritt('Excel-Export fehlgeschlagen. Bitte den CSV-Export nutzen.', 'fehler');
+    }
   }
 
   async function historyAlsReport(token) {
@@ -2873,13 +2877,13 @@ ORDER BY
     list.forEach(e => {
       const tr = document.createElement('tr');
       const zeit = (e.submittedAt || '').replace('T', ' ').slice(0, 16);
-      const zsf = [e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · ');
+      const zsf = escapeHtml([e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · '));
       const reportBtn = e.mode === 'terminal'
-        ? `<button class="btn" data-act="report" data-token="${e.token}">Als Report öffnen</button>` : '';
+        ? `<button class="btn" data-act="report" data-token="${escapeHtml(e.token)}">Als Report öffnen</button>` : '';
       tr.innerHTML =
-        `<td>${zeit}</td><td>${modusLabel(e.mode)}</td><td>${zsf}</td><td>${e.status || ''}</td>` +
-        `<td><button class="btn" data-act="csv" data-token="${e.token}" data-mode="${e.mode}">CSV</button>` +
-        `<button class="btn" data-act="xlsx" data-token="${e.token}" data-mode="${e.mode}">Excel</button>${reportBtn}</td>`;
+        `<td>${zeit}</td><td>${escapeHtml(modusLabel(e.mode))}</td><td>${zsf}</td><td>${escapeHtml(e.status || '')}</td>` +
+        `<td><button class="btn" data-act="csv" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">CSV</button>` +
+        `<button class="btn" data-act="xlsx" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">Excel</button>${reportBtn}</td>`;
       queryHistoryBody.appendChild(tr);
     });
   }
