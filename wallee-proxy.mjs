@@ -531,6 +531,16 @@ function reicheWalleeDurch(res, antwort, origin, kontext) {
     // Fehlerbeschreibung von wallee, nie Header/Signatur/Secret.
     const roh = String(antwort.text || '').slice(0, 800);
     console.error(`[wallee ${kontext}] Status ${antwort.status}: ${roh}`);
+    // Bei Auth-Fehlern die Zeit ausgeben, mit der das Token signiert wurde.
+    // wallee prueft den Zeitstempel gegen die Serverzeit; laeuft die lokale Uhr
+    // zu weit ab, scheitert die Signatur trotz korrekter Zugangsdaten. Wenn die
+    // hier gezeigte UTC-Zeit nicht zur echten Uhrzeit passt, ist das die Ursache.
+    if (antwort.status === 401 || antwort.status === 403) {
+      const jetzt = new Date();
+      console.error(`[wallee ${kontext}] Signatur-Zeit dieses Rechners (UTC): `
+        + `${jetzt.toISOString()} (${Math.floor(jetzt.getTime() / 1000)}). `
+        + `Weicht sie von der echten Uhrzeit ab, ist die Systemuhr die Ursache.`);
+    }
   }
   sendeJson(res, antwort.status, body, origin);
 }
