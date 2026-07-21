@@ -2560,16 +2560,20 @@ ORDER BY
   // Secret bleibt leer (Platzhalter signalisiert "hinterlegt").
   async function ladeCredentialsInDialog() {
     if (!state.apiMode) return;
-    const zustand = await pruefeProxy(state.proxyUrl);
-    if (!zustand.erreichbar) return;             // Proxy aus - Felder leer lassen
-    const { status, daten } = await leseCredentials();
-    if (status === 200 && daten) {
-      credUserId.value = daten.userId || '';
-      credAccount.value = daten.accountId || '';
-      credSecret.value = '';
-      credSecret.placeholder = daten.hasSecret
-        ? '••••••••  (hinterlegt — leer lassen zum Beibehalten)'
-        : 'Secret (Base64)';
+    try {
+      const zustand = await pruefeProxy(state.proxyUrl);
+      if (!zustand.erreichbar) return;             // Proxy aus - Felder leer lassen
+      const { status, daten } = await leseCredentials();
+      if (status === 200 && daten) {
+        credUserId.value = daten.userId || '';
+        credAccount.value = daten.accountId || '';
+        credSecret.value = '';
+        credSecret.placeholder = daten.hasSecret
+          ? '••••••••  (hinterlegt — leer lassen zum Beibehalten)'
+          : 'Secret (Base64)';
+      }
+    } catch (e) {
+      // Proxy weg - Felder unveraendert lassen
     }
   }
 
@@ -3358,20 +3362,25 @@ ORDER BY
   credSaveBtn.addEventListener('click', async () => {
     credStatus.className = 'hint';
     credStatus.textContent = 'Wird gespeichert …';
-    const { status, daten } = await speichereCredentials({
-      userId: credUserId.value.trim(),
-      accountId: credAccount.value.trim(),
-      secret: credSecret.value,          // leer = unveraendert
-    });
-    if (status === 200 && daten && daten.ok) {
-      credStatus.className = 'hint';
-      credStatus.textContent = 'Gespeichert. Der Proxy ist jetzt einsatzbereit.';
-      credSecret.value = '';
-      meldeProxyZustand(await pruefeProxy(state.proxyUrl));
-    } else {
+    try {
+      const { status, daten } = await speichereCredentials({
+        userId: credUserId.value.trim(),
+        accountId: credAccount.value.trim(),
+        secret: credSecret.value,          // leer = unveraendert
+      });
+      if (status === 200 && daten && daten.ok) {
+        credStatus.className = 'hint';
+        credStatus.textContent = 'Gespeichert. Der Proxy ist jetzt einsatzbereit.';
+        credSecret.value = '';
+        meldeProxyZustand(await pruefeProxy(state.proxyUrl));
+      } else {
+        credStatus.className = 'hint report-error';
+        const f = daten && daten.fehler ? (Array.isArray(daten.fehler) ? daten.fehler.join(' ') : String(daten.fehler)) : '';
+        credStatus.textContent = 'Speichern fehlgeschlagen. ' + f;
+      }
+    } catch (e) {
       credStatus.className = 'hint report-error';
-      const f = daten && daten.fehler ? (Array.isArray(daten.fehler) ? daten.fehler.join(' ') : String(daten.fehler)) : '';
-      credStatus.textContent = 'Speichern fehlgeschlagen. ' + f;
+      credStatus.textContent = 'Speichern fehlgeschlagen. Läuft der Proxy noch?';
     }
   });
 
