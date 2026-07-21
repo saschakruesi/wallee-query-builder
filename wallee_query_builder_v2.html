@@ -2748,9 +2748,18 @@ ORDER BY
         return;
       }
 
-      // Ergebnis abholen. Erst JETZT, weil jeder Result-Abruf bei wallee als
-      // Download zaehlt.
-      await holeErgebnisInReport(token);
+      // Erfolg: immer in den Verlauf. Nur der Terminal-Report speist das Ergebnis
+      // direkt in die Gruppierung; alle anderen Modi laden es on demand aus dem
+      // Verlauf (spart einen Result-Abruf, der bei wallee als Download zaehlt).
+      historySpeichern(historyEinfuegen(historyLaden(),
+        historyEintragBauen(state.mode, token, state, new Date().toISOString(), 'SUCCESS')));
+      renderHistory();
+
+      if (state.mode === 'terminal') {
+        await holeErgebnisInReport(token);
+      } else {
+        zeigeFortschritt('Fertig — Ergebnis unten im Verlauf als CSV oder Excel herunterladen.', 'erfolg');
+      }
     } catch (e) {
       zeigeFortschritt('Die Ausführung ist fehlgeschlagen. Läuft der Proxy noch?', 'fehler');
     } finally {
@@ -3415,8 +3424,8 @@ ORDER BY
     sqlToggleBtn.setAttribute('aria-expanded', sqlZeigen ? 'true' : 'false');
 
     if (api) {
-      apiHinweis.textContent = 'Die Query wird über den lokalen Proxy ausgeführt; '
-        + 'das Ergebnis landet direkt im Terminal-Report.';
+      apiHinweis.textContent = 'Die Query wird über den lokalen Proxy ausgeführt. '
+        + 'Das Ergebnis erscheint im Verlauf (CSV/Excel); im Terminal-Report zusätzlich als Auswertung.';
     }
   }
 

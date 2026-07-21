@@ -258,8 +258,10 @@ function apiRouter(opt) {
   };
 }
 
+// Default-Modus 'terminal': nur dort baut submitUndReport nach SUCCESS den
+// Report direkt (Task 9); diese Tests pruefen genau diesen Submit->Report-Pfad.
 async function starteApiModus(router, seed) {
-  const ctx = starteMitFetch(router, seed || { wallee_query_builder_v5: JSON.stringify({ apiMode: true, mode: 'brand' }) });
+  const ctx = starteMitFetch(router, seed || { wallee_query_builder_v5: JSON.stringify({ apiMode: true, mode: 'terminal' }) });
   // Retry-Standardwert herabsetzen, sonst wartet jede 202-Runde 2s.
   ctx.app.apiPollConfig.retryStandardSek = 0.005;
   await ruhe();  // Health-Check beim Start abwarten
@@ -501,6 +503,29 @@ test('leseCredentials holt per GET', async () => {
   const res = await x.leseCredentials();
   assert.strictEqual(res.daten.userId, '7');
   assert.strictEqual(res.daten.hasSecret, true);
+});
+
+// --- Verlaufseintrag beim Submit (Task 9) -----------------------------------
+
+test('submitUndReport schreibt Verlaufseintrag und baut im brand-Modus keinen Report', async () => {
+  const pfade = [];
+  const fetchStub = async (url, opts) => {
+    pfade.push(url);
+    if (/\/submit$/.test(url)) return { status: 200, json: async () => ({ portalQueryToken: 'TOKX' }) };
+    if (/\/status\//.test(url)) return { status: 200, json: async () => ({ status: 'SUCCESS' }) };
+    if (/\/result\//.test(url)) return { status: 200, text: async () => 'a,b\n1,2', json: async () => null };
+    return { status: 200, json: async () => ({ ok: true }) };
+  };
+  const x = loadBuilders({ fetch: fetchStub });
+  const st = x.getState();
+  st.proxyUrl = 'http://localhost:8787';
+  st.mode = 'brand';
+  x.apiPollConfig.retryStandardSek = 0;
+  await x.submitUndReport('SELECT 1');
+  const hist = plain(x.historyLaden());
+  assert.strictEqual(hist[0].token, 'TOKX');
+  assert.strictEqual(hist[0].mode, 'brand');
+  assert.ok(!pfade.some(u => /\/result\//.test(u)), 'brand darf kein /result abrufen');
 });
 
 // --- csvZuZeilen (Task 6) ------------------------------------------------------

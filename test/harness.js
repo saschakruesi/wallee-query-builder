@@ -124,6 +124,7 @@ const EXPORTED = [
   'historyFuerModus',
   'historyLaden',
   'historySpeichern',
+  'submitUndReport',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
