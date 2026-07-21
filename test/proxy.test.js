@@ -453,3 +453,40 @@ test('PNA nur fuer erlaubte Herkunft', () => {
   assert.ok(!('Access-Control-Allow-Private-Network' in kopf),
     'einer fremden Seite wird auch PNA nicht zugestanden');
 });
+
+// --- Fehlertext aus wallee-Antworten --------------------------------------
+// Ohne Aufbereitung sieht die App nur den Statuscode. Der Proxy zieht wallees
+// Meldung heraus, damit die Ursache sichtbar wird.
+
+test('walleeFehlertext: message wird erkannt', () => {
+  assert.strictEqual(P.walleeFehlertext({ message: 'Invalid SQL near LIMIT' }),
+    'Invalid SQL near LIMIT');
+});
+
+test('walleeFehlertext: weitere uebliche Felder', () => {
+  assert.strictEqual(P.walleeFehlertext({ defaultMessage: 'Bad' }), 'Bad');
+  assert.strictEqual(P.walleeFehlertext({ detail: 'Detail' }), 'Detail');
+});
+
+test('walleeFehlertext: Liste von Validierungsfehlern', () => {
+  assert.strictEqual(
+    P.walleeFehlertext({ errors: [{ message: 'A' }, { message: 'B' }] }),
+    'A; B');
+});
+
+test('walleeFehlertext: nichts Brauchbares ergibt leeren String', () => {
+  assert.strictEqual(P.walleeFehlertext({ irgendwas: 1 }), '');
+  assert.strictEqual(P.walleeFehlertext(null), '');
+});
+
+test('reicheDurch setzt fehler-Text bei Statusfehlern', () => {
+  const obj = P.reicheDurch({ status: 400, text: JSON.stringify({ message: 'Query rejected' }) });
+  assert.strictEqual(obj.fehler, 'Query rejected',
+    'die App liest d.fehler - der muss aus wallees message kommen');
+});
+
+test('reicheDurch laesst Erfolgsantworten unangetastet', () => {
+  const obj = P.reicheDurch({ status: 200, text: JSON.stringify({ portalQueryToken: 'tok', status: 'PROCESSING' }) });
+  assert.strictEqual(obj.portalQueryToken, 'tok');
+  assert.ok(!('fehler' in obj));
+});

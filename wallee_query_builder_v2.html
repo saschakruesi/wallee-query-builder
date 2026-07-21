@@ -2571,8 +2571,11 @@ ORDER BY
 
   function fehlerText(antwort, standard) {
     const d = antwort && antwort.daten;
-    if (d && d.fehler) return String(d.fehler);
-    return standard + (antwort ? ` (Status ${antwort.status})` : '');
+    const status = antwort ? ` (Status ${antwort.status})` : '';
+    // wallees eigene Meldung anhaengen, wenn vorhanden - sonst steht da nur der
+    // Statuscode und man weiss nicht, was wallee bemaengelt hat.
+    const detail = d && d.fehler ? `: ${String(d.fehler)}` : '';
+    return standard + status + detail;
   }
 
   // CSV ins Report-Modell uebernehmen und in den Report-Tab wechseln.

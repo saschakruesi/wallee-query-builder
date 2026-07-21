@@ -439,13 +439,13 @@ export async function behandleAnfrage(req, res) {
         // Der Request-Body traegt das Feld "sql" (analytics_query_execution_request
         // im python-sdk, Property "sql"), nicht "query".
         const antwort = await rufeApi('POST', API_PFADE.submit, { sql: String(sql) });
-        sendeJson(res, antwort.status, reicheDurch(antwort), origin);
+        reicheWalleeDurch(res, antwort, origin, 'submit');
         return;
       }
 
       case 'status': {
         const antwort = await rufeApi('GET', API_PFADE.status(route.token));
-        sendeJson(res, antwort.status, reicheDurch(antwort), origin);
+        reicheWalleeDurch(res, antwort, origin, 'status');
         return;
       }
 
@@ -454,7 +454,7 @@ export async function behandleAnfrage(req, res) {
         // als Download. Deshalb ruft die App das nur bei Status SUCCESS auf.
         const antwort = await rufeApi('GET', API_PFADE.result(route.token));
         if (antwort.status >= 400) {
-          sendeJson(res, antwort.status, reicheDurch(antwort), origin);
+          reicheWalleeDurch(res, antwort, origin, 'result');
           return;
         }
         sendeText(res, 200, antwort.text, 'text/csv; charset=utf-8', origin);
@@ -464,7 +464,7 @@ export async function behandleAnfrage(req, res) {
       case 'cancel': {
         // Das SDK bricht per DELETE ab, nicht per POST.
         const antwort = await rufeApi('DELETE', API_PFADE.cancel(route.token));
-        sendeJson(res, antwort.status, reicheDurch(antwort), origin);
+        reicheWalleeDurch(res, antwort, origin, 'cancel');
         return;
       }
 
@@ -484,14 +484,52 @@ export async function behandleAnfrage(req, res) {
   }
 }
 
+// Zieht aus einer wallee-Fehlerantwort einen lesbaren Text. wallee liefert je
+// nach Fehlerart unterschiedliche Formen (message, defaultMessage, detail, oder
+// eine Liste von Validierungsfehlern). Der Text ist gefahrlos - er enthaelt die
+// Fehlerbeschreibung, nicht die Signatur oder das Secret.
+export function walleeFehlertext(body) {
+  if (!body || typeof body !== 'object') return '';
+  const kandidaten = [body.message, body.defaultMessage, body.detail, body.error, body.title];
+  const treffer = kandidaten.find(x => typeof x === 'string' && x.trim());
+  if (treffer) return treffer.trim();
+  // Validierungsfehler kommen oft als Liste mit einzelnen Meldungen.
+  if (Array.isArray(body.errors)) {
+    const texte = body.errors.map(e => (e && (e.message || e.defaultMessage)) || '').filter(Boolean);
+    if (texte.length) return texte.join('; ');
+  }
+  return '';
+}
+
 // Antworten der wallee-API moeglichst unveraendert weiterreichen, aber als
-// JSON-Objekt, damit die App eine verlaessliche Form bekommt.
+// JSON-Objekt, damit die App eine verlaessliche Form bekommt. Im Fehlerfall wird
+// zusaetzlich ein lesbarer "fehler"-Text gesetzt, damit die App nicht nur den
+// Statuscode zeigt.
 export function reicheDurch(antwort) {
+  let body;
   try {
-    return JSON.parse(antwort.text);
+    body = JSON.parse(antwort.text);
   } catch (e) {
     return { ok: antwort.status < 400, rohtext: antwort.text };
   }
+  if (antwort.status >= 400 && body && typeof body === 'object' && body.fehler === undefined) {
+    const text = walleeFehlertext(body);
+    if (text) body.fehler = text;
+  }
+  return body;
+}
+
+// Reicht eine wallee-Antwort an die App weiter und protokolliert Fehler auf der
+// Konsole (dem Terminal, in dem der Proxy laeuft), damit man die Ursache sieht,
+// ohne dass Fehlertexte im Browser verloren gehen. Geloggt wird nur Status und
+// Fehlerbeschreibung - nie Header, Signatur oder Secret.
+function reicheWalleeDurch(res, antwort, origin, kontext) {
+  const body = reicheDurch(antwort);
+  if (antwort.status >= 400) {
+    const text = (body && body.fehler) || (body && body.rohtext) || '';
+    console.error(`[wallee ${kontext}] Status ${antwort.status}: ${String(text).slice(0, 500)}`);
+  }
+  sendeJson(res, antwort.status, body, origin);
 }
 
 // --- Start -----------------------------------------------------------------
