@@ -6,4 +6,8 @@ AGENTS.md
 docs/superpowers/
 TIP_FEATURE.md
 Terminal-Report-Tool/
+# Lokaler Ablageort fuer abgeloeste Artefakte (Prototypen, alte Plaene). Bewusst
+# nicht getrackt: der Report ist in die App integriert, die Quellen bleiben nur
+# lokal als Referenz.
+archive/
 *.local.sql
