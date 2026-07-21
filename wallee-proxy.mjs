@@ -446,7 +446,17 @@ export async function behandleAnfrage(req, res) {
         }
         // Der Request-Body traegt das Feld "sql" (analytics_query_execution_request
         // im python-sdk, Property "sql"), nicht "query".
-        const antwort = await rufeApi('POST', API_PFADE.submit, { sql: String(sql) });
+        //
+        // wallee verlangt zusaetzlich einen queryExternalId als Query-Parameter -
+        // eine vom Client vergebene ID, um die Query spaeter referenzieren zu
+        // koennen. Im SDK ist er als optional markiert, der Server besteht aber
+        // darauf. Wir erzeugen je Submit eine frische UUID. Sie geht in den PFAD,
+        // damit rufeApi sie signiert UND sendet - waere sie nur an der URL, ohne
+        // in der Signatur, wuerde die Auth fehlschlagen (wallee signiert die URL
+        // inkl. Query).
+        const externalId = crypto.randomUUID();
+        const submitPfad = `${API_PFADE.submit}?queryExternalId=${encodeURIComponent(externalId)}`;
+        const antwort = await rufeApi('POST', submitPfad, { sql: String(sql) });
         reicheWalleeDurch(res, antwort, origin, 'submit');
         return;
       }

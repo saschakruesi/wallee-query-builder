@@ -394,8 +394,11 @@ test('Proxy /submit: ausgehende Anfrage an wallee stimmt (Pfad, JWT, Body)', asy
   }
 
   assert.ok(gesehen, 'es haette ein Aufruf an wallee rausgehen muessen');
-  assert.strictEqual(gesehen.url, 'https://app-wallee.com/api/v2.0/analytics/queries/submit',
+  const url = new URL(gesehen.url);
+  assert.strictEqual(url.origin + url.pathname, 'https://app-wallee.com/api/v2.0/analytics/queries/submit',
     'Pfad inkl. /api/v2.0-Praefix');
+  assert.ok(url.searchParams.get('queryExternalId'),
+    'submit verlangt einen queryExternalId-Query-Parameter');
   assert.strictEqual(gesehen.opts.method, 'POST');
   assert.match(gesehen.opts.headers.Authorization, /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/,
     'JWT-Bearer-Header');
@@ -404,10 +407,13 @@ test('Proxy /submit: ausgehende Anfrage an wallee stimmt (Pfad, JWT, Body)', asy
   assert.strictEqual(gesehen.opts.headers.Account, '1',
     'Account-Header muss gesetzt sein - alle Analytics-Endpunkte verlangen ihn');
 
-  // Und die Signatur im Token passt zum requestPath.
+  // Der entscheidende Punkt: der signierte requestPath muss GENAU dem
+  // gesendeten Pfad inkl. Query entsprechen. wallee signiert die URL mit Query;
+  // weicht die Signatur vom gesendeten Pfad ab, schlaegt die Auth fehl.
   const token = gesehen.opts.headers.Authorization.replace('Bearer ', '');
   const inhalt = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
-  assert.strictEqual(inhalt.requestPath, '/api/v2.0/analytics/queries/submit');
+  assert.strictEqual(inhalt.requestPath, '/api/v2.0' + url.pathname.replace('/api/v2.0', '') + url.search,
+    'signierter Pfad muss den gesendeten Pfad inkl. Query exakt abbilden');
   assert.strictEqual(inhalt.requestMethod, 'POST');
   assert.strictEqual(inhalt.sub, '12345');
 });
