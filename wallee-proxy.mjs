@@ -471,16 +471,48 @@ export async function behandleAnfrage(req, res) {
       }
 
       case 'result': {
-        // Das Ergebnis ist CSV (text/plain), kein JSON - und jeder Abruf zaehlt
-        // bei wallee als Download. Deshalb ruft die App das nur bei Status
-        // SUCCESS auf. Der Accept-Header muss text/plain zulassen, sonst 406.
+        // Der Result-Endpunkt liefert NICHT das CSV, sondern eine kurzlebige
+        // (5 Minuten) Download-URL - laut wallee-Doku und SDK (Rueckgabetyp str).
+        // Die URL kommt als text/plain, deshalb muss Accept text/plain zulassen
+        // (sonst 406). Jede URL-Erzeugung zaehlt bei wallee als Download, daher
+        // ruft die App das nur bei Status SUCCESS auf.
         const antwort = await rufeApi('GET', API_PFADE.result(route.token), undefined,
           { accept: 'text/plain, application/json' });
+
+        // 204 = Query lief durch, lieferte aber keine Zeilen. Leeres CSV zurueck.
+        if (antwort.status === 204) {
+          sendeText(res, 200, '', 'text/csv; charset=utf-8', origin);
+          return;
+        }
+        // 202 = Ergebnis trotz SUCCESS noch nicht bereit. Der App sagen, sie
+        // soll es gleich erneut versuchen.
+        if (antwort.status === 202) {
+          sendeJson(res, 202, { ok: false, fehler: 'Das Ergebnis ist noch nicht bereit.' }, origin);
+          return;
+        }
         if (antwort.status >= 400) {
           reicheWalleeDurch(res, antwort, origin, 'result');
           return;
         }
-        sendeText(res, 200, antwort.text, 'text/csv; charset=utf-8', origin);
+
+        const downloadUrl = extrahiereDownloadUrl(antwort.text);
+        if (!/^https:\/\//.test(downloadUrl)) {
+          console.error(`[wallee result] Keine Download-URL erhalten: ${String(antwort.text).slice(0, 300)}`);
+          sendeJson(res, 502, { ok: false, fehler: 'wallee lieferte keine Download-URL für das Ergebnis.' }, origin);
+          return;
+        }
+
+        // Die CSV-Datei von der signierten URL laden - server-seitig, ohne
+        // Auth-Header (die URL traegt ihre eigene Signatur) und ohne den
+        // Umweg ueber den Browser (der scheiterte sonst an CORS).
+        const datei = await fetch(downloadUrl);
+        if (!datei.ok) {
+          sendeJson(res, 502, { ok: false,
+            fehler: `Download des Ergebnisses fehlgeschlagen (Status ${datei.status}).` }, origin);
+          return;
+        }
+        const csv = await datei.text();
+        sendeText(res, 200, csv, 'text/csv; charset=utf-8', origin);
         return;
       }
 
@@ -522,6 +554,24 @@ export function walleeFehlertext(body) {
     if (texte.length) return texte.join('; ');
   }
   return '';
+}
+
+// Der Result-Endpunkt liefert eine Download-URL als Zeichenkette. Je nach
+// Content-Type kommt sie als JSON-String ("https://...") oder als reiner Text
+// (https://...). Beide Formen werden zur nackten URL aufgeloest.
+export function extrahiereDownloadUrl(text) {
+  const t = String(text == null ? '' : text).trim();
+  if (!t) return '';
+  try {
+    const parsed = JSON.parse(t);
+    if (typeof parsed === 'string') return parsed.trim();
+    if (parsed && typeof parsed === 'object') {
+      return String(parsed.url || parsed.downloadUrl || parsed.href || '').trim();
+    }
+  } catch (e) {
+    // kein JSON - dann ist der Rohtext bereits die URL
+  }
+  return t;
 }
 
 // Antworten der wallee-API moeglichst unveraendert weiterreichen, aber als

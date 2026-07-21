@@ -542,3 +542,81 @@ test('submit: Accept bleibt JSON', async () => {
   const g = await fangeAusgang('/submit', 'POST', JSON.stringify({ sql: 'SELECT 1' }));
   assert.strictEqual(g.opts.headers.Accept, 'application/json');
 });
+
+// --- Ergebnis-Abruf: zweistufig (URL erzeugen, dann herunterladen) --------
+// Der Result-Endpunkt liefert eine kurzlebige Download-URL, nicht das CSV. Der
+// Proxy muss die URL herunterladen und das CSV an die App zurueckgeben.
+
+test('extrahiereDownloadUrl: JSON-String, Rohtext und Objekt', () => {
+  assert.strictEqual(P.extrahiereDownloadUrl('"https://dl.example/f.csv"'), 'https://dl.example/f.csv');
+  assert.strictEqual(P.extrahiereDownloadUrl('https://dl.example/f.csv'), 'https://dl.example/f.csv');
+  assert.strictEqual(P.extrahiereDownloadUrl('{"url":"https://dl.example/f.csv"}'), 'https://dl.example/f.csv');
+  assert.strictEqual(P.extrahiereDownloadUrl(''), '');
+});
+
+// Router-fetch: erst die wallee-Result-Antwort (eine URL), dann der Download.
+async function ergebnisLauf({ resultStatus = 200, resultBody, downloadStatus = 200, csv = 'a,b\n1,2\n' }) {
+  const original = globalThis.fetch;
+  const rufe = [];
+  globalThis.fetch = async (u, o) => {
+    rufe.push({ url: String(u), opts: o });
+    if (String(u).includes('/queryToken/')) {
+      return { status: resultStatus, ok: resultStatus < 400,
+        text: async () => (resultBody !== undefined ? resultBody : '"https://dl.example/result.csv"'),
+        headers: new Map() };
+    }
+    // Download der signierten URL
+    return { status: downloadStatus, ok: downloadStatus < 400, text: async () => csv, headers: new Map() };
+  };
+  const pfad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-proxy-')), 'config.json');
+  await P.speichereZugangsdaten(
+    { userId: '12345', secret: 'c2VjcmV0LXdlcnQtZnVlci1kZW4tdGVzdC1sYW5n', accountId: '1' }, pfad);
+  const { req, res } = fakeReqRes({ method: 'GET', url: '/result/tok-1', origin: 'null' });
+  try {
+    await P.behandleAnfrage(req, res);
+    await warteAufAntwort(res);
+  } finally {
+    globalThis.fetch = original;
+  }
+  return { res, rufe };
+}
+
+test('result: laedt die Download-URL und gibt das CSV zurueck', async () => {
+  const { res, rufe } = await ergebnisLauf({ csv: 'terminal,brutto\nT1,10.00\n' });
+
+  // Zwei Aufrufe: Result-Endpunkt (URL) und der Download selbst.
+  assert.strictEqual(rufe.length, 2);
+  assert.ok(rufe[0].url.includes('/analytics/queries/queryToken/tok-1/result'));
+  assert.strictEqual(rufe[1].url, 'https://dl.example/result.csv', 'die zurueckgegebene URL wird geladen');
+
+  assert.strictEqual(res._status, 200);
+  assert.match(res._headers['Content-Type'], /text\/csv/);
+  assert.strictEqual(res._body, 'terminal,brutto\nT1,10.00\n', 'die App bekommt das CSV, nicht die URL');
+});
+
+test('result: Download-URL wird ohne Auth-Header geladen (signierte URL)', async () => {
+  const { rufe } = await ergebnisLauf({});
+  const download = rufe[1];
+  assert.ok(!download.opts || !download.opts.headers || !download.opts.headers.Authorization,
+    'die signierte URL darf keinen Bearer-Header bekommen');
+});
+
+test('result: 204 (keine Daten) ergibt leeres CSV, kein zweiter Abruf', async () => {
+  const { res, rufe } = await ergebnisLauf({ resultStatus: 204, resultBody: '' });
+  assert.strictEqual(rufe.length, 1, 'ohne Daten kein Download');
+  assert.strictEqual(res._status, 200);
+  assert.strictEqual(res._body, '');
+});
+
+test('result: 202 (noch nicht bereit) wird als solches gemeldet', async () => {
+  const { res, rufe } = await ergebnisLauf({ resultStatus: 202, resultBody: '' });
+  assert.strictEqual(rufe.length, 1);
+  assert.strictEqual(res._status, 202);
+  assert.match(res._body, /noch nicht bereit/);
+});
+
+test('result: unerwartete Antwort statt URL ergibt 502, kein Download', async () => {
+  const { res, rufe } = await ergebnisLauf({ resultBody: 'kein-link' });
+  assert.strictEqual(rufe.length, 1, 'ohne gueltige URL kein Download');
+  assert.strictEqual(res._status, 502);
+});
