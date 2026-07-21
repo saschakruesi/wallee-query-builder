@@ -502,3 +502,43 @@ test('reicheDurch laesst Erfolgsantworten unangetastet', () => {
   assert.strictEqual(obj.portalQueryToken, 'tok');
   assert.ok(!('fehler' in obj));
 });
+
+// --- Accept-Header je Endpunkt --------------------------------------------
+// Der Ergebnis-Endpunkt liefert CSV als text/plain. Mit Accept application/json
+// antwortet wallee mit 406. submit/status/cancel bleiben bei JSON.
+
+async function fangeAusgang(url, method, body) {
+  const original = globalThis.fetch;
+  let gesehen = null;
+  globalThis.fetch = async (u, o) => {
+    gesehen = { url: u, opts: o };
+    return { status: 200, text: async () => 'a,b\n1,2\n', headers: new Map() };
+  };
+  const pfad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-proxy-')), 'config.json');
+  await P.speichereZugangsdaten(
+    { userId: '12345', secret: 'c2VjcmV0LXdlcnQtZnVlci1kZW4tdGVzdC1sYW5n', accountId: '1' }, pfad);
+  try {
+    const { req, res } = fakeReqRes({ method, url, origin: 'null', body });
+    await P.behandleAnfrage(req, res);
+    await warteAufAntwort(res);
+  } finally {
+    globalThis.fetch = original;
+  }
+  return gesehen;
+}
+
+test('result: Accept laesst text/plain zu (sonst 406)', async () => {
+  const g = await fangeAusgang('/result/tok-1', 'GET');
+  assert.ok(/text\/plain/.test(g.opts.headers.Accept),
+    `Accept muss text/plain enthalten, war: ${g.opts.headers.Accept}`);
+});
+
+test('status: Accept bleibt JSON', async () => {
+  const g = await fangeAusgang('/status/tok-1', 'GET');
+  assert.strictEqual(g.opts.headers.Accept, 'application/json');
+});
+
+test('submit: Accept bleibt JSON', async () => {
+  const g = await fangeAusgang('/submit', 'POST', JSON.stringify({ sql: 'SELECT 1' }));
+  assert.strictEqual(g.opts.headers.Accept, 'application/json');
+});

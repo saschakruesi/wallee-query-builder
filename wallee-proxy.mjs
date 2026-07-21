@@ -240,7 +240,7 @@ export function findeRoute(methode, pfad) {
 
 // --- Aufrufe an die wallee-API --------------------------------------------
 
-async function rufeApi(methode, pfad, koerper) {
+async function rufeApi(methode, pfad, koerper, optionen = {}) {
   if (!zugangsdaten) {
     const e = new Error('Keine Zugangsdaten hinterlegt. Bitte /setup aufrufen.');
     e.status = 428;
@@ -254,7 +254,10 @@ async function rufeApi(methode, pfad, koerper) {
       methode,
       pfad,
     }),
-    Accept: 'application/json',
+    // Der Ergebnis-Endpunkt liefert CSV als text/plain. Mit Accept
+    // application/json antwortet wallee dort mit 406. Der Accept-Header ist
+    // deshalb pro Aufruf setzbar; Default ist JSON fuer submit/status/cancel.
+    Accept: optionen.accept || 'application/json',
   };
   // Alle Analytics-Endpunkte verlangen die Account-ID als Header "Account"
   // (im SDK: AnalyticsQueriesService, headerParameters['Account']). Ohne ihn
@@ -468,9 +471,11 @@ export async function behandleAnfrage(req, res) {
       }
 
       case 'result': {
-        // Das Ergebnis ist CSV, kein JSON - und jeder Abruf zaehlt bei wallee
-        // als Download. Deshalb ruft die App das nur bei Status SUCCESS auf.
-        const antwort = await rufeApi('GET', API_PFADE.result(route.token));
+        // Das Ergebnis ist CSV (text/plain), kein JSON - und jeder Abruf zaehlt
+        // bei wallee als Download. Deshalb ruft die App das nur bei Status
+        // SUCCESS auf. Der Accept-Header muss text/plain zulassen, sonst 406.
+        const antwort = await rufeApi('GET', API_PFADE.result(route.token), undefined,
+          { accept: 'text/plain, application/json' });
         if (antwort.status >= 400) {
           reicheWalleeDurch(res, antwort, origin, 'result');
           return;
