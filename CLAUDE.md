@@ -1,18 +1,22 @@
 # Wallee Analytics Query Builder
 
-Eigenständige HTML-Applikation (Single File, kein Build, kein Server), die SQL-Queries
-für **wallee Analytics** (PrestoDB / Amazon Athena) generiert. Der Nutzer kopiert das
-generierte SQL und führt es im wallee-Portal unter **Account > Analytics > Submit Query** aus.
-Ergebnis kommt dort als CSV.
+Eigenständige HTML-Applikation (Single File, kein Build, keine Runtime-Dependencies), die
+SQL-Queries für **wallee Analytics** (PrestoDB / Amazon Athena) generiert. Zwei
+Betriebsmodi: **Kopieren-Modus** (Default) — SQL kopieren und im Portal unter
+**Account > Analytics > Submit Query** ausführen; **API-Modus** (opt-in) — Query direkt über
+einen lokalen Proxy absetzen und das Ergebnis automatisch in den Terminal-Report übernehmen.
 
 Entstanden aus einer Kundenanfrage im Gastronomie-Umfeld: Tagesabschluss-Abgleich pro
-Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen.
+Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen. Seit v4 zusätzlich der
+integrierte Terminal-Report (Outlet-/Brand-Gruppen, XLSX-Export) und die direkte
+API-Anbindung.
 
 ## Dateien
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder_v2.html` | **Aktuelle Version.** Fünf Modi, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
+| `wallee_query_builder_v2.html` | **Aktuelle Version (v4).** Sechs Modi inkl. Terminal-Report, zwei Betriebsmodi, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
+| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`. Start: `node wallee-proxy.mjs`. |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
 | `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
@@ -39,7 +43,14 @@ Kein Framework, keine Dependencies, läuft offline per Doppelklick.
 - Gespeichert werden: Modus, Spaces, Zeitraum, Terminals, Spaltenauswahl, Kartensuche,
   Settlement-Aufschlüsselung nach Terminal, User-Presets (max. 12).
 
-### Fünf Modi
+Seit v4 enthält die HTML-Datei **zwei** `<script>`-Blöcke: den eingebetteten SheetJS-Vendor
+(`<script id="vendor-xlsx">`, ~700 KB minified, nur für den XLSX-Export) und den App-Code
+(`<script id="app-logic">`). Das Test-Harness extrahiert gezielt den `app-logic`-Block; die
+reinen Funktionen brauchen SheetJS nicht. Beim Einbetten minifizierten Codes muss die
+Ersetzung eine Replacer-**Funktion** nutzen — String-Ersatz deutet `$&`/`` $` ``/`$1` als
+Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
+
+### Sechs Modi
 
 1. **`brand`** – Aggregat pro Space × Brand × Währung (`GROUP BY`). Spalten: Anzahl,
    `unsettled_anzahl` (keine Gebühr UND kein Settlement-Record = wartet noch auf die
@@ -47,6 +58,10 @@ Kein Framework, keine Dependencies, läuft offline per Doppelklick.
    enthalten).
 2. **`terminal`** – wie `brand`, zusätzlich Pflichtfilter + Gruppierung auf
    `paymentterminal.identifier` / `.name`. Gleiche `unsettled_anzahl`/`tip_total`-Spalten.
+2a. **`report`** – **Terminal-Report**, im Mode-Selector rechts neben `terminal`. Erzeugt
+   **kein SQL**, sondern wertet einen CSV-Export aus: Terminals → Outlet-Gruppen, Brands →
+   Brand-Gruppen, totalisiert. Eigener Kern aus reinen Funktionen (siehe „Terminal-Report").
+   `generate()` steigt für diesen Modus früh aus, das SQL-Panel ist ausgeblendet.
 3. **`export`** – **eine Zeile pro Transaktion**, Spalten frei wählbar (Checkbox-Katalog),
    Terminal-Filter optional. Enthält u. a. `tip_amount` und `gross_excl_tip`.
 4. **`card`** – Kartensuche: Transaktionen zu den letzten vier Kartenziffern
@@ -58,8 +73,47 @@ Kein Framework, keine Dependencies, läuft offline per Doppelklick.
    (`settlementByTerminal`).
 
 Sichtbarkeit der Panels steuert `setMode()` über die CSS-Klasse `.cond-section.active`
-(Terminal-Panel in Modus 2, 3, 4 und 5, Spalten-Panel nur Modus 3, Kartensuche-Panel nur
-Modus 4, Settlement-Panel nur Modus 5).
+(Terminal-Panel in `terminal`/`export`/`card`/`settlement`, Spalten-Panel nur `export`,
+Kartensuche-Panel nur `card`, Settlement-Panel nur `settlement`, Report-Panel nur `report`).
+Im `report`-Modus wird das SQL-Panel per `.hidden` ausgeblendet. **Wichtig:** Die
+Modus-Whitelist in `loadState()` muss `report` kennen, sonst fällt der Tab nach einem
+Neuladen auf `brand` zurück.
+
+### Terminal-Report (Modus `report`, v4)
+
+Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Schicht:
+
+- **`parseReportCsv(text)` → `{ rows, headers, error }`** — zeichenweiser CSV-Parser (Quotes,
+  Kommas im Feld, `""`, CRLF). Zähler-Spalte unter **beiden** Namen akzeptiert:
+  `unmatched_anzahl` UND `unsettled_anzahl` → kanonisch `unmatched`. Fehlende Pflichtspalte →
+  Fehlerobjekt (kein Wurf). Beträge werden als **ganzzahlige 1e-8-Einheiten** geführt (per
+  String zerlegt, nicht `parseFloat(v)*1e8`) — es sind Geldbeträge, die auf den Rappen exakt
+  aufsummieren müssen.
+- **`autoOutletGroup(name)`** (`name.replace(/[\s\d]+$/,'')`), **`autoBrandGroup(brand)`**
+  (`Lunch Check` → „Lunch-Check", sonst „Wallee"). Nur Vorschläge; Merge läuft über den
+  Gruppen-**Namen**.
+- **`buildReportModel(rows, config)` → `{ detail, outletTotals, brandTotals, grandTotal }`**
+  (Aufbau nach SPEC 7). Beträge bleiben im Modell in 1e-8-Einheiten.
+- **Zahlformat** von Hand (`formatAmountCH`/`formatIntCH`), nicht `toLocaleString('de-CH')` —
+  dessen Tausendertrennung hängt von der ICU-Version des Browsers ab.
+- **Persistenz** `wallee_terminal_report_cfg_v1` (`{outlet:{tid:group}, brand:{brand:group}}`),
+  Private-Mode-sicher. **Export** über `reportExportBloecke()` (gemeinsame Basis für XLSX und
+  CSV; Beträge als **Zahlen**, Schweizer Aussehen über das Excel-Zahlformat, nicht als
+  formatierter String). XLSX über das eingebettete SheetJS, nur im Event-Pfad.
+
+### Betriebsmodus & API (v4)
+
+- Zwei Modi im `state`: `apiMode` (Default `false`), `proxyUrl` (`http://localhost:8787`),
+  `sqlSichtbar`. Umschaltung über das **Zahnrad** im Kopf (`settingsOverlay`) — die
+  Einstellungen gelten modusübergreifend, deshalb ein Dialog statt eines Panels.
+- **Kopieren-Modus:** SQL sichtbar, Kopieren-Button, wie bisher.
+- **API-Modus:** Submit ist die Hauptaktion, SQL eingeklappt (Toggle „Query anzeigen"). Vor
+  jedem Submit ein Health-Check (`pruefeProxy` → `deuteHealth`); ist der Proxy nicht bereit,
+  klarer Hinweis + Rückfall, **nie** blockiert.
+- **Ablauf** (`submitUndReport`): `POST /submit` → `queryToken`; Status pollen über den
+  HTTP-Code (200 = fertig, 202 = weiter, `Retry-After` beachten); bei SUCCESS `/result` →
+  CSV → `ingestReportCsv` → Report-Tab. `holeErgebnisInReport(token)` ist der gemeinsame
+  Result-Pfad, auch für „Vorhandenen queryToken abrufen".
 
 ### Spaltenkatalog (`EXPORT_COLUMNS`)
 
@@ -153,11 +207,59 @@ aktive Zustände) — als Textfarbe auf hellem Grund ist das helle Türkis zu ko
 Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum Einsatz:
 `#0da69c` (`--accent-hover`) und `#225956` (`--accent-dark`, z. B. für `.brand-mark`).
 
+## Proxy (`wallee-proxy.mjs`, v4)
+
+Einzelnes Node-Script, nur Builtins (`http`, `crypto`, `fs`), **kein npm install**. Start
+`node wallee-proxy.mjs`, Port über `WALLEE_PROXY_PORT`. Endpunkte: `/health`, `GET`+`POST`
+`/setup`, `POST /submit`, `GET /status/:token`, `GET /result/:token`, `DELETE /query/:token`.
+
+- **Warum überhaupt:** Browser dürfen `app-wallee.com` nicht direkt rufen (CORS), und die
+  JWT-Signatur bräuchte sonst das Secret im Browser. Der Proxy signiert lokal; das Secret
+  liegt nur in `~/.wallee-proxy.json` (Rechte 600), geht nie an die App zurück, wird nie
+  geloggt.
+- **Missbrauchsschutz** (ein lokaler Server ist von jeder offenen Webseite erreichbar):
+  Bindung nur auf `127.0.0.1`; Herkunft nur `null` (per `file://` geöffnete App) und die
+  eigenen Proxy-Origins, **nie** `*`; zusätzlicher Header `X-Wallee-Proxy`, den eine fremde
+  Seite nicht ohne Preflight setzen kann. Reine Funktionen (`findeRoute`, `signRequest`/
+  `baueToken`, `pruefeZugangsdaten`, `originErlaubt`, `corsHeader`, `extrahiereDownloadUrl`,
+  `walleeFehlertext`, `leseRetryAfter`) sind ohne Netz getestet (`test/proxy.test.js`).
+- **Fehlertexte** von wallee werden durchgereicht (`walleeFehlertext` → Feld `fehler`) und
+  auf der Konsole geloggt — ohne das im Klartext hätte die Diagnose der API-Anbindung nicht
+  funktioniert.
+
+### wallee Analytics REST-API — verifizierter Ablauf (an Produktivdaten bestätigt)
+
+Jede Anforderung am offiziellen SDK (<https://github.com/wallee-payment>, python-/typescript-sdk)
+bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
+
+- **Auth: JWT-Bearer, NICHT das alte x-mac-Schema.** Header `{alg:HS256, typ:JWT, ver:1}`,
+  Payload `{sub:"<userId>", iat:<unix-sek>, requestPath:"/api/v2.0<pfad>", requestMethod}`,
+  signiert mit dem **base64-dekodierten** Secret; `Authorization: Bearer <token>`. Das
+  x-mac-SHA512-Schema aus älteren SDKs (magento-1, salesforce) ist Legacy und wird von
+  `api/v2.0` **nicht** akzeptiert. Signatur gegen den RFC-7515-A.1-Testvektor geprüft.
+- **`Account: <accountId>`-Header** ist bei **allen** Analytics-Endpunkten Pflicht — fehlt er:
+  400 `account_invalid`.
+- **Submit:** `POST /api/v2.0/analytics/queries/submit`, Query-Param
+  `queryExternalId=<frische UUID>` (Pflicht; **muss im signierten requestPath stehen**, da
+  wallee die URL inkl. Query signiert), Body `{"sql":…}`. Antwort **201** `{"queryToken":…}`.
+- **Status:** `GET …/queryToken/{token}` — Long-Poll: HTTP **200** = Endzustand (Body
+  `status`: SUCCESS/FAILED/CANCELLED), **202** = läuft noch (`Retry-After`-Header, Sekunden).
+  Nicht über das Status-Feld pollen, sondern über den HTTP-Code.
+- **Result:** `GET …/queryToken/{token}/result`, `Accept: text/plain` (sonst 406). Antwort
+  **200** = kurzlebige (5 Min) **Download-URL** (NICHT das CSV!). Der Proxy lädt die URL
+  server-seitig (ohne Auth-Header, sie ist signiert) → das ist das CSV. 202 = noch nicht
+  bereit, 204 = keine Zeilen.
+- **Browser → localhost (Chrome PNA):** Eine `file://`-Seite, die `localhost` ruft, verlangt
+  im Preflight `Access-Control-Allow-Private-Network: true` — fehlt er, blockiert Chrome den
+  `fetch` komplett (die Anfrage erreicht den Proxy nie). Der Proxy spiegelt den Header.
+
 ## Wallee-Referenzwissen
 
 - **Analytics-Schema:** <https://app-wallee.com/en-us/doc/api/analytics-schema>
   — Tabellen-/Spaltennamen im SQL **zwingend lowercase**.
 - **Analytics-Doku/API:** <https://app-wallee.com/en-us/doc/analytics>
+- **REST-API / Web Service:** <https://app-wallee.com/doc/api/web-service> — Analytics-Endpunkte
+  (siehe „Proxy" oben). **API-Client / SDKs:** <https://github.com/wallee-payment> (Auth-Schema).
 - **Label-Descriptors** (auf `chargeattempt.labels`, Typ array<map<string,string>>):
   - Masked Card Number: `1456765125779` (Konstante `DESC_MASKED_CARD`)
   - Authorization Code: `1579287795628` (Konstante `DESC_AUTH_CODE`) — leer bei TWINT
@@ -248,22 +350,29 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
    ```
 
    (die Form `node --test test/` funktioniert nicht — das Glob muss die Dateien treffen).
-   `test/harness.js` extrahiert den einzigen `<script>`-Block aus der HTML-Datei, stubbt
-   `document`/`localStorage` und lädt das Script per `vm.runInContext`. Es exportiert
-   `buildBrandQuery/buildTerminalQuery/buildExportQuery/buildCardQuery/buildSettlementQuery/
-   EXPORT_COLUMNS/defaultColumns/spaceInClause/txCte/cardCte/loadState/saveState/
-   STORAGE_KEY/STORAGE_KEY_OLD` sowie eine `getState()`-Closure über `globalThis`.
-   `test/queries.test.js` prüft die generierten SQL-Strings für alle Modi + Edge-Cases
-   (0 Spaces, 0 Spalten, nur-Basis-Spalten ohne Joins, Kartensuche aktiv, alle Spalten) und
-   die State-Migration `v4` → `v5`.
-   **Einschränkung:** Der Stub liefert für **jede** ID über `document.getElementById`
-   irgendein Element zurück (siehe `makeElement()` in `harness.js`) — eine verwaiste
-   DOM-Referenz (falsche/gelöschte ID im Script) fällt den Tests deshalb **nicht** auf.
-   Nach UI-Änderungen (neue/umbenannte Element-IDs) zusätzlich statisch gegenprüfen
-   (`grep` auf `getElementById('...')` gegen die tatsächlich vorhandenen IDs im Markup).
-3. Generiertes SQL idealerweise einmal real im eigenen Account laufen lassen
-   (Portal: *Account > Analytics > Submit Query*).
+   `test/harness.js` extrahiert gezielt den `<script id="app-logic">`-Block (nicht mehr „den
+   einzigen" — seit v4 gibt es auch den SheetJS-Vendor-Block), stubbt `document`/
+   `localStorage`/`fetch` und lädt das Script per `vm.runInContext`. Es exportiert die
+   SQL-Builder, den Report-Kern (`parseReportCsv`, `autoOutletGroup`/`autoBrandGroup`,
+   `buildReportModel`, `formatAmountCH`/`formatIntCH`, `reportExportBloecke`, `buildReportCsv`,
+   `ingestReportCsv`), die API-Helfer (`normalisiereProxyUrl`, `deuteHealth`, `leseQueryToken`/
+   `leseQueryStatus`, `apiPollConfig`) sowie `loadState`/`saveState`/`STORAGE_KEY*` und eine
+   `getState()`-Closure. `options`: `document` (reicherer DOM-Ersatz aus `test/dom-stub.js`),
+   `fetch` (gefälscht), `blockLocalStorage` (Private-Mode), `seedLocalStorage` (Migration),
+   `plain(v)` (JSON-Runde gegen Realm-Grenzen bei `deepStrictEqual`).
+   Testdateien: `queries` (SQL), `report`/`report-render`/`report-xlsx` (Report-Kern, Render,
+   XLSX end-to-end), `betriebsmodus`/`api-anbindung` (Modi, Health, Submit-Poll-Result),
+   `proxy` (reine Proxy-Funktionen inkl. JWT gegen RFC-7515), `embedding`/`dom-ids`
+   (Struktur-/ID-Wächter).
+   **Einschränkung:** Der einfache Stub liefert für **jede** ID irgendein Element — eine
+   verwaiste DOM-Referenz fällt so nicht auf. `test/dom-ids.test.js` gleicht deshalb die per
+   `getElementById` angefragten IDs statisch gegen das Markup ab; nach UI-Änderungen bleibt
+   der Test die Absicherung.
+3. Generiertes SQL idealerweise einmal real laufen lassen — im Portal (*Account > Analytics >
+   Submit Query*) oder im API-Modus über den Proxy.
 4. Version im `<h1>`-Badge und Subtitle nachführen; bei State-Bruch `STORAGE_KEY` erhöhen.
+   Der Proxy hat seine eigenen Tests (`test/proxy.test.js`); Änderungen an der API-Anbindung
+   möglichst am gestubbten `fetch`/an der ausgehenden Anfrage prüfen, nicht erst live.
 
 ## Offene Punkte / Ideen
 

@@ -1,0 +1,61 @@
+// Prueft, dass jede im App-Code per getElementById angesprochene ID im Markup
+// wirklich existiert.
+//
+// Hintergrund: der DOM-Stub in test/harness.js liefert fuer JEDE ID irgendein
+// No-Op-Element zurueck. Eine verwaiste Referenz - falsch geschriebene oder
+// geloeschte ID - faellt den Builder-Tests deshalb nie auf, sondern erst im
+// Browser, wo dann still gar nichts passiert. Dieser Test schliesst die Luecke
+// statisch, ohne DOM.
+
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const APP = path.join(__dirname, '..', 'wallee_query_builder_v2.html');
+const html = fs.readFileSync(APP, 'utf8');
+
+// Nur der Markup-Teil bis zum Vendor-Block - der minifizierte SheetJS-Code
+// enthaelt massenhaft Strings, die wie IDs aussehen.
+const markup = html.slice(0, html.indexOf('<script id="vendor-xlsx">'));
+
+const appOpen = '<script id="app-logic">';
+const appFrom = html.indexOf(appOpen) + appOpen.length;
+const appCode = html.slice(appFrom, html.indexOf('</script>', appFrom));
+
+function vorhandeneIds() {
+  const ids = new Set();
+  const re = /\sid="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(markup)) !== null) ids.add(m[1]);
+  return ids;
+}
+
+function angefragteIds() {
+  const ids = new Set();
+  const re = /getElementById\(\s*'([^']+)'\s*\)/g;
+  let m;
+  while ((m = re.exec(appCode)) !== null) ids.add(m[1]);
+  return ids;
+}
+
+test('jede per getElementById angefragte ID existiert im Markup', () => {
+  const vorhanden = vorhandeneIds();
+  const angefragt = angefragteIds();
+  assert.ok(angefragt.size > 20, `Zu wenige IDs gefunden (${angefragt.size}) - Regex greift nicht`);
+
+  const verwaist = [...angefragt].filter(id => !vorhanden.has(id)).sort();
+  assert.deepStrictEqual(verwaist, [], 'Verwaiste getElementById-Referenzen: ' + verwaist.join(', '));
+});
+
+test('Report-Modus ist im Mode-Selector und hat sein Panel', () => {
+  assert.match(markup, /data-mode="report"/, 'Report-Button fehlt im Mode-Selector');
+  assert.match(markup, /id="reportSection"/, 'Report-Panel fehlt');
+
+  // Reihenfolge laut Plan: Terminal-Report steht rechts neben "Brand + Terminal-Filter".
+  const terminal = markup.indexOf('data-mode="terminal"');
+  const report   = markup.indexOf('data-mode="report"');
+  const exportM  = markup.indexOf('data-mode="export"');
+  assert.ok(terminal < report && report < exportM,
+    'Report-Button steht nicht zwischen Terminal-Filter und Transaktions-Export');
+});

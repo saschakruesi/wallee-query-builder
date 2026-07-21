@@ -1,6 +1,13 @@
-// Extrahiert den <script>-Block aus der Single-File-App und laedt ihn in Node,
-// damit die SQL-Builder ohne Browser getestet werden koennen.
+// Extrahiert den App-Logik-Block aus der Single-File-App und laedt ihn in Node,
+// damit die SQL- und Report-Funktionen ohne Browser getestet werden koennen.
 // Einzige Stelle im Projekt, die DOM-Wissen enthaelt.
+//
+// Die HTML-Datei enthaelt seit v4 zwei <script>-Bloecke: den eingebetteten
+// SheetJS-Vendor-Block (id="vendor-xlsx", ~930 KB minified) und den App-Code
+// (id="app-logic"). Getestet wird ausschliesslich der App-Block - SheetJS wird
+// nur im DOM-/Event-Pfad benutzt (XLSX-Export) und ist fuer die reinen
+// Funktionen irrelevant. Deshalb wird hier gezielt ueber die id extrahiert,
+// statt "der einzige <script>-Block" anzunehmen.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -76,19 +83,64 @@ const EXPORTED = [
   'saveState',
   'STORAGE_KEY',
   'STORAGE_KEY_OLD',
+  // Report-Kern (v4), ebenfalls reine Funktionen
+  'parseReportCsv',
+  'parseAmount',
+  'AMOUNT_SCALE',
+  'autoOutletGroup',
+  'autoBrandGroup',
+  'buildReportModel',
+  'formatAmountCH',
+  'formatIntCH',
+  'mergeReportConfig',
+  'loadReportConfig',
+  'saveReportConfig',
+  'REPORT_CFG_KEY',
+  // DOM-gebunden, aber ueber einen DOM-Ersatz testbar (test/report-render.test.js)
+  'ingestReportCsv',
+  'renderReport',
+  'reportExportBloecke',
+  'buildReportCsv',
+  'exportReportXlsx',
+  // API-Anbindung (Task 11), reine Helfer
+  'normalisiereProxyUrl',
+  'proxyEndpunkt',
+  'deuteHealth',
+  'leseQueryToken',
+  'leseQueryStatus',
+  'istEndzustand',
+  'istErfolg',
+  'apiPollConfig',
 ];
+
+// Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
+// Bewusst per indexOf statt per Regex: der Vendor-Block ist ~930 KB gross, ein
+// greedy [\s\S]* daneben ist unnoetig teuer und bei mehreren Bloecken auch noch
+// mehrdeutig. Der Vendor-Block enthaelt selbst kein "</script" (beim Einbetten
+// geprueft), deshalb ist das erste "</script>" nach dem Opening-Tag das richtige.
+function extractScript(html, id) {
+  const openTag = `<script id="${id}">`;
+  const start = html.indexOf(openTag);
+  if (start === -1) {
+    throw new Error(`Kein <script id="${id}">-Block in ${APP} gefunden`);
+  }
+  if (html.indexOf(openTag, start + openTag.length) !== -1) {
+    throw new Error(`Mehr als ein <script id="${id}">-Block in ${APP}`);
+  }
+  const from = start + openTag.length;
+  const end = html.indexOf('</script>', from);
+  if (end === -1) {
+    throw new Error(`Kein schliessendes </script> fuer id="${id}" in ${APP}`);
+  }
+  return html.slice(from, end);
+}
 
 // options.seedLocalStorage: { [key]: string } - wird VOR dem Laden des Scripts in
 // localStorage geschrieben, damit loadState() (das beim Init des Scripts einmalig
 // laeuft) Migrationsszenarien sieht, statt immer von einem leeren Storage zu starten.
 function loadBuilders(options = {}) {
   const html = fs.readFileSync(APP, 'utf8');
-  const scriptCount = (html.match(/<script/g) || []).length;
-  if (scriptCount !== 1) {
-    throw new Error(`Erwartet genau 1 <script>-Tag in ${APP}, gefunden: ${scriptCount}`);
-  }
-  const match = html.match(/<script>([\s\S]*)<\/script>/);
-  if (!match) throw new Error('Kein <script>-Block in ' + APP + ' gefunden');
+  const appScript = extractScript(html, 'app-logic');
 
   // Der Script-Block deklariert alles mit const/function im Modul-Scope.
   // Wir haengen einen Export-Epilog an, der die Builder nach aussen reicht.
@@ -100,7 +152,17 @@ function loadBuilders(options = {}) {
     '\ntry { globalThis.__x.getState = function () { return state; }; } catch (e) {}' +
     '})();';
 
-  const localStorage = makeLocalStorage();
+  // options.blockLocalStorage: simuliert den Private Mode, in dem jeder Zugriff
+  // auf localStorage wirft. Die App muss dann ohne Persistenz weiterlaufen,
+  // statt beim Start oder beim Speichern zu crashen.
+  const localStorage = options.blockLocalStorage
+    ? {
+      getItem() { throw new Error('localStorage blockiert'); },
+      setItem() { throw new Error('localStorage blockiert'); },
+      removeItem() { throw new Error('localStorage blockiert'); },
+      clear() { throw new Error('localStorage blockiert'); },
+    }
+    : makeLocalStorage();
   if (options.seedLocalStorage) {
     Object.keys(options.seedLocalStorage).forEach(key => {
       localStorage.setItem(key, options.seedLocalStorage[key]);
@@ -108,19 +170,28 @@ function loadBuilders(options = {}) {
   }
 
   const sandbox = {
-    document: makeDocument(),
+    // options.document: reicherer DOM-Ersatz fuer Tests, die tatsaechlich
+    // gerenderte Struktur pruefen (siehe test/report-render.test.js). Ohne
+    // diese Option bleibt es beim No-Op-Stub, der nur verhindern soll, dass
+    // das Script beim Laden stolpert.
+    document: options.document || makeDocument(),
     localStorage,
     window: { getSelection: () => ({ removeAllRanges: () => {}, addRange: () => {} }) },
     navigator: { clipboard: { writeText: async () => {} } },
     console,
     setTimeout,
     clearTimeout,
+    // options.fetch: gefaelschtes fetch fuer Tests der API-Anbindung. Ohne die
+    // Option gibt es kein fetch im Sandbox - reiner SQL-/Report-Code braucht es
+    // nicht, und ein echtes fetch soll aus Tests nie ins Netz gehen.
+    fetch: options.fetch,
+    AbortController,
     __x: {},
   };
   sandbox.globalThis = sandbox;
 
   vm.createContext(sandbox);
-  vm.runInContext(match[1] + epilog, sandbox, { filename: 'query-builder-script.js' });
+  vm.runInContext(appScript + epilog, sandbox, { filename: 'query-builder-script.js' });
 
   const missing = ['buildBrandQuery', 'buildTerminalQuery', 'buildExportQuery']
     .filter(n => typeof sandbox.__x[n] !== 'function');
@@ -133,4 +204,14 @@ function loadBuilders(options = {}) {
   return sandbox.__x;
 }
 
-module.exports = { loadBuilders };
+// Objekte und Arrays, die im vm-Kontext entstehen, haben die Intrinsics jenes
+// Realms - ihr Prototyp ist nicht derselbe wie hier draussen. assert.deepStrictEqual
+// vergleicht auch den Prototyp und meldet dann "same structure but not
+// reference-equal", obwohl der Inhalt stimmt. plain() zieht den Wert per
+// JSON-Runde in diesen Realm herueber, damit strikte Vergleiche moeglich sind.
+// Nur fuer reine Datenstrukturen gedacht (der Report-Kern liefert genau solche).
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+module.exports = { loadBuilders, plain };
