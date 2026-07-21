@@ -502,3 +502,16 @@ test('leseCredentials holt per GET', async () => {
   assert.strictEqual(res.daten.userId, '7');
   assert.strictEqual(res.daten.hasSecret, true);
 });
+
+// --- csvZuZeilen (Task 6) ------------------------------------------------------
+
+test('csvZuZeilen zerlegt Quotes, Kommas und CRLF', () => {
+  const x = loadBuilders();
+  const csv = 'a,b,c\r\n"1,1",2,"sag ""hi"""\r\n3,4,5';
+  assert.deepStrictEqual(plain(x.csvZuZeilen(csv)), [
+    ['a', 'b', 'c'],
+    ['1,1', '2', 'sag "hi"'],
+    ['3', '4', '5'],
+  ]);
+  assert.deepStrictEqual(plain(x.csvZuZeilen('')), []);
+});

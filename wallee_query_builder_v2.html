@@ -2261,6 +2261,32 @@ ORDER BY
     return { rows: daten, headers, error: null };
   }
 
+  // Reiner CSV->Zeilen-Parser fuer den logikfreien XLSX/CSV-Download. Anders als
+  // parseReportCsv erzwingt er keine Report-Spalten - er gibt die Tabelle 1:1
+  // zurueck, wie sie aus wallee kommt.
+  function csvZuZeilen(text) {
+    const s = String(text == null ? '' : text);
+    if (!s.trim()) return [];
+    const zeilen = [];
+    let feld = '', zeile = [], inQuote = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (inQuote) {
+        if (c === '"') {
+          if (s[i + 1] === '"') { feld += '"'; i++; }
+          else inQuote = false;
+        } else feld += c;
+      } else if (c === '"') inQuote = true;
+      else if (c === ',') { zeile.push(feld); feld = ''; }
+      else if (c === '\n') { zeile.push(feld); zeilen.push(zeile); feld = ''; zeile = []; }
+      else if (c === '\r') { /* ignorieren, \n schliesst die Zeile */ }
+      else feld += c;
+    }
+    // letztes Feld/letzte Zeile, falls kein abschliessender Zeilenumbruch
+    if (feld !== '' || zeile.length) { zeile.push(feld); zeilen.push(zeile); }
+    return zeilen;
+  }
+
   // --- Terminal-Report: Auto-Gruppierung ----------------------------------
   // Nur Vorschlaege. Der Nutzer kann jeden Gruppennamen ueberschreiben;
   // zusammengefasst wird anschliessend ueber den Gruppen-NAMEN, nicht ueber

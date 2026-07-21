@@ -85,6 +85,7 @@ const EXPORTED = [
   'STORAGE_KEY_OLD',
   // Report-Kern (v4), ebenfalls reine Funktionen
   'parseReportCsv',
+  'csvZuZeilen',
   'parseAmount',
   'AMOUNT_SCALE',
   'autoOutletGroup',
