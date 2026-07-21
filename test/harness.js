@@ -106,6 +106,11 @@ const EXPORTED = [
   'normalisiereProxyUrl',
   'proxyEndpunkt',
   'deuteHealth',
+  'leseQueryToken',
+  'leseQueryStatus',
+  'istEndzustand',
+  'istErfolg',
+  'apiPollConfig',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.

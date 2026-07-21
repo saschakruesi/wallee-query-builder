@@ -323,3 +323,85 @@ test('JWT: Signatur-Primitive entspricht dem Testvektor aus RFC 7515 A.1', () =>
   assert.strictEqual(P.jwtSignatur(teile, schluessel),
     'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk');
 });
+
+// --- Ausgehende Anfrage an wallee (durch den Proxy) -----------------------
+// Der kritischste Teil, weil hier zusammenkommt, was alles am SDK abgeleitet
+// wurde: Pfad, JWT-Bearer und Body-Feld. Statt ins Netz zu gehen, wird das
+// globale fetch gestubbt und die ausgehende Anfrage eingefangen. behandleAnfrage
+// nutzt die intern hinterlegten Zugangsdaten - die setzt speichereZugangsdaten.
+
+const http = require('node:http');
+
+// Minimales req/res-Paar fuer behandleAnfrage.
+function fakeReqRes({ method, url, body, origin }) {
+  const req = new (require('node:events').EventEmitter)();
+  req.method = method;
+  req.url = url;
+  req.headers = { 'x-wallee-proxy': '1' };
+  if (origin) req.headers.origin = origin;
+
+  const res = {
+    _status: 0, _headers: {}, _body: '',
+    writeHead(status, headers) { this._status = status; Object.assign(this._headers, headers || {}); },
+    end(text) { this._body = text || ''; this._fertig = true; },
+  };
+
+  // Body nach dem naechsten Tick nachreichen, damit die Handler ihre
+  // data/end-Listener registrieren koennen.
+  setImmediate(() => {
+    if (body !== undefined) req.emit('data', Buffer.from(body));
+    req.emit('end');
+  });
+  return { req, res };
+}
+
+function warteAufAntwort(res) {
+  return new Promise(resolve => {
+    const t = setInterval(() => { if (res._fertig) { clearInterval(t); resolve(res); } }, 2);
+  });
+}
+
+test('Proxy /submit: ausgehende Anfrage an wallee stimmt (Pfad, JWT, Body)', async () => {
+  const pfad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-proxy-')), 'config.json');
+  await P.speichereZugangsdaten(
+    { userId: '12345', secret: 'c2VjcmV0LXdlcnQtZnVlci1kZW4tdGVzdC1sYW5nLWdlbnVn', accountId: '1' }, pfad);
+  // Der Modulzustand liest die Zugangsdaten beim Serverstart; hier direkt neu laden.
+  const zug = P.ladeZugangsdaten(pfad);
+
+  // Globales fetch einfangen. Der Proxy signiert mit den intern hinterlegten
+  // Zugangsdaten - die hat speichereZugangsdaten oben gesetzt.
+  const original = globalThis.fetch;
+  let gesehen = null;
+  globalThis.fetch = async (url, opts) => {
+    gesehen = { url, opts };
+    return { status: 200, text: async () => '{"portalQueryToken":"tok-1","status":"PROCESSING"}',
+      headers: new Map() };
+  };
+
+  try {
+    const { req, res } = fakeReqRes({
+      method: 'POST', url: '/submit', origin: 'null',
+      body: JSON.stringify({ sql: 'SELECT 1' }),
+    });
+    await P.behandleAnfrage(req, res);
+    await warteAufAntwort(res);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  assert.ok(gesehen, 'es haette ein Aufruf an wallee rausgehen muessen');
+  assert.strictEqual(gesehen.url, 'https://app-wallee.com/api/v2.0/analytics/queries/submit',
+    'Pfad inkl. /api/v2.0-Praefix');
+  assert.strictEqual(gesehen.opts.method, 'POST');
+  assert.match(gesehen.opts.headers.Authorization, /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/,
+    'JWT-Bearer-Header');
+  assert.deepStrictEqual(JSON.parse(gesehen.opts.body), { sql: 'SELECT 1' },
+    'Body traegt genau das Feld sql');
+
+  // Und die Signatur im Token passt zum requestPath.
+  const token = gesehen.opts.headers.Authorization.replace('Bearer ', '');
+  const inhalt = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+  assert.strictEqual(inhalt.requestPath, '/api/v2.0/analytics/queries/submit');
+  assert.strictEqual(inhalt.requestMethod, 'POST');
+  assert.strictEqual(inhalt.sub, '12345');
+});

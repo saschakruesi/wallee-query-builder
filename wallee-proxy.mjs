@@ -411,7 +411,9 @@ export async function behandleAnfrage(req, res) {
           sendeJson(res, 400, { ok: false, fehler: 'Feld "sql" fehlt.' }, origin);
           return;
         }
-        const antwort = await rufeApi('POST', API_PFADE.submit, { query: String(sql) });
+        // Der Request-Body traegt das Feld "sql" (analytics_query_execution_request
+        // im python-sdk, Property "sql"), nicht "query".
+        const antwort = await rufeApi('POST', API_PFADE.submit, { sql: String(sql) });
         sendeJson(res, antwort.status, reicheDurch(antwort), origin);
         return;
       }

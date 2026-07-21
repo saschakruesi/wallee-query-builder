@@ -311,6 +311,17 @@
   }
   .report-error { color: var(--danger); font-weight: 600; }
 
+  .submit-fortschritt {
+    margin: 12px 0;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-2);
+  }
+  .submit-fortschritt-kopf { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .submit-fortschritt.fehler { border-color: var(--danger); }
+  .submit-fortschritt.erfolg { border-color: var(--accent); }
+
   .report-cfg-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -955,6 +966,15 @@
       </div>
     </div>
     <p class="hint hidden" id="apiHinweis" style="margin-top:0;"></p>
+
+    <!-- Fortschritt der API-Ausfuehrung. Nur im API-Modus sichtbar. -->
+    <div id="submitFortschritt" class="hidden submit-fortschritt">
+      <div class="submit-fortschritt-kopf">
+        <span id="submitFortschrittText">Wird ausgeführt …</span>
+        <button class="btn" id="submitAbbrechenBtn">Abbrechen</button>
+      </div>
+    </div>
+
     <pre id="sqlOutput"></pre>
     <p class="hint" id="sqlEinfuegenHinweis">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export: SETTLED = ausbezahlt, <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) = bisher der beobachtete Normalfall für „noch nicht abgerechnet". UPCOMING (ausstehend) und PARTIAL (teilweise ausbezahlt) sind zusätzlich vorgesehen, wurden bislang aber nicht beobachtet. NO_RECORD gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
   </div>
@@ -1128,6 +1148,9 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
   const proxyStatus     = document.getElementById('proxyStatus');
   const proxyCheckBtn   = document.getElementById('proxyCheckBtn');
   const proxySetupLink  = document.getElementById('proxySetupLink');
+  const submitFortschritt = document.getElementById('submitFortschritt');
+  const submitFortschrittText = document.getElementById('submitFortschrittText');
+  const submitAbbrechenBtn = document.getElementById('submitAbbrechenBtn');
   const copyBtn         = document.getElementById('copyBtn');
   const generateBtn     = document.getElementById('generateBtn');
 
@@ -2430,6 +2453,169 @@ ORDER BY
     return false;
   }
 
+  // --- API-Ausfuehrung: Submit -> Poll -> Report --------------------------
+  // Ein Lauf zur Zeit. laufToken traegt den queryToken des aktiven Laufs;
+  // Abbrechen und Fortschrittsanzeige haengen daran. abgebrochen wird gesetzt,
+  // damit eine noch laufende Poll-Schleife nach dem Abbrechen nichts mehr tut.
+  let apiLauf = null;   // { token, abgebrochen } oder null
+
+  // Als Objekt statt als Konstanten, damit die Tests das Poll-Intervall
+  // heruntersetzen koennen, ohne 1.5s je Runde zu warten. Im Browser bleiben
+  // die Defaults.
+  const apiPollConfig = { intervallMs: 1500, maxVersuche: 400 };   // ~10 Min
+
+  function zeigeFortschritt(text, art) {
+    submitFortschritt.classList.remove('hidden', 'fehler', 'erfolg');
+    if (art) submitFortschritt.classList.add(art);
+    submitFortschrittText.textContent = text;
+    // Abbrechen nur waehrend eines laufenden Laufs anbieten.
+    submitAbbrechenBtn.classList.toggle('hidden', !(apiLauf && !apiLauf.abgebrochen));
+  }
+
+  function versteckeFortschritt() {
+    submitFortschritt.classList.add('hidden');
+  }
+
+  async function proxyGet(pfad, signal) {
+    const antwort = await fetch(proxyEndpunkt(state.proxyUrl, pfad), {
+      method: 'GET', headers: { [PROXY_HEADER_NAME]: '1' }, signal,
+    });
+    return antwort;
+  }
+
+  async function proxyJson(pfad, methode, koerper) {
+    const antwort = await fetch(proxyEndpunkt(state.proxyUrl, pfad), {
+      method: methode,
+      headers: { [PROXY_HEADER_NAME]: '1', 'Content-Type': 'application/json' },
+      body: koerper === undefined ? undefined : JSON.stringify(koerper),
+    });
+    let daten = null;
+    try { daten = await antwort.json(); } catch (e) { daten = null; }
+    return { status: antwort.status, daten };
+  }
+
+  const warte = ms => new Promise(r => setTimeout(r, ms));
+
+  // Der ganze Ablauf. Gibt nichts zurueck, meldet alles ueber die
+  // Fortschrittsanzeige. Wirft nicht - jeder Fehler landet als Meldung.
+  async function submitUndReport(sql) {
+    if (apiLauf) return;                       // schon ein Lauf aktiv
+    apiLauf = { token: '', abgebrochen: false };
+    submitBtn.disabled = true;
+
+    try {
+      zeigeFortschritt('Query wird übermittelt …');
+      const submit = await proxyJson('/submit', 'POST', { sql });
+      if (submit.status >= 400 || !submit.daten) {
+        zeigeFortschritt(fehlerText(submit, 'Die Query konnte nicht übermittelt werden.'), 'fehler');
+        return;
+      }
+      const token = leseQueryToken(submit.daten);
+      if (!token) {
+        zeigeFortschritt('Der Proxy hat keinen Query-Token zurückgegeben.', 'fehler');
+        return;
+      }
+      apiLauf.token = token;
+
+      // Der Submit kann den Status schon mitliefern; sonst pollen.
+      let status = leseQueryStatus(submit.daten);
+      let versuche = 0;
+      while (!istEndzustand(status)) {
+        if (apiLauf.abgebrochen) return;
+        if (++versuche > apiPollConfig.maxVersuche) {
+          zeigeFortschritt('Zeitüberschreitung – die Query läuft noch. '
+            + 'Der Token kann später unter „Vorhandenen Token abrufen" verwendet werden: '
+            + token, 'fehler');
+          return;
+        }
+        zeigeFortschritt(`Query läuft … (${status || 'PROCESSING'})`);
+        await warte(apiPollConfig.intervallMs);
+        if (apiLauf.abgebrochen) return;
+        const s = await proxyJson('/status/' + encodeURIComponent(token), 'GET');
+        if (s.status >= 400) {
+          zeigeFortschritt(fehlerText(s, 'Der Status konnte nicht abgefragt werden.'), 'fehler');
+          return;
+        }
+        status = leseQueryStatus(s.daten);
+      }
+
+      if (!istErfolg(status)) {
+        zeigeFortschritt(`Die Query wurde mit Status ${status} beendet.`, 'fehler');
+        return;
+      }
+
+      // Ergebnis abholen - Reintext (CSV). Erst JETZT, weil jeder Result-Abruf
+      // bei wallee als Download zaehlt.
+      zeigeFortschritt('Ergebnis wird geladen …');
+      const antwort = await proxyGet('/result/' + encodeURIComponent(token));
+      if (antwort.status >= 400) {
+        zeigeFortschritt('Das Ergebnis konnte nicht geladen werden (Status '
+          + antwort.status + ').', 'fehler');
+        return;
+      }
+      const csv = await antwort.text();
+      const ok = uebergibReportCsv(csv);
+      zeigeFortschritt(ok
+        ? 'Ergebnis geladen – Report erstellt.'
+        : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
+        ok ? 'erfolg' : 'fehler');
+    } catch (e) {
+      zeigeFortschritt('Die Ausführung ist fehlgeschlagen. Läuft der Proxy noch?', 'fehler');
+    } finally {
+      submitBtn.disabled = false;
+      if (apiLauf) apiLauf.abgebrochen = true;   // Poll-Schleife stoppen
+      apiLauf = null;
+      submitAbbrechenBtn.classList.add('hidden');
+    }
+  }
+
+  function fehlerText(antwort, standard) {
+    const d = antwort && antwort.daten;
+    if (d && d.fehler) return String(d.fehler);
+    return standard + (antwort ? ` (Status ${antwort.status})` : '');
+  }
+
+  // CSV ins Report-Modell uebernehmen und in den Report-Tab wechseln.
+  function uebergibReportCsv(csv) {
+    const ok = ingestReportCsv(csv);
+    if (ok) setMode('report');
+    return ok;
+  }
+
+  // Bricht den laufenden Lauf ab: lokal sofort, und dem Proxy per DELETE Bescheid
+  // geben, damit die Query auch serverseitig gestoppt wird.
+  async function brichSubmitAb() {
+    if (!apiLauf) return;
+    const token = apiLauf.token;
+    apiLauf.abgebrochen = true;
+    submitAbbrechenBtn.classList.add('hidden');
+    zeigeFortschritt('Wird abgebrochen …');
+    if (token) {
+      try { await proxyJson('/query/' + encodeURIComponent(token), 'DELETE'); } catch (e) {}
+    }
+    zeigeFortschritt('Abgebrochen.', 'fehler');
+  }
+
+  // Antwort von POST /submit bzw. GET /status auswerten. Feldnamen aus dem
+  // python-sdk (SubmittedAnalyticsQueryExecution): Token = portalQueryToken,
+  // Status = status (Enum PROCESSING/SUCCESS/FAILED/CANCELLED). Die Fallbacks
+  // fangen abweichende Schreibweisen ab, damit eine kleine API-Aenderung nicht
+  // gleich alles bricht.
+  function leseQueryToken(obj) {
+    if (!obj || typeof obj !== 'object') return '';
+    return String(obj.portalQueryToken || obj.queryToken || obj.token || '').trim();
+  }
+
+  function leseQueryStatus(obj) {
+    if (!obj || typeof obj !== 'object') return '';
+    const s = obj.status && typeof obj.status === 'object' ? obj.status.status : obj.status;
+    return String(s || '').trim().toUpperCase();
+  }
+
+  const QUERY_ENDZUSTAENDE = ['SUCCESS', 'FAILED', 'CANCELLED'];
+  const istEndzustand = s => QUERY_ENDZUSTAENDE.includes(String(s).toUpperCase());
+  const istErfolg = s => String(s).toUpperCase() === 'SUCCESS';
+
   // --- Terminal-Report: Konfiguration -------------------------------------
   const REPORT_CFG_KEY = 'wallee_terminal_report_cfg_v1';
 
@@ -3052,7 +3238,7 @@ ORDER BY
   submitBtn.addEventListener('click', async () => {
     // Vor jedem Submit den Proxy pruefen. Ist er nicht bereit, wird nicht
     // blockiert: die Meldung nennt den Weg, und im Kopiermodus geht es ohne
-    // Proxy weiter. Die eigentliche Ausfuehrung folgt in Task 12.
+    // Proxy weiter.
     submitBtn.disabled = true;
     setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
     const bereit = meldeProxyZustand(await pruefeProxy(state.proxyUrl));
@@ -3061,8 +3247,12 @@ ORDER BY
       settingsOeffnen();       // Aufmerksamkeit auf die Einstellungen lenken
       return;
     }
-    setzeProxyStatus('ok', 'Proxy bereit. Ausführung folgt im nächsten Schritt.');
+    // Aktuelles SQL ausfuehren. sqlOutput haelt genau das, was auch der
+    // Kopieren-Button liefern wuerde.
+    submitUndReport(sqlOutput.textContent);
   });
+
+  submitAbbrechenBtn.addEventListener('click', brichSubmitAb);
 
   reportXlsxBtn.addEventListener('click', () => {
     if (!reportModell) return;
