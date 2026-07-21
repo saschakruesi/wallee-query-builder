@@ -2781,6 +2781,29 @@ ORDER BY
     return ok;
   }
 
+  // Holt reinen Ergebnistext (CSV) ueber den Token, ohne ihn in den Report zu
+  // speisen. Basis fuer den Roh-Download aus dem Verlauf.
+  async function holeErgebnisText(token) {
+    let antwort;
+    try {
+      antwort = await proxyGet('/result/' + encodeURIComponent(token));
+    } catch (e) {
+      return { ok: false, status: 0, text: '', fehler: 'Proxy nicht erreichbar.' };
+    }
+    const text = await antwort.text();
+    if (antwort.status === 200) return { ok: true, status: 200, text, fehler: '' };
+    if (antwort.status === 202) {
+      return { ok: false, status: 202, text: '', fehler: 'Ergebnis noch nicht bereit — bitte kurz warten.' };
+    }
+    if (antwort.status === 204) {
+      return { ok: false, status: 204, text: '', fehler: 'Die Query lieferte keine Zeilen.' };
+    }
+    let detail = '';
+    try { const j = JSON.parse(text); if (j && j.fehler) detail = ': ' + String(j.fehler); } catch (e) {}
+    return { ok: false, status: antwort.status, text: '',
+      fehler: `Token abgelaufen oder Fehler (Status ${antwort.status})${detail}. Bitte die Abfrage neu absetzen.` };
+  }
+
   // Ruft das Ergebnis zu einem von Hand eingegebenen queryToken ab - fuer
   // Queries, die bereits im Portal gelaufen sind. Kein Submit, kein Polling.
   async function tokenAbrufen(rohToken) {

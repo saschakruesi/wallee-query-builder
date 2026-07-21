@@ -515,3 +515,33 @@ test('csvZuZeilen zerlegt Quotes, Kommas und CRLF', () => {
   ]);
   assert.deepStrictEqual(plain(x.csvZuZeilen('')), []);
 });
+
+// --- holeErgebnisText (Task 7) ----------------------------------------------
+
+function fetchMitStatus(status, body) {
+  return async () => ({ status, text: async () => body, json: async () => { try { return JSON.parse(body); } catch (e) { return null; } } });
+}
+
+test('holeErgebnisText liefert bei 200 den Text', async () => {
+  const x = loadBuilders({ fetch: fetchMitStatus(200, 'a,b\n1,2') });
+  x.getState().proxyUrl = 'http://localhost:8787';
+  const r = await x.holeErgebnisText('TOK');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.text, 'a,b\n1,2');
+});
+
+test('holeErgebnisText meldet 202 als nicht bereit', async () => {
+  const x = loadBuilders({ fetch: fetchMitStatus(202, '') });
+  x.getState().proxyUrl = 'http://localhost:8787';
+  const r = await x.holeErgebnisText('TOK');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.fehler, /bereit|abgelaufen/i);
+});
+
+test('holeErgebnisText meldet 204 als leer', async () => {
+  const x = loadBuilders({ fetch: fetchMitStatus(204, '') });
+  x.getState().proxyUrl = 'http://localhost:8787';
+  const r = await x.holeErgebnisText('TOK');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.fehler, /keine Zeilen/i);
+});

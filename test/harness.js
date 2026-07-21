@@ -114,6 +114,7 @@ const EXPORTED = [
   'apiPollConfig',
   'leseCredentials',
   'speichereCredentials',
+  'holeErgebnisText',
   // Verlauf (Task 5), reine Funktionen
   'HISTORY_KEY',
   'HISTORY_MAX',
