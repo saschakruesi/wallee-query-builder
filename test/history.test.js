@@ -58,3 +58,15 @@ test('historyLaden vertraegt Private Mode', () => {
   assert.deepStrictEqual(plain(x.historyLaden()), []);
   x.historySpeichern([{ id: 'X', token: 'X', mode: 'brand' }]);   // darf nicht werfen
 });
+
+test('historySpeichern/historyLaden Round-Trip bei funktionierendem Storage', () => {
+  const x = loadBuilders();
+  const liste = [
+    x.historyEintragBauen('brand', 'TOK1', ST, '2026-07-08T10:00:00.000Z'),
+    x.historyEintragBauen('card', 'TOK2', ST, '2026-07-08T11:00:00.000Z'),
+  ];
+  x.historySpeichern(liste);
+  assert.deepStrictEqual(plain(x.historyLaden()), plain(liste));
+  // wurde unter HISTORY_KEY abgelegt
+  assert.ok(x._localStorage.getItem(x.HISTORY_KEY));
+});
