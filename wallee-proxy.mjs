@@ -191,7 +191,13 @@ export function originErlaubt(origin) {
   return ERLAUBTE_ORIGINS.has(origin) || selbstOrigins().has(origin);
 }
 
-export function corsHeader(origin) {
+// privateNetwork: true setzt zusaetzlich Access-Control-Allow-Private-Network.
+// Chrome (Private Network Access) verlangt diesen Header im Preflight, wenn eine
+// Seite aus einem weniger privaten Kontext - insbesondere die per file://
+// geoeffnete App - localhost anspricht. Fehlt er, blockiert Chrome den fetch
+// komplett, noch bevor er beim Proxy ankommt. Nur im Preflight noetig und nur,
+// wenn der Browser ihn ueber Access-Control-Request-Private-Network anfragt.
+export function corsHeader(origin, { privateNetwork = false } = {}) {
   const kopf = {
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': `content-type, ${PROXY_HEADER}`,
@@ -199,6 +205,9 @@ export function corsHeader(origin) {
     Vary: 'Origin',
   };
   if (origin && originErlaubt(origin)) kopf['Access-Control-Allow-Origin'] = origin;
+  if (privateNetwork && origin && originErlaubt(origin)) {
+    kopf['Access-Control-Allow-Private-Network'] = 'true';
+  }
   return kopf;
 }
 
@@ -375,7 +384,9 @@ export async function behandleAnfrage(req, res) {
   }
 
   if (route.name === 'preflight') {
-    res.writeHead(204, corsHeader(origin));
+    // PNA-Header nur spiegeln, wenn der Browser ihn anfragt.
+    const pna = req.headers['access-control-request-private-network'] === 'true';
+    res.writeHead(204, corsHeader(origin, { privateNetwork: pna }));
     res.end();
     return;
   }

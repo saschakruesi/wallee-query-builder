@@ -430,3 +430,26 @@ test('selbstOrigins deckt localhost und 127.0.0.1 am Proxy-Port ab', () => {
   assert.ok(o.has('http://localhost:8787'));
   assert.ok(o.has('http://127.0.0.1:8787'));
 });
+
+// --- Private Network Access (Chrome) --------------------------------------
+// Eine per file:// geoeffnete Seite, die localhost anspricht, loest in Chrome
+// einen PNA-Preflight aus. Antwortet der nicht mit Allow-Private-Network,
+// blockiert Chrome den fetch komplett - die App-Anfrage kommt gar nicht erst
+// beim Proxy an ("nichts passiert").
+
+test('Preflight mit PNA-Anfrage bekommt Allow-Private-Network', () => {
+  const kopf = P.corsHeader('null', { privateNetwork: true });
+  assert.strictEqual(kopf['Access-Control-Allow-Private-Network'], 'true');
+  assert.strictEqual(kopf['Access-Control-Allow-Origin'], 'null');
+});
+
+test('ohne PNA-Anfrage kein Allow-Private-Network (nicht unnoetig setzen)', () => {
+  const kopf = P.corsHeader('null');
+  assert.ok(!('Access-Control-Allow-Private-Network' in kopf));
+});
+
+test('PNA nur fuer erlaubte Herkunft', () => {
+  const kopf = P.corsHeader('https://boese.example', { privateNetwork: true });
+  assert.ok(!('Access-Control-Allow-Private-Network' in kopf),
+    'einer fremden Seite wird auch PNA nicht zugestanden');
+});
