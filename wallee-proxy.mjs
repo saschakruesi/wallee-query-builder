@@ -526,8 +526,11 @@ export function reicheDurch(antwort) {
 function reicheWalleeDurch(res, antwort, origin, kontext) {
   const body = reicheDurch(antwort);
   if (antwort.status >= 400) {
-    const text = (body && body.fehler) || (body && body.rohtext) || '';
-    console.error(`[wallee ${kontext}] Status ${antwort.status}: ${String(text).slice(0, 500)}`);
+    // Den vollen Rohtext der wallee-Antwort loggen, nicht nur die extrahierte
+    // Meldung - so geht bei der Diagnose kein Detail verloren. Der Text ist die
+    // Fehlerbeschreibung von wallee, nie Header/Signatur/Secret.
+    const roh = String(antwort.text || '').slice(0, 800);
+    console.error(`[wallee ${kontext}] Status ${antwort.status}: ${roh}`);
   }
   sendeJson(res, antwort.status, body, origin);
 }
