@@ -2462,7 +2462,10 @@ ORDER BY
   // Als Objekt statt als Konstanten, damit die Tests das Poll-Intervall
   // heruntersetzen koennen, ohne 1.5s je Runde zu warten. Im Browser bleiben
   // die Defaults.
-  const apiPollConfig = { intervallMs: 1500, maxVersuche: 400 };   // ~10 Min
+  // retryStandardSek greift, wenn eine 202-Antwort kein Retry-After mitliefert.
+  // maxVersuche ist ein Backstop gegen Endlospolling (der Endpunkt long-pollt,
+  // jeder Versuch kann bis 97 s blockieren).
+  const apiPollConfig = { maxVersuche: 400, retryStandardSek: 2 };
 
   function zeigeFortschritt(text, art) {
     submitFortschritt.classList.remove('hidden', 'fehler', 'erfolg');
@@ -2517,10 +2520,14 @@ ORDER BY
       }
       apiLauf.token = token;
 
-      // Der Submit kann den Status schon mitliefern; sonst pollen.
-      let status = leseQueryStatus(submit.daten);
+      // Status-Polling nach Doku: der Endpunkt long-pollt und antwortet mit
+      // HTTP 200, sobald der Endzustand erreicht ist (Body traegt dann status:
+      // SUCCESS/FAILED/CANCELLED), oder mit 202, solange er noch laeuft. Bei
+      // 202 wird die im Body mitgelieferte Retry-After-Zeit abgewartet. Der
+      // Submit-Response (201) traegt nur den Token, keinen Status.
+      let status = '';
       let versuche = 0;
-      while (!istEndzustand(status)) {
+      while (true) {
         if (apiLauf.abgebrochen) return;
         if (++versuche > apiPollConfig.maxVersuche) {
           zeigeFortschritt('Zeitüberschreitung – die Query läuft noch. '
@@ -2528,19 +2535,23 @@ ORDER BY
             + token, 'fehler');
           return;
         }
-        zeigeFortschritt(`Query läuft … (${status || 'PROCESSING'})`);
-        await warte(apiPollConfig.intervallMs);
-        if (apiLauf.abgebrochen) return;
         const s = await proxyJson('/status/' + encodeURIComponent(token), 'GET');
         if (s.status >= 400) {
           zeigeFortschritt(fehlerText(s, 'Der Status konnte nicht abgefragt werden.'), 'fehler');
           return;
         }
-        status = leseQueryStatus(s.daten);
+        if (s.status === 200) {                 // Endzustand erreicht
+          status = leseQueryStatus(s.daten);
+          break;
+        }
+        // 202: laeuft noch. Retry-After (Sekunden) aus dem Body, mit Puffer.
+        zeigeFortschritt(`Query läuft … (${leseQueryStatus(s.daten) || 'PROCESSING'})`);
+        const sekunden = (s.daten && Number(s.daten.retryAfter)) || apiPollConfig.retryStandardSek;
+        await warte(sekunden * 1000);
       }
 
       if (!istErfolg(status)) {
-        zeigeFortschritt(`Die Query wurde mit Status ${status} beendet.`, 'fehler');
+        zeigeFortschritt(`Die Query wurde mit Status ${status || 'unbekannt'} beendet.`, 'fehler');
         return;
       }
 

@@ -620,3 +620,50 @@ test('result: unerwartete Antwort statt URL ergibt 502, kein Download', async ()
   assert.strictEqual(rufe.length, 1, 'ohne gueltige URL kein Download');
   assert.strictEqual(res._status, 502);
 });
+
+// --- Status-Polling: 202 + Retry-After ------------------------------------
+// Der Status-Endpunkt long-pollt: 200 = fertig, 202 = laeuft noch (mit
+// Retry-After). Der Proxy erhaelt den HTTP-Code und reicht Retry-After im Body
+// weiter, weil der Browser den Header wegen CORS nicht lesen koennte.
+
+test('leseRetryAfter: Header wird gelesen, sonst Standard', () => {
+  assert.strictEqual(P.leseRetryAfter(new Map([['retry-after', '5']])), 5);
+  assert.strictEqual(P.leseRetryAfter(new Map()), 2, 'Standard bei fehlendem Header');
+  assert.strictEqual(P.leseRetryAfter(new Map([['retry-after', 'abc']])), 2);
+  assert.strictEqual(P.leseRetryAfter(new Map([['retry-after', '999']])), 97, 'auf Long-Poll-Timeout gedeckelt');
+});
+
+async function statusLauf({ status, body, retryAfterHeader }) {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    status,
+    ok: status < 400,
+    text: async () => (body !== undefined ? body : '{}'),
+    headers: new Map(retryAfterHeader ? [['retry-after', retryAfterHeader]] : []),
+  });
+  const pfad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-proxy-')), 'config.json');
+  await P.speichereZugangsdaten(
+    { userId: '12345', secret: 'c2VjcmV0LXdlcnQtZnVlci1kZW4tdGVzdC1sYW5n', accountId: '1' }, pfad);
+  const { req, res } = fakeReqRes({ method: 'GET', url: '/status/tok-1', origin: 'null' });
+  try {
+    await P.behandleAnfrage(req, res);
+    await warteAufAntwort(res);
+  } finally {
+    globalThis.fetch = original;
+  }
+  return res;
+}
+
+test('status 202: HTTP-Code bleibt 202, Retry-After landet im Body', async () => {
+  const res = await statusLauf({ status: 202, body: '{"status":"PROCESSING"}', retryAfterHeader: '5' });
+  assert.strictEqual(res._status, 202);
+  const body = JSON.parse(res._body);
+  assert.strictEqual(body.retryAfter, 5);
+  assert.strictEqual(body.status, 'PROCESSING');
+});
+
+test('status 200: Endzustand wird unveraendert durchgereicht', async () => {
+  const res = await statusLauf({ status: 200, body: '{"status":"SUCCESS","portalQueryToken":"tok-1"}' });
+  assert.strictEqual(res._status, 200);
+  assert.strictEqual(JSON.parse(res._body).status, 'SUCCESS');
+});

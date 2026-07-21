@@ -219,6 +219,11 @@ function textAntwort(status, text) {
 //  - POST /submit  -> { portalQueryToken, status: submitStatus }
 //  - GET  /status  -> naechster Wert aus statusFolge
 //  - GET  /result  -> die Fixture-CSV
+// Der Status-Endpunkt long-pollt: solange die Query laeuft, antwortet er mit
+// HTTP 202 (und Retry-After), erst der Endzustand kommt als HTTP 200. Die
+// statusFolge listet die noch nicht finalen Zustaende (jeweils 202); der letzte
+// Eintrag ist der Endzustand und wird als 200 geliefert. Standard:
+// ['PROCESSING', 'SUCCESS'] -> ein 202 (PROCESSING), dann 200 (SUCCESS).
 function apiRouter(opt) {
   const folge = (opt.statusFolge || ['PROCESSING', 'SUCCESS']).slice();
   return async (url, o) => {
@@ -226,12 +231,18 @@ function apiRouter(opt) {
     const m = (o && o.method) || 'GET';
     if (u.endsWith('/health')) return jsonAntwort(200, { ok: true, zugangsdaten: true });
     if (u.endsWith('/submit') && m === 'POST') {
-      return jsonAntwort(opt.submitStatus || 200,
-        { portalQueryToken: 'tok-xyz', status: opt.submitStatusWert || 'PROCESSING' });
+      // Submit-Response (201) traegt nur den Token, keinen Status.
+      return jsonAntwort(opt.submitStatus || 201, { queryToken: 'tok-xyz' });
     }
     if (u.includes('/status/')) {
-      const naechster = folge.length > 1 ? folge.shift() : folge[0];
-      return jsonAntwort(200, { status: naechster });
+      // opt.nieFertig: bleibt dauerhaft bei 202 (fuer den Abbruch-Test).
+      if (opt.nieFertig) return jsonAntwort(202, { status: 'PROCESSING', retryAfter: 0 });
+      // Alle Eintraege ausser dem letzten werden als 202 geliefert, der letzte
+      // (Endzustand) als 200. Der letzte Eintrag bleibt stehen, damit ein
+      // zusaetzlicher Poll ihn erneut als 200 bekommt.
+      const wert = folge.length > 1 ? folge.shift() : folge[0];
+      const istFinal = folge.length === 1 && wert === folge[0];
+      return jsonAntwort(istFinal ? 200 : 202, { status: wert, retryAfter: 0 });
     }
     if (u.includes('/result/')) return textAntwort(200, opt.csv || CSV);
     if (u.includes('/query/') && m === 'DELETE') return jsonAntwort(200, { ok: true });
@@ -241,8 +252,8 @@ function apiRouter(opt) {
 
 async function starteApiModus(router, seed) {
   const ctx = starteMitFetch(router, seed || { wallee_query_builder_v5: JSON.stringify({ apiMode: true, mode: 'brand' }) });
-  // Poll-Intervall herabsetzen, sonst wartet jede Runde 1.5s.
-  ctx.app.apiPollConfig.intervallMs = 5;
+  // Retry-Standardwert herabsetzen, sonst wartet jede 202-Runde 2s.
+  ctx.app.apiPollConfig.retryStandardSek = 0.005;
   await ruhe();  // Health-Check beim Start abwarten
   return ctx;
 }
@@ -339,8 +350,8 @@ test('Result wird erst bei SUCCESS abgerufen (jeder Abruf zaehlt als Download)',
 
 test('Abbrechen stoppt den Lauf und meldet es dem Proxy', async () => {
   let deleteGerufen = false;
-  // Status bleibt auf PROCESSING, damit wir mitten im Poll abbrechen koennen.
-  const router = apiRouter({ statusFolge: ['PROCESSING'] });
+  // Status bleibt dauerhaft bei 202, damit wir mitten im Poll abbrechen koennen.
+  const router = apiRouter({ nieFertig: true });
   const { el } = await starteApiModus(async (url, o) => {
     if (String(url).includes('/query/') && o.method === 'DELETE') deleteGerufen = true;
     return router(url, o);
@@ -355,4 +366,40 @@ test('Abbrechen stoppt den Lauf und meldet es dem Proxy', async () => {
   assert.ok(deleteGerufen, 'Abbrechen muss dem Proxy per DELETE Bescheid geben');
   assert.match(el('submitFortschrittText').textContent, /Abgebrochen/);
   assert.strictEqual(el('reportOutput').children.length, 0, 'kein Report nach Abbruch');
+});
+
+test('Polling nach Doku: 201-Token ohne Status, Ende ueber HTTP 200', async () => {
+  // Der Submit (201) liefert nur den Token, keinen Status. Die App darf daraus
+  // nicht faelschlich "fertig" ableiten, sondern muss pollen, bis der Status-
+  // Endpunkt HTTP 200 gibt. Mehrere 202-Runden davor.
+  let submitAntwortHatteStatus = false;
+  const router = apiRouter({ statusFolge: ['PROCESSING', 'PROCESSING', 'SUCCESS'] });
+  const { el } = await starteApiModus(async (url, o) => {
+    const r = await router(url, o);
+    if (String(url).endsWith('/submit')) {
+      const daten = await r.json();
+      submitAntwortHatteStatus = 'status' in daten;
+    }
+    return router(url, o);
+  });
+  el('sqlOutput').textContent = 'SELECT 1';
+
+  el('submitBtn').dispatch('click');
+  await new Promise(r => setTimeout(r, 120));
+
+  assert.strictEqual(submitAntwortHatteStatus, false, 'Submit-Response traegt keinen Status');
+  assert.match(el('submitFortschrittText').textContent, /Report erstellt/i);
+  assert.ok(el('reportOutput').textContent.includes('62’756.16'));
+});
+
+test('202 mit retryAfter blockiert nicht und fuehrt schliesslich zum Report', async () => {
+  const router = apiRouter({ statusFolge: ['PROCESSING', 'SUCCESS'] });
+  const { el, app } = await starteApiModus(router);
+  app.apiPollConfig.retryStandardSek = 0.005;   // falls kein retryAfter kaeme
+  el('sqlOutput').textContent = 'SELECT 1';
+
+  el('submitBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /Report erstellt/i);
 });

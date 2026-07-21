@@ -276,6 +276,19 @@ async function rufeApi(methode, pfad, koerper, optionen = {}) {
   return { status: antwort.status, text, headers: antwort.headers };
 }
 
+// Liest den Retry-After-Header (in Sekunden) aus einer wallee-Antwort. Der
+// Status-Endpunkt liefert ihn bei 202 (noch in Bearbeitung). Faellt auf einen
+// Standardwert zurueck, falls der Header fehlt oder unbrauchbar ist.
+export function leseRetryAfter(headers, standard = 2) {
+  try {
+    const wert = headers && typeof headers.get === 'function' ? headers.get('retry-after') : null;
+    const n = parseInt(String(wert), 10);
+    return Number.isFinite(n) && n > 0 ? Math.min(n, 97) : standard;
+  } catch (e) {
+    return standard;
+  }
+}
+
 // --- HTTP-Hilfen -----------------------------------------------------------
 
 function sendeJson(res, status, objekt, origin) {
@@ -465,7 +478,19 @@ export async function behandleAnfrage(req, res) {
       }
 
       case 'status': {
+        // Long-Polling laut Doku: 200 = Endzustand erreicht (Body traegt
+        // status: SUCCESS/FAILED/CANCELLED), 202 = laeuft noch, mit Retry-After.
+        // Die App entscheidet ueber den HTTP-Code, deshalb bleibt er erhalten.
         const antwort = await rufeApi('GET', API_PFADE.status(route.token));
+        if (antwort.status === 202) {
+          // Retry-After steht im Header; der Browser koennte ihn wegen CORS
+          // nicht lesen, also ins JSON-Body legen.
+          const roh = reicheDurch(antwort);
+          const body = roh && typeof roh === 'object' ? roh : {};
+          body.retryAfter = leseRetryAfter(antwort.headers);
+          sendeJson(res, 202, body, origin);
+          return;
+        }
         reicheWalleeDurch(res, antwort, origin, 'status');
         return;
       }
