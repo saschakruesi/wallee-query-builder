@@ -85,6 +85,31 @@ export async function speichereZugangsdaten(werte, pfad = CONFIG_PATH) {
   return { ok: true, fehler: [] };
 }
 
+// Fuer die Anzeige im App-Dialog: userId/accountId sind keine Geheimnisse und
+// duerfen zurueck; das Secret NIE - nur, ob eines hinterlegt ist.
+export function credentialsAnzeige(zugangsdaten) {
+  const z = zugangsdaten || {};
+  return {
+    userId: String(z.userId || ''),
+    accountId: String(z.accountId || ''),
+    hasSecret: !!(z.secret && String(z.secret).trim()),
+  };
+}
+
+// Beim Speichern aus dem Dialog: ein leeres Secret bedeutet "unveraendert
+// lassen". So kann der Nutzer userId/accountId aendern, ohne das Secret erneut
+// eintippen zu muessen (er sieht es ohnehin nie).
+export function mischeZugangsdaten(alt, neu) {
+  const a = alt || {};
+  const n = neu || {};
+  const secretNeu = String(n.secret || '').trim();
+  return {
+    userId: String(n.userId || a.userId || '').trim(),
+    accountId: String(n.accountId || a.accountId || '').trim(),
+    secret: secretNeu || String(a.secret || ''),
+  };
+}
+
 export function pruefeZugangsdaten(werte) {
   const fehler = [];
   const w = werte || {};

@@ -667,3 +667,26 @@ test('status 200: Endzustand wird unveraendert durchgereicht', async () => {
   assert.strictEqual(res._status, 200);
   assert.strictEqual(JSON.parse(res._body).status, 'SUCCESS');
 });
+
+// --- Anzeige und Aenderung von Zugangsdaten --------------------------------
+
+test('credentialsAnzeige gibt das Secret nie preis', () => {
+  const z = { userId: '42', secret: 'AAAAAAAAAAAAAAAA', accountId: '99' };
+  assert.deepStrictEqual(P.credentialsAnzeige(z), { userId: '42', accountId: '99', hasSecret: true });
+});
+
+test('credentialsAnzeige vertraegt null', () => {
+  assert.deepStrictEqual(P.credentialsAnzeige(null), { userId: '', accountId: '', hasSecret: false });
+});
+
+test('mischeZugangsdaten behaelt altes Secret bei leerer Eingabe', () => {
+  const alt = { userId: '1', secret: 'OLDSECRETOLDSECRET', accountId: '2' };
+  const neu = { userId: '1', secret: '   ', accountId: '2' };
+  assert.strictEqual(P.mischeZugangsdaten(alt, neu).secret, 'OLDSECRETOLDSECRET');
+});
+
+test('mischeZugangsdaten uebernimmt neues Secret bei Eingabe', () => {
+  const alt = { userId: '1', secret: 'OLDSECRETOLDSECRET', accountId: '2' };
+  const neu = { userId: '1', secret: 'NEWSECRETNEWSECRET', accountId: '2' };
+  assert.strictEqual(P.mischeZugangsdaten(alt, neu).secret, 'NEWSECRETNEWSECRET');
+});
