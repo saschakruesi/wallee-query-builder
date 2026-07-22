@@ -18,8 +18,11 @@ die Zugangsdaten lassen sich direkt im Einstellungs-Dialog pflegen.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
-| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`. Start: `node wallee-proxy.mjs`. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.2).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
+| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
+| `build/` | Build des Standalone-Binaries (Node SEA): `entry.mjs`, `sea-config.json`, `build.mjs`. Lokal: `node build/build.mjs` → `dist/wallee-query-builder(.exe)`. Siehe „Standalone-Binary". |
+| `.github/workflows/release.yml` | CI: baut die Binaries auf Mac-/Windows-Runnern und hängt sie bei `v*`-Tags an ein Release. |
+| `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Binary (inkl. unsignierter Erststart-Workaround). |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
 | `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
@@ -288,9 +291,47 @@ Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum
 ## Proxy (`wallee-proxy.mjs`, v4, `/credentials` seit v5)
 
 Einzelnes Node-Script, nur Builtins (`http`, `crypto`, `fs`), **kein npm install**. Start
-`node wallee-proxy.mjs`, Port über `WALLEE_PROXY_PORT`. Endpunkte: `/health`, `GET`+`POST`
-`/setup`, `GET`+`POST /credentials`, `POST /submit`, `GET /status/:token`,
-`GET /result/:token`, `DELETE /query/:token`.
+`node wallee-proxy.mjs`, Port über `WALLEE_PROXY_PORT`. Endpunkte: `GET /` (+ `/app`,
+`/index.html`) liefert die **App-HTML selbst** (Standalone-/Serve-Betrieb, siehe unten),
+`/health`, `GET`+`POST /setup`, `GET`+`POST /credentials`, `POST /submit`,
+`GET /status/:token`, `GET /result/:token`, `DELETE /query/:token`.
+
+### Standalone-Binary (seit v5.2, kein Node-Server manuell)
+
+Damit technisch nicht versierte Nutzer nichts installieren und kein Terminal öffnen müssen,
+lässt sich der Proxy zu **einem Doppelklick-Programm pro OS** bündeln (macOS/Windows). Der
+Server **serviert dann die App gleich selbst** unter `http://127.0.0.1:8787` und **öffnet den
+Browser automatisch** — die App läuft damit **same-origin** mit dem Proxy, wodurch die ganze
+CORS/PNA-Logik gegenstandslos wird (`originErlaubt`/`selbstOrigins` lassen die localhost-Origins
+ohnehin schon zu; same-origin-Requests brauchen keinen Preflight). Sicherheitsmodell unverändert:
+Bind nur `127.0.0.1`, Secret lokal in `~/.wallee-proxy.json`, JWT lokal signiert.
+
+- **Serve-Verhalten:** `GET /` liefert die HTML — im gebauten Binary aus dem eingebetteten
+  **SEA-Asset** (`node:sea`, `getAsset('app.html')`), im Dev-Betrieb (`node wallee-proxy.mjs`)
+  aus der Datei daneben (`ladeAppHtml()`, gecacht). `browserOeffnenBefehl(platform)` (reine,
+  getestete Funktion) wählt `open`/`start`/`xdg-open`; `oeffneBrowser()` öffnet nur, wenn als
+  Binary gestartet (`node:sea` `isSea()`) **oder** `WALLEE_OPEN=1`. `GET /` und `/setup` sind
+  von der `X-Wallee-Proxy`-Header-Pflicht ausgenommen (Browser-Navigation, kein fetch).
+- **App-Seite:** beim Laden über `http(s)://` nimmt die App `window.location.origin` als
+  `proxyUrl` und schaltet den API-Modus vorsorglich ein (Init-Block); beim `file://`-Doppelklick
+  bleibt der Default `http://localhost:8787`. Der `file://`-Betrieb + separat gestarteter Proxy
+  bleibt voll lauffähig (Rückwärtskompatibilität).
+- **Bauen (`build/`):** `entry.mjs` (ruft `starteServer()`), `sea-config.json` (Asset
+  `app.html` = die HTML), `build.mjs` (Node-Script): esbuild bündelt zu `dist/server.cjs` →
+  `--experimental-sea-config` erzeugt den Blob → Node-Binary kopieren → **macOS:** `lipo -thin`
+  (Universal-Binaries haben den SEA-Sentinel doppelt, `postject` bricht sonst ab),
+  `codesign --remove-signature`, `postject` (`--macho-segment-name NODE_SEA`),
+  `codesign --sign -` (ad-hoc). esbuild/postject nur zur Build-Zeit (via npx); das Binary hat
+  **keine** Runtime-Dependency. `dist/` ist gitignored (~117 MB Binary). Lokal:
+  `node build/build.mjs`.
+- **Release:** `.github/workflows/release.yml` baut auf `macos-latest` + `windows-latest`
+  native Binaries und hängt sie bei einem `v*`-Tag an ein GitHub-Release. Nicht-Techniker laden
+  von der Releases-Seite; **unsigniert** → Erststart-Workaround in `PAKET-ANLEITUNG.md`
+  (macOS Rechtsklick→Öffnen; Windows „Weitere Infos→Trotzdem ausführen").
+- **Fallstrick:** Im SEA-Binary ist `import.meta.url` **undefined** → `createRequire()` bekommt
+  einen Fallback-Basispfad (`import.meta.url || 'file:///…'`); für Builtins irrelevant, muss aber
+  gültig sein. Der Auto-Start in `wallee-proxy.mjs` ist im Binary unterdrückt
+  (`laeuftAlsBinary()`), den Start übernimmt `entry.mjs`.
 
 - **Warum überhaupt:** Browser dürfen `app-wallee.com` nicht direkt rufen (CORS), und die
   JWT-Signatur bräuchte sonst das Secret im Browser. Der Proxy signiert lokal; das Secret

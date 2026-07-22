@@ -27,6 +27,19 @@ test('Routing: alle Endpunkte werden erkannt', () => {
   assert.strictEqual(P.findeRoute('OPTIONS', '/submit').name, 'preflight');
 });
 
+test('Routing: die App-Seite wird unter / und /app ausgeliefert', () => {
+  assert.strictEqual(P.findeRoute('GET', '/').name, 'app-seite');
+  assert.strictEqual(P.findeRoute('GET', '/app').name, 'app-seite');
+  assert.strictEqual(P.findeRoute('GET', '/index.html').name, 'app-seite');
+});
+
+test('browserOeffnenBefehl waehlt das OS-Kommando', () => {
+  assert.strictEqual(P.browserOeffnenBefehl('darwin'), 'open');
+  assert.strictEqual(P.browserOeffnenBefehl('win32'), 'start');
+  assert.strictEqual(P.browserOeffnenBefehl('linux'), 'xdg-open');
+  assert.strictEqual(P.browserOeffnenBefehl('freebsd'), 'xdg-open');
+});
+
 test('Routing: Token wird aus dem Pfad gelesen', () => {
   const status = P.findeRoute('GET', '/status/abc-123');
   assert.strictEqual(status.name, 'status');

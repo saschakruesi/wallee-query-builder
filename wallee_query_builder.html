@@ -667,7 +667,7 @@
 <body>
 <div class="container">
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.1</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.2</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -3984,6 +3984,20 @@ ORDER BY
 
   // --- Init ----------------------------------------------------------------
   loadState();
+  // Wird die App vom Proxy selbst ausgeliefert (Standalone-Binary, http(s)://),
+  // dann ist der Proxy genau die eigene Herkunft - same-origin, kein manuelles
+  // Eintippen der Adresse noetig. Beim file://-Doppelklick bleibt der Default.
+  {
+    const loc = (typeof window !== 'undefined' && window.location) ? window.location : null;
+    if (loc && /^https?:$/.test(loc.protocol)
+        && (!state.proxyUrl || state.proxyUrl === 'http://localhost:8787')) {
+      state.proxyUrl = loc.origin;
+      // API-Modus liegt bei einem servierten Standalone-Binary nahe: der Proxy
+      // laeuft ja gerade. Ohne den Schalter waere der Verlauf/Download unsichtbar.
+      if (!state.apiMode) { state.apiMode = true; state.sqlSichtbar = false; }
+      saveState();
+    }
+  }
   applyStateToInputs();
   renderSpaces();
   renderTerminals();

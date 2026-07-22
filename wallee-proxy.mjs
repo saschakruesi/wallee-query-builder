@@ -22,6 +22,14 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// createRequire, um im ESM-Quelltext die eingebauten Module node:sea und
+// node:child_process lazy zu laden - beide werden nur im Serve-/Binary-Betrieb
+// gebraucht, nicht von den (importierten) reinen Funktionen.
+// Im gebauten SEA-Binary ist import.meta.url undefined; der Fallback-Basispfad
+// ist fuer das Aufloesen von Builtins ohnehin egal, muss aber gueltig sein.
+const require = createRequire(import.meta.url || 'file:///wallee-proxy.mjs');
 
 // --- Konfiguration ---------------------------------------------------------
 
@@ -214,6 +222,14 @@ export function selbstOrigins(host = HOST, port = PORT) {
   return origins;
 }
 
+// Kommando, um den Default-Browser zu oeffnen - je Plattform. Rein, damit die
+// Auswahl ohne echten Prozess getestet werden kann.
+export function browserOeffnenBefehl(platform) {
+  if (platform === 'darwin') return 'open';
+  if (platform === 'win32') return 'start';
+  return 'xdg-open';
+}
+
 export function originErlaubt(origin) {
   if (origin === undefined || origin === null || origin === '') return true;  // kein Browser
   return ERLAUBTE_ORIGINS.has(origin) || selbstOrigins().has(origin);
@@ -246,6 +262,9 @@ export function findeRoute(methode, pfad) {
   const p = String(pfad || '').split('?')[0].replace(/\/+$/, '') || '/';
 
   if (m === 'OPTIONS') return { name: 'preflight' };
+  // Die App selbst ausliefern (Standalone-Binary bzw. Serve-Betrieb). Damit laeuft
+  // die Seite same-origin mit dem Proxy - kein CORS/PNA noetig.
+  if (m === 'GET' && (p === '/' || p === '/app' || p === '/index.html')) return { name: 'app-seite' };
   if (m === 'GET' && p === '/health') return { name: 'health' };
   if (m === 'GET' && p === '/setup') return { name: 'setup-seite' };
   if (m === 'POST' && p === '/setup') return { name: 'setup-speichern' };
@@ -444,7 +463,9 @@ export async function behandleAnfrage(req, res) {
 
   // Die Setup-Seite wird direkt im Browser aufgerufen (kein fetch), deshalb
   // ohne den Zusatz-Header. Alles andere ist eine API und verlangt ihn.
-  const brauchtHeader = !['setup-seite', 'setup-speichern', 'health'].includes(route.name);
+  // Die App-Seite und die Setup-Seite werden direkt im Browser aufgerufen (kein
+  // fetch), deshalb ohne den Zusatz-Header. Alles andere ist eine API.
+  const brauchtHeader = !['app-seite', 'setup-seite', 'setup-speichern', 'health'].includes(route.name);
   if (brauchtHeader && req.headers[PROXY_HEADER] === undefined) {
     sendeJson(res, 403, {
       ok: false,
@@ -455,6 +476,10 @@ export async function behandleAnfrage(req, res) {
 
   try {
     switch (route.name) {
+      case 'app-seite':
+        sendeText(res, 200, ladeAppHtml(), 'text/html; charset=utf-8', origin);
+        return;
+
       case 'health':
         sendeJson(res, 200, {
           ok: true,
@@ -691,20 +716,66 @@ function reicheWalleeDurch(res, antwort, origin, kontext) {
 
 // --- Start -----------------------------------------------------------------
 
+// Die App-HTML fuer die /-Route. Im gebauten Binary aus dem eingebetteten
+// SEA-Asset ("app.html"), sonst - im Dev-Betrieb per `node wallee-proxy.mjs` -
+// aus der Datei neben diesem Script. Einmal gelesen und gecacht.
+let appHtmlCache = null;
+function ladeAppHtml() {
+  if (appHtmlCache !== null) return appHtmlCache;
+  try {
+    const sea = require('node:sea');
+    if (sea.isSea && sea.isSea()) {
+      appHtmlCache = sea.getAsset('app.html', 'utf8');
+      return appHtmlCache;
+    }
+  } catch (e) { /* node:sea nicht verfuegbar -> Datei-Fallback */ }
+  const datei = path.join(path.dirname(fileURLToPath(import.meta.url)), 'wallee_query_builder.html');
+  appHtmlCache = fs.readFileSync(datei, 'utf8');
+  return appHtmlCache;
+}
+
+// Laeuft der Proxy als gebautes Binary (SEA), soll er sich wie eine App
+// verhalten und den Browser selbst oeffnen. Beim CLI-Start nur auf Wunsch
+// (WALLEE_OPEN=1), damit `node wallee-proxy.mjs` nicht ungefragt ein Fenster
+// aufreisst.
+function sollBrowserOeffnen() {
+  try { if (require('node:sea').isSea()) return true; } catch (e) {}
+  return process.env.WALLEE_OPEN === '1';
+}
+
+function oeffneBrowser(url) {
+  try {
+    const { spawn } = require('node:child_process');
+    if (process.platform === 'win32') {
+      // Der leere erste Parameter ist der Fenstertitel, den `start` sonst aus der URL zieht.
+      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
+    } else {
+      spawn(browserOeffnenBefehl(process.platform), [url], { detached: true, stdio: 'ignore' }).unref();
+    }
+  } catch (e) { /* Browser laesst sich nicht oeffnen - Nutzer oeffnet die URL selbst */ }
+}
+
 export function starteServer({ port = PORT, host = HOST } = {}) {
   zugangsdaten = ladeZugangsdaten();
   const server = http.createServer((req, res) => { behandleAnfrage(req, res); });
   server.listen(port, host, () => {
-    console.log(`wallee-Proxy laeuft auf http://${host}:${port}`);
+    const url = `http://${host}:${port}`;
+    console.log(`wallee Query Builder laeuft auf ${url}`);
     console.log(zugangsdaten
       ? 'Zugangsdaten sind hinterlegt.'
-      : `Noch keine Zugangsdaten. Bitte http://${host}:${port}/setup oeffnen.`);
+      : `Noch keine Zugangsdaten. Im Browser unter ${url} das Zahnrad oeffnen und eintragen.`);
+    if (sollBrowserOeffnen()) oeffneBrowser(url);
   });
   return server;
 }
 
 // Nur starten, wenn die Datei direkt aufgerufen wird - beim Import aus den
-// Tests soll kein Server hochkommen.
-const direktAufgerufen = process.argv[1]
+// Tests soll kein Server hochkommen. Im gebauten Binary (SEA) uebernimmt der
+// Build-Entry den Start (build/entry.mjs), deshalb hier nicht zusaetzlich.
+function laeuftAlsBinary() {
+  try { return require('node:sea').isSea(); } catch (e) { return false; }
+}
+const direktAufgerufen = !laeuftAlsBinary()
+  && process.argv[1]
   && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (direktAufgerufen) starteServer();
