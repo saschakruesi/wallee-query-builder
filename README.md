@@ -13,15 +13,61 @@ Zwei Betriebsmodi:
   per Klick abrufbar) und, im Modus Terminal-Report, zusätzlich sofort in der
   Gruppen-Auswertung.
 
-## Nutzung
+## Nutzung — drei Wege
 
-1. `wallee_query_builder.html` herunterladen und im Browser öffnen.
-2. Space-ID(s) und Zeitraum eintragen.
-3. Modus wählen, SQL kopieren, im Portal ausführen — oder im API-Modus direkt absetzen.
+Je nach technischem Komfort:
 
-Die Auswahl wird im `localStorage` des Browsers gespeichert — es verlässt
-nichts das eigene Gerät. Zugangsdaten für den API-Modus liegen ausschliesslich beim Proxy,
-nie im Browser.
+### 1. Ohne alles: Kopieren-Modus
+
+Nichts zu installieren. `wallee_query_builder.html` per **Doppelklick** im Browser öffnen,
+Space-ID(s) und Zeitraum eintragen, Modus wählen, **SQL kopieren** und im wallee-Portal unter
+*Account > Analytics > Submit Query* ausführen — das Ergebnis kommt dort als CSV. (Kein
+Ergebnis-Download in der App und kein Verlauf, dafür wirklich null Setup.)
+
+### 2. One-Click: Query direkt aus der App (API-Modus)
+
+Query direkt absetzen, Ergebnis als **CSV/Excel** herunterladen, mit **Abfrage-Verlauf**.
+Dafür läuft im Hintergrund ein kleiner lokaler Server — gestartet per **Doppelklick**, kein
+Terminal-Befehl nötig. Einmalige Voraussetzung: **Node.js**.
+
+**Schritt 1 — Node.js installieren (nur beim ersten Mal):**
+
+- **Windows:** auf <https://nodejs.org> die **LTS**-Version laden, Installer ausführen
+  (Weiter → Weiter → Fertig, keine besonderen Einstellungen).
+- **macOS:** auf <https://nodejs.org> die **LTS**-Version (`.pkg`) laden und installieren.
+  (Wer Homebrew nutzt: `brew install node`.)
+
+**Schritt 2 — Starten (Doppelklick):**
+
+- **Windows:** Doppelklick auf **`Start-Windows.bat`**.
+  Beim allerersten Mal ggf. *„Der Computer wurde durch Windows geschützt"* → **„Weitere
+  Informationen" → „Trotzdem ausführen"**.
+- **macOS:** Doppelklick auf **`Start-macOS.command`**.
+  Beim allerersten Mal blockt macOS die Datei evtl. → **Rechtsklick → „Öffnen" → nochmals
+  „Öffnen"** (danach reicht der Doppelklick).
+
+Der Browser öffnet sich automatisch mit dem Query Builder. Oben rechts im **Zahnrad** einmalig
+die Zugangsdaten eintragen (siehe [API-Modus](#api-modus-und-lokaler-proxy)). Das
+Starter-Fenster offen lassen, solange gearbeitet wird; schliessen beendet den Server.
+Ausführliche Schritt-für-Schritt-Anleitung für Endnutzer: [PAKET-ANLEITUNG.md](PAKET-ANLEITUNG.md).
+
+### 3. Fortgeschritten: Proxy von Hand starten
+
+Wer sich auskennt, startet den Server direkt:
+
+```bash
+node wallee-proxy.mjs                 # Server auf http://127.0.0.1:8787
+WALLEE_OPEN=1 node wallee-proxy.mjs   # … und öffnet zusätzlich den Browser
+```
+
+Danach `http://127.0.0.1:8787` im Browser öffnen — der Server **liefert die App selbst aus**
+(same-origin, kein CORS) — oder alternativ `wallee_query_builder.html` per `file://` öffnen und
+im Zahnrad die Proxy-Adresse eintragen. `WALLEE_PROXY_PORT` ändert den Port.
+
+---
+
+Die Auswahl wird im `localStorage` des Browsers gespeichert — es verlässt nichts das eigene
+Gerät. Zugangsdaten für den API-Modus liegen ausschliesslich beim Proxy, nie im Browser.
 
 ## Modi
 
@@ -66,7 +112,9 @@ Terminal-Report dieses Generators) und `unmatched_anzahl`.
 ## API-Modus und lokaler Proxy
 
 Statt SQL zu kopieren, setzt der API-Modus die Query direkt ab. Er läuft über
-`wallee-proxy.mjs` — ein einzelnes Node-Script ohne Dependencies:
+`wallee-proxy.mjs` — ein einzelnes Node-Script ohne Dependencies. Am einfachsten per
+**Doppelklick-Starter** (`Start-macOS.command` / `Start-Windows.bat`, siehe [Nutzung](#nutzung--drei-wege));
+von Hand:
 
 ```bash
 node wallee-proxy.mjs
@@ -93,9 +141,10 @@ Payment-Secret verlässt den Rechner nie.
    sich unter „Vorhandenen queryToken abrufen" das Ergebnis einer bereits im Portal
    gelaufenen Query holen.
 
-Der Proxy bindet nur an `127.0.0.1`, lässt nur die eigene (per `file://` geöffnete) App als
-Herkunft zu und verlangt einen eigenen Header — eine fremde Webseite kann ihn nicht
-ansprechen. Details zum API-Ablauf in [CLAUDE.md](CLAUDE.md).
+Der Proxy bindet nur an `127.0.0.1`, lässt als Herkunft nur die eigene App zu (per `file://`
+geöffnet **oder** same-origin vom Proxy unter `http://127.0.0.1:8787` ausgeliefert) und
+verlangt einen eigenen Header — eine fremde Webseite kann ihn nicht ansprechen. Details zum
+API-Ablauf in [CLAUDE.md](CLAUDE.md).
 
 `unsettled_anzahl` zählt Transaktionen ohne Gebühr (`totalappliedfees` NULL/0) **und** ohne
 bestehenden Settlement-Record — also solche, die noch auf die Abrechnung warten. An
