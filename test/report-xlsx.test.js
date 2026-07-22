@@ -112,32 +112,34 @@ test('XLSX: Gesamttotal steht mit den richtigen Zahlen drin', async () => {
   const { wb } = await exportiereUndLies();
   const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Gesamttotal'], { header: 1 });
 
-  assert.deepStrictEqual(plain(zeilen[0]), ['', 'Complete Demand', 'Tip', 'Unmatched', 'Anz.']);
-  assert.deepStrictEqual(plain(zeilen[1]), ['Total', 62756.16, 793.46, 889, 2070]);
+  // Zwei Titelzeilen (wallee — Terminal-Report + Untertitel) stehen ueber dem Spaltenkopf.
+  assert.deepStrictEqual(plain(zeilen[2]), ['', 'Complete Demand', 'Tip', 'Unmatched', 'Anz.']);
+  assert.deepStrictEqual(plain(zeilen[3]), ['Total', 62756.16, 793.46, 889, 2070]);
 });
 
 test('XLSX: Betraege sind Zahlen, keine Texte', async () => {
   const { wb } = await exportiereUndLies();
   const ws = wb.Sheets['Gesamttotal'];
 
-  // B2 = Complete Demand des Gesamttotals
-  assert.strictEqual(ws['B2'].t, 'n', 'Betrag muss als Zahl gespeichert sein, sonst kann Excel nicht rechnen');
-  assert.strictEqual(ws['B2'].v, 62756.16);
+  // B4 = Complete Demand des Gesamttotals (zwei Titelzeilen + Spaltenkopf davor)
+  assert.strictEqual(ws['B4'].t, 'n', 'Betrag muss als Zahl gespeichert sein, sonst kann Excel nicht rechnen');
+  assert.strictEqual(ws['B4'].v, 62756.16);
 });
 
 test('XLSX: Betragsspalten tragen das Schweizer Zahlformat', async () => {
   const { wb } = await exportiereUndLies();
   const ws = wb.Sheets['Gesamttotal'];
 
-  assert.strictEqual(ws['B2'].z, '#,##0.00', 'Betrag ohne Zahlformat');
-  assert.strictEqual(ws['D2'].z, '#,##0', 'Zaehler ohne Zahlformat');
+  assert.strictEqual(ws['B4'].z, '#,##0.00', 'Betrag ohne Zahlformat');
+  assert.strictEqual(ws['D4'].z, '#,##0', 'Zaehler ohne Zahlformat');
 });
 
 test('XLSX: Brand-Totals vollstaendig und korrekt', async () => {
   const { wb } = await exportiereUndLies();
   const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Total Brand-Gruppen'], { header: 1 });
 
-  assert.deepStrictEqual(plain(zeilen.slice(1)), [
+  // slice(3): zwei Titelzeilen + Spaltenkopf ueberspringen.
+  assert.deepStrictEqual(plain(zeilen.slice(3)), [
     ['Lunch-Check', 31, 0, 1, 2],
     ['Wallee', 62725.16, 793.46, 888, 2068],
   ]);
@@ -148,13 +150,13 @@ test('XLSX: Detail-Blatt hat eine Zeile je Terminal und Marke', async () => {
   const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Detail'], { header: 1 });
 
   const res = parseReportCsv(FIXTURE);
-  assert.strictEqual(zeilen.length - 1, res.rows.length,
+  assert.strictEqual(zeilen.length - 3, res.rows.length,
     'Detail muss jede CSV-Zeile abbilden');
 });
 
 test('XLSX: Summe der Outlet-Totals ergibt das Gesamttotal', async () => {
   const { wb } = await exportiereUndLies();
-  const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Total Outlet-Gruppen'], { header: 1 }).slice(1);
+  const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Total Outlet-Gruppen'], { header: 1 }).slice(3);
 
   const summe = zeilen.reduce((a, r) => a + r[2], 0);
   assert.strictEqual(Math.round(summe * 100) / 100, 62756.16);

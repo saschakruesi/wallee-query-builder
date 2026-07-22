@@ -350,13 +350,41 @@
   .report-outlet h4 { margin: 0; font-size: 14px; color: var(--accent-dark); }
 
   /* Druck/PDF: nur der Report, keine Bedienelemente. */
+  /* Nur im Druck/PDF sichtbar (wallee-Kopf des Terminal-Reports). */
+  .nur-druck { display: none; }
+
   @media print {
+    @page { margin: 14mm; }
     body { background: #fff; }
-    .mode-selector, .actions, #reportConfigArea,
-    .panel.cond-section:not(#reportSection), #sqlPanel, .hint { display: none !important; }
-    .panel { border: none; box-shadow: none; padding: 0; }
-    .report-table { font-size: 11px; }
+    /* Farben (Tuerkis-Kopf, Zebra) auch wirklich aufs Papier bringen. */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+    /* Alles ausser dem Report und dem Druck-Kopf ausblenden. */
+    .kopfzeile, .subtitle { display: none !important; }
+    .container > .panel:not(#reportSection) { display: none !important; }
+    #reportSection > h2, #reportConfigArea, .actions, .report-actions, .hint {
+      display: none !important;
+    }
+    .panel { border: none; box-shadow: none; padding: 0; margin: 0; background: none; }
+
+    .nur-druck {
+      display: flex !important; align-items: baseline; gap: 12px;
+      border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 16px;
+    }
+    #reportPrintKopf .brand-mark { font-size: 22px; }
+    #reportPrintKopf .pk-titel { font-size: 15px; font-weight: 600; color: var(--text); }
+    #reportPrintKopf .pk-datum { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+    /* Report als saubere Tabelle - Kopf je Seite wiederholen, Zeilen nicht trennen. */
+    .report-block h3 { font-size: 13px; margin: 14px 0 4px; break-after: avoid; }
+    .report-outlet h4 { font-size: 12px; margin: 8px 0 2px; break-after: avoid; }
+    .report-table { font-size: 10px; page-break-inside: auto; margin-top: 4px; }
+    .report-table thead { display: table-header-group; }
+    .report-table th { background: var(--accent); color: #fff; border: 1px solid var(--accent-hover); }
+    .report-table td, .report-table th { border: 1px solid #d6e4e3; padding: 3px 6px; }
     .report-table tr { break-inside: avoid; }
+    .report-table tr.subtotal td { background: #f1fbfa; font-weight: 600; }
+    .report-table tr.grand td { border-top: 2px solid var(--accent-dark); font-weight: 700; }
   }
 
   .wallet-note {
@@ -666,6 +694,13 @@
 </head>
 <body>
 <div class="container">
+  <!-- Nur im PDF/Druck sichtbar: wallee-Wortmarke oben links, Titel und Datum.
+       Der eigentliche Report darunter wird 1:1 wie am Bildschirm gedruckt. -->
+  <div id="reportPrintKopf" class="nur-druck">
+    <span class="brand-mark">wallee</span>
+    <span class="pk-titel">Terminal-Report</span>
+    <span class="pk-datum" id="reportPrintDatum"></span>
+  </div>
   <div class="kopfzeile">
     <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.2.1</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
@@ -1137,6 +1172,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   const reportSection   = document.getElementById('reportSection');
   const reportStatus    = document.getElementById('reportStatus');
   const reportOutput    = document.getElementById('reportOutput');
+  const reportPrintDatum = document.getElementById('reportPrintDatum');
   const reportConfigArea= document.getElementById('reportConfigArea');
   const reportOutletCfg = document.getElementById('reportOutletCfg');
   const reportBrandCfg  = document.getElementById('reportBrandCfg');
@@ -3087,10 +3123,11 @@ ORDER BY
     if (numFmt) s.numFmt = numFmt;
     return s;
   }
-  // Kopfzeile eines bereits gebauten Sheets einfaerben.
-  function xlsxKopfEinfaerben(ws, spalten) {
+  // Kopfzeile eines bereits gebauten Sheets einfaerben (Standard: Zeile 0;
+  // beim Terminal-Report liegt sie wegen der Titelzeilen tiefer).
+  function xlsxKopfEinfaerben(ws, spalten, kopfZeile = 0) {
     for (let c = 0; c < spalten; c++) {
-      const zelle = ws[XLSX.utils.encode_cell({ r: 0, c })];
+      const zelle = ws[XLSX.utils.encode_cell({ r: kopfZeile, c })];
       if (zelle) zelle.s = xlsxKopfStil();
     }
   }
@@ -3159,16 +3196,39 @@ ORDER BY
 
   function exportReportXlsx(modell) {
     const wb = XLSX.utils.book_new();
+    const d = new Date();
+    const datum = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+    const KOPF = 2;   // zwei Titelzeilen (wallee-Branding wie im PDF), dann der Spaltenkopf
 
     reportExportBloecke(modell).forEach(block => {
-      const ws = XLSX.utils.aoa_to_sheet([block.header, ...block.rows]);
+      const ncols = block.header.length;
+      const ws = XLSX.utils.aoa_to_sheet([
+        ['wallee — Terminal-Report'],
+        [`${block.name} · Erstellt am ${datum}`],
+        block.header,
+        ...block.rows,
+      ]);
 
-      // Kopfzeile in wallee-Tuerkis. Die Werte bleiben echte Zahlen; nur ihre
-      // Darstellung bekommt Tausendertrennung (s.numFmt/z) und die Zellen einen
-      // feinen Rahmen plus Zebra - Excel kann weiter damit rechnen.
-      xlsxKopfEinfaerben(ws, block.header.length);
-      for (let zeile = 1; zeile <= block.rows.length; zeile++) {
-        const zebra = (zeile - 1) % 2 === 1;
+      // Titelzeilen ueber alle Spalten mergen und branden (wie der PDF-Kopf).
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: ncols - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: ncols - 1 } },
+      ];
+      const titelZelle = ws[XLSX.utils.encode_cell({ r: 0, c: 0 })];
+      if (titelZelle) titelZelle.s = {
+        font: { bold: true, sz: 14, color: { rgb: XLSX_FARBE.text } },
+        alignment: { horizontal: 'left', vertical: 'center' },
+      };
+      const unterZelle = ws[XLSX.utils.encode_cell({ r: 1, c: 0 })];
+      if (unterZelle) unterZelle.s = { font: { sz: 10, color: { rgb: '6B7A79' } } };
+
+      // Spaltenkopf in wallee-Tuerkis (jetzt Zeile KOPF). Die Werte bleiben echte
+      // Zahlen; nur ihre Darstellung bekommt Tausendertrennung (s.numFmt/z) und die
+      // Zellen einen feinen Rahmen plus Zebra - Excel kann weiter damit rechnen.
+      xlsxKopfEinfaerben(ws, ncols, KOPF);
+      for (let i = 0; i < block.rows.length; i++) {
+        const zeile = KOPF + 1 + i;
+        const zebra = i % 2 === 1;
         block.typen.forEach((typ, spalte) => {
           const zelle = ws[XLSX.utils.encode_cell({ r: zeile, c: spalte })];
           if (!zelle) return;
@@ -3178,8 +3238,8 @@ ORDER BY
         });
       }
 
-      ws['!cols'] = block.header.map((titel, i) => ({
-        wch: block.typen[i] === 'text' ? Math.max(14, String(titel).length + 2) : 16,
+      ws['!cols'] = block.header.map((titelText, i) => ({
+        wch: block.typen[i] === 'text' ? Math.max(14, String(titelText).length + 2) : 16,
       }));
 
       // Excel begrenzt Blattnamen auf 31 Zeichen.
@@ -3328,6 +3388,11 @@ ORDER BY
   const KENNZAHL_KOPF = [['Complete Demand', true], ['Tip', true], ['Unmatched', true], ['Anz.', true]];
 
   function renderReport() {
+    // Datum fuer den PDF-/Druck-Kopf (nur dort sichtbar).
+    if (reportPrintDatum) {
+      const d = new Date();
+      reportPrintDatum.textContent = `Erstellt am ${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+    }
     reportOutput.innerHTML = '';
     if (!reportRows.length) return;
 
