@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>wallee Analytics – Query Builder v4</title>
+<title>wallee Analytics – Query Builder v5</title>
 <style>
   :root {
     --bg: #f4f9f9;
@@ -2867,7 +2867,7 @@ ORDER BY
       const reportBtn = e.mode === 'terminal'
         ? `<button class="btn" data-act="report" data-token="${escapeHtml(e.token)}">Als Report öffnen</button>` : '';
       tr.innerHTML =
-        `<td>${zeit}</td><td>${escapeHtml(modusLabel(e.mode))}</td><td>${zsf}</td><td>${escapeHtml(e.status || '')}</td>` +
+        `<td>${escapeHtml(zeit)}</td><td>${escapeHtml(modusLabel(e.mode))}</td><td>${zsf}</td><td>${escapeHtml(e.status || '')}</td>` +
         `<td><button class="btn" data-act="csv" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">CSV</button>` +
         `<button class="btn" data-act="xlsx" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">Excel</button>${reportBtn}</td>`;
       queryHistoryBody.appendChild(tr);

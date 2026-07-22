@@ -138,7 +138,7 @@ test('Submit prueft den Proxy vor der Ausfuehrung', async () => {
 
 test('Submit bei totem Proxy blockiert nicht, sondern oeffnet die Einstellungen', async () => {
   const { el } = starteMitFetch(() => { throw new Error('ECONNREFUSED'); },
-    { wallee_query_builder_v5: JSON.stringify({ apiMode: true, mode: 'brand' }) });
+    { wallee_query_builder_v6: JSON.stringify({ apiMode: true, mode: 'brand' }) });
 
   // Dialog erst schliessen, damit der Effekt sichtbar wird.
   el('settingsBtn').dispatch('click');
@@ -261,7 +261,7 @@ function apiRouter(opt) {
 // Default-Modus 'terminal': nur dort baut submitUndReport nach SUCCESS den
 // Report direkt (Task 9); diese Tests pruefen genau diesen Submit->Report-Pfad.
 async function starteApiModus(router, seed) {
-  const ctx = starteMitFetch(router, seed || { wallee_query_builder_v5: JSON.stringify({ apiMode: true, mode: 'terminal' }) });
+  const ctx = starteMitFetch(router, seed || { wallee_query_builder_v6: JSON.stringify({ apiMode: true, mode: 'terminal' }) });
   // Retry-Standardwert herabsetzen, sonst wartet jede 202-Runde 2s.
   ctx.app.apiPollConfig.retryStandardSek = 0.005;
   await ruhe();  // Health-Check beim Start abwarten

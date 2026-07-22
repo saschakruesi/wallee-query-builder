@@ -487,7 +487,7 @@ export async function behandleAnfrage(req, res) {
         const roh = await leseKoerper(req);
         let werte;
         try { werte = JSON.parse(roh); } catch (e) { werte = null; }
-        if (!werte || typeof werte !== 'object') {
+        if (!werte || typeof werte !== 'object' || Array.isArray(werte)) {
           sendeJson(res, 400, { ok: false, fehler: ['Ungueltiger JSON-Koerper.'] }, origin);
           return;
         }
