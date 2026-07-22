@@ -34,16 +34,21 @@ test('App-HTML hat genau zwei script-Bloecke mit den erwarteten ids', () => {
 
 test('Vendor-Block ist syntaktisch heiles JavaScript (keine $-Korruption)', () => {
   const vendor = blockInhalt('vendor-xlsx');
-  assert.ok(vendor.length > 500000, `Vendor-Block unerwartet klein: ${vendor.length} Zeichen`);
+  // Der eingebettete xlsx-js-style-Bundle ist ~425 KB minifiziert; die Schwelle
+  // faengt nur ab, dass der Block versehentlich ganz leer/abgeschnitten ist.
+  assert.ok(vendor.length > 300000, `Vendor-Block unerwartet klein: ${vendor.length} Zeichen`);
   assert.doesNotThrow(
     () => new vm.Script(vendor, { filename: 'vendor-xlsx.js' }),
     'Vendor-Block laesst sich nicht kompilieren - vermutlich beim Einbetten beschaedigt',
   );
 });
 
-test('Vendor-Block ist SheetJS', () => {
+test('Vendor-Block ist der stilfaehige SheetJS-Fork (xlsx-js-style)', () => {
   const vendor = blockInhalt('vendor-xlsx');
   assert.match(vendor, /SheetJS/, 'Vendor-Block sieht nicht nach SheetJS aus');
+  // Muss der Style-Fork sein - die reine Community Edition kann keine Zellfarben
+  // schreiben, auf die der wallee-XLSX-Export angewiesen ist.
+  assert.match(vendor, /xlsx-js-style/, 'Vendor-Block ist nicht der stilfaehige Fork');
 });
 
 test('App-Block laeuft ohne SheetJS - XLSX wird erst im Event-Pfad gebraucht', () => {

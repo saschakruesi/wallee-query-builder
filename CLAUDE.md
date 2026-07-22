@@ -50,10 +50,14 @@ Kein Framework, keine Dependencies, läuft offline per Doppelklick.
   (`apiMode`, `proxyUrl`, `sqlSichtbar`). Der Abfrage-Verlauf liegt bewusst **nicht** in
   `state`, sondern unter einem eigenen, unversionierten Key (siehe „Abfrage-Verlauf" unten).
 
-Seit v4 enthält die HTML-Datei **zwei** `<script>`-Blöcke: den eingebetteten SheetJS-Vendor
-(`<script id="vendor-xlsx">`, ~700 KB minified, nur für den XLSX-Export) und den App-Code
-(`<script id="app-logic">`). Das Test-Harness extrahiert gezielt den `app-logic`-Block; die
-reinen Funktionen brauchen SheetJS nicht. Beim Einbetten minifizierten Codes muss die
+Seit v4 enthält die HTML-Datei **zwei** `<script>`-Blöcke: den eingebetteten XLSX-Vendor
+(`<script id="vendor-xlsx">`, nur für den XLSX-Export) und den App-Code
+(`<script id="app-logic">`). Der Vendor ist seit v5.1 **`xlsx-js-style` 1.2.0** (~425 KB minified,
+MIT-Fork von SheetJS 0.18.5) statt der reinen SheetJS Community Edition: nur dieser Fork kann beim
+Schreiben **Zellstile** (Fill/Font/Border) setzen, was der XLSX-Export für die wallee-Optik braucht.
+Die Community Edition konnte nur Zahlformate (`z`). API bleibt Drop-in-kompatibel (`XLSX.utils.*`).
+Das Test-Harness extrahiert gezielt den `app-logic`-Block; die reinen Funktionen brauchen den Vendor
+nicht. Beim Einbetten minifizierten Codes muss die
 Ersetzung eine Replacer-**Funktion** nutzen — String-Ersatz deutet `$&`/`` $` ``/`$1` als
 Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
 
@@ -109,7 +113,9 @@ Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Sch
 - **Persistenz** `wallee_terminal_report_cfg_v1` (`{outlet:{tid:group}, brand:{brand:group}}`),
   Private-Mode-sicher. **Export** über `reportExportBloecke()` (gemeinsame Basis für XLSX und
   CSV; Beträge als **Zahlen**, Schweizer Aussehen über das Excel-Zahlformat, nicht als
-  formatierter String). XLSX über das eingebettete SheetJS, nur im Event-Pfad.
+  formatierter String). XLSX über den eingebetteten Vendor (`xlsx-js-style`), nur im Event-Pfad;
+  Kopfzeile in wallee-Türkis, feiner Rahmen und Zebra über die gemeinsamen Style-Helfer
+  (`xlsxKopfEinfaerben`/`xlsxZellStil`).
 - **Eingabe seit v5 ausschliesslich über den API-Modus**: `ingestReportCsv` wird vom
   Submit-Pfad des `terminal`-Modus gespeist (`uebergibReportCsv`) sowie von
   `historyAlsReport(token)`, wenn im Abfrage-Verlauf bei einem `terminal`-Eintrag auf „Als
@@ -137,10 +143,17 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   `csvZuZeilen(text)` ist der logikfreie CSV-Parser für diesen Pfad (getrennt von
   `parseReportCsv`, das die Report-spezifische Validierung/1e-8-Logik mitbringt).
 - **Download aus der Tabelle:** `historyDownloadCsv(token, mode)` liefert das rohe CSV 1:1;
-  `historyDownloadXlsx(token, mode)` baut mit `XLSX.utils.aoa_to_sheet` eine logikfreie
-  Excel-Datei aus denselben Zeilen (kein Zahlformat, keine Gruppierung) — nur für den
-  `terminal`-Modus gibt es zusätzlich „Als Report öffnen" (`historyAlsReport`), das dieselbe
-  Antwort stattdessen durch `ingestReportCsv` schickt und in die Gruppen-Auswertung springt.
+  `historyDownloadXlsx(token, mode)` baut über `styledSheetAusZeilen(zeilen)` eine **typisierte,
+  wallee-formatierte** Excel-Datei aus denselben Zeilen: **keine Gruppierung/Aggregation** (das
+  bleibt dem Terminal-Report vorbehalten), aber Beträge werden als **echte Zahlen** mit
+  Währungsformat (`#,##0.00" <WHG>"`), Zähler als Ganzzahlen und alles andere als Text geschrieben.
+  Die Spaltentypen werden **modus-unabhängig per Heuristik** bestimmt (Betrag = alle Werte matchen
+  `^-?\d+\.\d+$`; Zähler = Kopf matcht `anzahl|count|records|number|nummer` **und** alle Werte
+  ganzzahlig; Währungsspalte = Kopf `waehrung|währung|currency`), damit derselbe Export
+  brand/export/card/settlement mit ihren unterschiedlichen Spalten bedient. Kopfzeile türkis, Zebra,
+  Rahmen wie beim Report. Nur für den `terminal`-Modus gibt es zusätzlich „Als Report öffnen"
+  (`historyAlsReport`), das dieselbe Antwort stattdessen durch `ingestReportCsv` schickt und in die
+  Gruppen-Auswertung springt.
   Jeder erneute Abruf über den Token zählt bei wallee als Download (siehe „Wallee-
   Referenzwissen").
 - **Befüllt wird der Verlauf bei jedem erfolgreichen Submit** (unabhängig vom Modus); nur der
