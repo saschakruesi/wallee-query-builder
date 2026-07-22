@@ -18,7 +18,7 @@ die Zugangsdaten lassen sich direkt im Einstellungs-Dialog pflegen.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.3.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.3.1).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -74,9 +74,9 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
    `unsettled_anzahl`/`tip_total`-Spalten. Der frühere eigenständige `report`-Modus (CSV-
    Upload) ist **aufgegangen**: das Report-Panel (Outlet-/Brand-Gruppen, XLSX-Export) hängt
    jetzt an diesem Modus und wird ausschliesslich über das API-Ergebnis der eigenen Query
-   befüllt (`ingestReportCsv`, ausgelöst nach Submit oder per „Als Report öffnen" aus dem
-   Abfrage-Verlauf) — kein Datei-Upload mehr für die Report-Daten selbst (der verbliebene
-   Datei-Input dient nur dem Import/Export der Gruppen-Konfiguration als JSON).
+   befüllt (`ingestReportCsv`, ausgelöst nach dem Submit) — kein Datei-Upload mehr für die
+   Report-Daten selbst (der verbliebene Datei-Input dient nur dem Import/Export der
+   Gruppen-Konfiguration als JSON).
 3. **`export`** – **eine Zeile pro Transaktion**, Spalten frei wählbar (Checkbox-Katalog),
    Terminal-Filter optional. Enthält u. a. `tip_amount` und `gross_excl_tip`.
 4. **`card`** – Kartensuche: Transaktionen zu den letzten vier Kartenziffern
@@ -118,12 +118,10 @@ Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Sch
   formatierter String). XLSX über den eingebetteten Vendor (`xlsx-js-style`), nur im Event-Pfad;
   Kopfzeile in wallee-Türkis, feiner Rahmen und Zebra über die gemeinsamen Style-Helfer
   (`xlsxKopfEinfaerben`/`xlsxZellStil`).
-- **Eingabe seit v5 ausschliesslich über den API-Modus**: `ingestReportCsv` wird vom
-  Submit-Pfad des `terminal`-Modus gespeist (`uebergibReportCsv`) sowie von
-  `historyAlsReport(token)`, wenn im Abfrage-Verlauf bei einem `terminal`-Eintrag auf „Als
-  Report öffnen" geklickt wird. Der Datei-Input im Report-Panel dient nur noch dem
-  Import/Export der Gruppen-Konfiguration (`reportImportCfgInput`, JSON), nicht mehr dem
-  Laden der Report-Rohdaten.
+- **Eingabe seit v5 ausschliesslich über den API-Modus**: `ingestReportCsv` wird
+  ausschliesslich vom Submit-Pfad des `terminal`-Modus gespeist (`uebergibReportCsv`). Der
+  Datei-Input im Report-Panel dient nur noch dem Import/Export der Gruppen-Konfiguration
+  (`reportImportCfgInput`, JSON), nicht mehr dem Laden der Report-Rohdaten.
 
 ### Abfrage-Verlauf (seit v5)
 
@@ -153,9 +151,10 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   `^-?\d+\.\d+$`; Zähler = Kopf matcht `anzahl|count|records|number|nummer` **und** alle Werte
   ganzzahlig; Währungsspalte = Kopf `waehrung|währung|currency`), damit derselbe Export
   brand/export/card/settlement mit ihren unterschiedlichen Spalten bedient. Kopfzeile türkis, Zebra,
-  Rahmen wie beim Report. Nur für den `terminal`-Modus gibt es zusätzlich „Als Report öffnen"
-  (`historyAlsReport`), das dieselbe Antwort stattdessen durch `ingestReportCsv` schickt und in die
-  Gruppen-Auswertung springt.
+  Rahmen wie beim Report. **Im `terminal`-Modus zeigt die Verlaufszeile nur den Roh-CSV-Download** —
+  Excel und die Report-Ansicht laufen dort über das Report-Panel selbst (`exportReportXlsx` mit
+  gebrandetem Titel bzw. der nach dem Submit automatisch gezeigte Report), deshalb kein
+  Excel-/„Als Report öffnen"-Button in der Verlaufszeile.
   Jeder erneute Abruf über den Token zählt bei wallee als Download (siehe „Wallee-
   Referenzwissen").
 - **Befüllt wird der Verlauf bei jedem erfolgreichen Submit** (unabhängig vom Modus); nur der

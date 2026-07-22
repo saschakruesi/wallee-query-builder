@@ -85,9 +85,10 @@ Jeder erfolgreiche Submit im API-Modus landet im **Abfrage-Verlauf** — pro Mod
 maximal 50 Einträge. Gespeichert werden nur Token und Anzeige-Metadaten (Spaces, Zeitraum,
 Filter, Zeitstempel), **nie** die SQL und **nie** das Ergebnis selbst; das wird bei Bedarf
 über den Token neu vom Proxy geholt. Aus der Tabelle heraus lässt sich pro Zeile das rohe
-CSV oder eine Excel-Datei herunterladen; im Modus Terminal-Report gibt es zusätzlich „Als
-Report öffnen", das dieselbe Antwort direkt in die Gruppen-Auswertung schickt. Jeder erneute
-Abruf über den Token zählt bei wallee als Download.
+CSV oder eine Excel-Datei herunterladen. Im Modus Terminal-Report bietet die Verlaufszeile
+bewusst nur den Roh-CSV-Download — Excel (mit gebrandetem Titel), PDF und die Report-Ansicht
+laufen dort über das Report-Panel selbst. Jeder erneute Abruf über den Token zählt bei wallee
+als Download.
 
 ## Terminal-Report
 
@@ -98,9 +99,9 @@ Brand-Gruppen → Gesamttotal. Gruppennamen sind editierbar; gleiche Namen werde
 zusammengeführt.
 
 - **Eingabe:** ausschliesslich über den API-Modus — nach dem Submit einer Terminal-Report-
-  Query oder per „Als Report öffnen" aus dem Abfrage-Verlauf. Der verbliebene Datei-Input im
-  Report-Panel dient nur noch dem Import/Export der Gruppen-Konfiguration als JSON, nicht
-  mehr dem Laden der Report-Rohdaten.
+  Query wird das Ergebnis automatisch in die Gruppen-Auswertung übernommen. Der verbliebene
+  Datei-Input im Report-Panel dient nur noch dem Import/Export der Gruppen-Konfiguration als
+  JSON, nicht mehr dem Laden der Report-Rohdaten.
 - **Export:** echtes `.xlsx` (Beträge als Zahlen mit Schweizer Zahlformat, vier Blätter),
   CSV (UTF-8 mit BOM, Semikolon) und PDF über die Druckfunktion.
 - **Persistenz:** die Gruppen-Zuordnung liegt unter `wallee_terminal_report_cfg_v1`, per

@@ -702,7 +702,7 @@
     <span class="pk-datum" id="reportPrintDatum"></span>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.3.0</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.3.1</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -2851,7 +2851,7 @@ ORDER BY
   }
 
   // XLSX aus dem Roh-CSV: keine Gruppierung/Aggregation (das macht nur der
-  // Terminal-Report, siehe historyAlsReport), aber typisiert und in wallee-Optik
+  // Terminal-Report ueber exportReportXlsx), aber typisiert und in wallee-Optik
   // - Betraege als echte Zahlen mit Waehrungsformat, Zaehler als Ganzzahlen,
   // eingefaerbte Kopfzeile. Siehe styledSheetAusZeilen.
   function historyDownloadXlsx(token, mode) {
@@ -2870,12 +2870,6 @@ ORDER BY
     });
   }
 
-  function historyAlsReport(token) {
-    return mitErgebnisText(token, text => {
-      if (ingestReportCsv(text)) setMode('terminal');
-    });
-  }
-
   function renderHistory() {
     const list = historyFuerModus(historyLaden(), state.mode);
     queryHistoryBody.innerHTML = '';
@@ -2889,12 +2883,15 @@ ORDER BY
       const tr = document.createElement('tr');
       const zeit = (e.submittedAt || '').replace('T', ' ').slice(0, 16);
       const zsf = escapeHtml([e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · '));
-      const reportBtn = e.mode === 'terminal'
-        ? `<button class="btn" data-act="report" data-token="${escapeHtml(e.token)}">Als Report öffnen</button>` : '';
+      // Im Terminal-Report deckt der Report-Export unten (mit Titel/Branding, XLSX/
+      // CSV/PDF) das Excel ab, und der Report erscheint nach dem Submit ohnehin -
+      // deshalb dort in der Verlaufszeile nur der Roh-CSV-Download. In den uebrigen
+      // Modi zusaetzlich der logikfreie Excel-Download.
+      const xlsxBtn = e.mode === 'terminal' ? ''
+        : `<button class="btn" data-act="xlsx" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">Excel</button>`;
       tr.innerHTML =
         `<td>${escapeHtml(zeit)}</td><td>${escapeHtml(modusLabel(e.mode))}</td><td>${zsf}</td><td>${escapeHtml(e.status || '')}</td>` +
-        `<td><button class="btn" data-act="csv" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">CSV</button>` +
-        `<button class="btn" data-act="xlsx" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">Excel</button>${reportBtn}</td>`;
+        `<td><button class="btn" data-act="csv" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">CSV</button>${xlsxBtn}</td>`;
       queryHistoryBody.appendChild(tr);
     });
   }
@@ -3731,7 +3728,6 @@ ORDER BY
     const token = btn.dataset.token;
     if (btn.dataset.act === 'csv') historyDownloadCsv(token, btn.dataset.mode);
     else if (btn.dataset.act === 'xlsx') historyDownloadXlsx(token, btn.dataset.mode);
-    else if (btn.dataset.act === 'report') historyAlsReport(token);
   });
 
   reportXlsxBtn.addEventListener('click', () => {
