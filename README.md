@@ -125,6 +125,40 @@ Ein Browser kann `app-wallee.com` nicht direkt aufrufen (CORS), und die API-Sign
 bräuchte das Secret im Browser. Der Proxy löst beides: er signiert lokal, und das
 Payment-Secret verlässt den Rechner nie.
 
+### Schritt 1 — API-User in wallee anlegen (einmalig)
+
+Für den API-Modus braucht es in wallee einen **Application User** — den technischen Benutzer,
+mit dem die App die Queries signiert. Daraus stammen drei Werte, die später in den Dialog
+kommen:
+
+| Wert | woher | Feld im Dialog |
+|---|---|---|
+| **Application User ID** | beim Anlegen angezeigt (Zahl) | Application User ID |
+| **Authentication Key** (Base64-Secret) | beim Anlegen **einmalig** angezeigt | Secret (HMAC-Key) |
+| **Account** | Nummer deines Accounts (Account-Übersicht bzw. Portal-URL) | Account |
+
+Im wallee-Portal (<https://app-wallee.com>):
+
+1. **Account → Users → Application Users → neuen anlegen.** Nach dem Anlegen zeigt wallee die
+   **User ID** und den **Authentication Key** (Base64). ⚠️ **Den Authentication Key gibt es
+   nur dieses eine Mal zu sehen** — sofort kopieren. Ist der Dialog zu, muss ein neuer Key
+   erzeugt werden.
+2. **Rolle mit Analytics-Zugriff zuweisen.** Berechtigungen laufen über **Rollen**
+   (*Account → Users → Roles*), die kontextbezogen für einen Space bzw. Account gelten. Der
+   Application User braucht eine Rolle, die **Analytics** für die betroffenen **Space(s)**
+   freigibt — sonst läuft die Query in einen Permission Error. Rollen richtet der
+   **Account-Admin** ein.
+3. **Account-Nummer notieren.** Eine Query läuft in **einem** Account; alle abgefragten Spaces
+   (max. 5) müssen zu diesem Account gehören. Die Account-Nummer steht in der Account-Übersicht
+   bzw. in der Portal-URL — sie kommt ins Feld **Account**.
+
+Details in der wallee-Doku: [Application User](https://app-wallee.com/en/doc/api/model/application-user)
+· [Permission Concept](https://app-wallee.com/en/doc/permission-concept)
+· [Web Service API](https://app-wallee.com/en/doc/api/web-service). Die Signatur ist ein
+JWT-Bearer-Token (HS256), das der Proxy lokal aus User-ID + Authentication Key erzeugt.
+
+### Schritt 2 — Verbinden und Query absetzen
+
 1. Proxy starten, dann in der App über das Zahnrad **„API-Zugriff verwenden"** einschalten
    und im Einstellungs-Dialog **Application-User-ID**, **Authentication Key** (Base64) und
    **Account-ID** eintragen — Speichern legt sie direkt am Proxy ab
