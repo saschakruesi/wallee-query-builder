@@ -87,8 +87,8 @@ export async function speichereZugangsdaten(werte, pfad = CONFIG_PATH) {
 
 // Fuer die Anzeige im App-Dialog: userId/accountId sind keine Geheimnisse und
 // duerfen zurueck; das Secret NIE - nur, ob eines hinterlegt ist.
-export function credentialsAnzeige(zugangsdaten) {
-  const z = zugangsdaten || {};
+export function credentialsAnzeige(daten) {
+  const z = daten || {};
   return {
     userId: String(z.userId || ''),
     accountId: String(z.accountId || ''),
