@@ -8,8 +8,10 @@ Zwei Betriebsmodi:
 
 - **Kopieren-Modus** (Default, nichts zu installieren): SQL erzeugen und im wallee-Portal
   unter **Account > Analytics > Submit Query** ausführen; das Ergebnis kommt dort als CSV.
-- **API-Modus** (opt-in): Query direkt aus der App absetzen und das Ergebnis automatisch in
-  den Terminal-Report übernehmen — über einen kleinen lokalen Proxy (siehe unten).
+- **API-Modus** (opt-in): Query direkt aus der App absetzen — über einen kleinen lokalen
+  Proxy (siehe unten). Das Ergebnis landet im modus-eigenen **Abfrage-Verlauf** (CSV/Excel
+  per Klick abrufbar) und, im Modus Terminal-Report, zusätzlich sofort in der
+  Gruppen-Auswertung.
 
 ## Nutzung
 
@@ -26,34 +28,45 @@ nie im Browser.
 | Modus | Ergebnis |
 |---|---|
 | **Brand-Auswertung** | Aggregat pro Space × Brand × Währung, inkl. `tip_total` (Trinkgeld-Anteil) und `unsettled_anzahl` (wartet auf Abrechnung) |
-| **Brand + Terminal-Filter** | zusätzlich pro Terminal, mit Pflichtfilter, ebenfalls inkl. `tip_total` und `unsettled_anzahl` |
-| **Terminal-Report** | kein SQL: bündelt einen CSV-Export zu Outlet- und Brand-Gruppen und totalisiert (siehe unten) |
+| **Terminal-Report** | wie Brand-Auswertung, zusätzlich pro Terminal mit Pflichtfilter — im API-Modus wird das Ergebnis der eigenen Query automatisch zu Outlet- und Brand-Gruppen ausgewertet (siehe unten) |
 | **Transaktions-Export** | eine Zeile pro Transaktion, Spalten frei wählbar — u. a. `tip_amount` (Trinkgeld) und `gross_excl_tip` (Brutto ohne Trinkgeld) |
 | **Kartensuche** | Transaktionen zu den letzten vier Kartenziffern (für Streitfälle) |
 | **Settlement / Auszahlung** | pro Tag: was ist ausbezahlt, was steht aus, welche Gebühren fielen an, inkl. `tip_total` |
 
+## Abfrage-Verlauf
+
+Jeder erfolgreiche Submit im API-Modus landet im **Abfrage-Verlauf** — pro Modus gefiltert,
+maximal 50 Einträge. Gespeichert werden nur Token und Anzeige-Metadaten (Spaces, Zeitraum,
+Filter, Zeitstempel), **nie** die SQL und **nie** das Ergebnis selbst; das wird bei Bedarf
+über den Token neu vom Proxy geholt. Aus der Tabelle heraus lässt sich pro Zeile das rohe
+CSV oder eine Excel-Datei herunterladen; im Modus Terminal-Report gibt es zusätzlich „Als
+Report öffnen", das dieselbe Antwort direkt in die Gruppen-Auswertung schickt. Jeder erneute
+Abruf über den Token zählt bei wallee als Download.
+
 ## Terminal-Report
 
-Der Tab *Terminal-Report* wertet den CSV-Export aus *Brand + Terminal-Filter* aus, ohne
-SQL zu erzeugen: Terminals werden zu **Outlet-Gruppen** (aus dem Terminalnamen, abschliessende
-Nummer weg), Kartenmarken zu **Brand-Gruppen** (Lunch Check separat, alles übrige „Wallee")
-zusammengefasst und totalisiert — Detail → Total Outlet-Gruppen → Total Brand-Gruppen →
-Gesamttotal. Gruppennamen sind editierbar; gleiche Namen werden zusammengeführt.
+Der Modus *Terminal-Report* wertet das Ergebnis der eigenen Query zu **Outlet-Gruppen**
+(aus dem Terminalnamen, abschliessende Nummer weg) und **Brand-Gruppen** (Lunch Check
+separat, alles übrige „Wallee") aus und totalisiert — Detail → Total Outlet-Gruppen → Total
+Brand-Gruppen → Gesamttotal. Gruppennamen sind editierbar; gleiche Namen werden
+zusammengeführt.
 
-- **Eingabe:** CSV per Drag & Drop oder Dateiauswahl. Im API-Modus wird das Ergebnis einer
-  abgesetzten Query automatisch übernommen.
+- **Eingabe:** ausschliesslich über den API-Modus — nach dem Submit einer Terminal-Report-
+  Query oder per „Als Report öffnen" aus dem Abfrage-Verlauf. Der verbliebene Datei-Input im
+  Report-Panel dient nur noch dem Import/Export der Gruppen-Konfiguration als JSON, nicht
+  mehr dem Laden der Report-Rohdaten.
 - **Export:** echtes `.xlsx` (Beträge als Zahlen mit Schweizer Zahlformat, vier Blätter),
   CSV (UTF-8 mit BOM, Semikolon) und PDF über die Druckfunktion.
 - **Persistenz:** die Gruppen-Zuordnung liegt unter `wallee_terminal_report_cfg_v1`, per
   JSON exportier- und importierbar. Die Zahlen bleiben vollständig auf dem Gerät.
 
 Der Zähler wird unter beiden Spaltennamen akzeptiert: `unsettled_anzahl` (aus dem
-Terminal-Modus dieses Generators) und `unmatched_anzahl`.
+Terminal-Report dieses Generators) und `unmatched_anzahl`.
 
 ## API-Modus und lokaler Proxy
 
-Statt SQL zu kopieren, setzt der API-Modus die Query direkt ab und übergibt das Ergebnis dem
-Report. Er läuft über `wallee-proxy.mjs` — ein einzelnes Node-Script ohne Dependencies:
+Statt SQL zu kopieren, setzt der API-Modus die Query direkt ab. Er läuft über
+`wallee-proxy.mjs` — ein einzelnes Node-Script ohne Dependencies:
 
 ```bash
 node wallee-proxy.mjs
@@ -63,15 +76,22 @@ Ein Browser kann `app-wallee.com` nicht direkt aufrufen (CORS), und die API-Sign
 bräuchte das Secret im Browser. Der Proxy löst beides: er signiert lokal, und das
 Payment-Secret verlässt den Rechner nie.
 
-1. Proxy starten, dann `http://localhost:8787/setup` öffnen und **Application-User-ID**,
-   **Authentication Key** (Base64) und **Account-ID** eintragen. Die Daten liegen nur lokal
-   (`~/.wallee-proxy.json`, Dateirechte 600), nicht in der HTML-App.
-2. In der App über das Zahnrad **„API-Zugriff verwenden"** einschalten. Die App prüft den
-   Proxy per Health-Check; ist er nicht erreichbar, gibt es einen klaren Hinweis und den
-   Rückfall auf den Kopieren-Modus — blockiert wird nie.
-3. Query mit **„Query ausführen"** absetzen. Die App pollt den Status und übernimmt das
-   Ergebnis-CSV automatisch in den Report. Alternativ lässt sich unter „Vorhandenen
-   queryToken abrufen" das Ergebnis einer bereits im Portal gelaufenen Query holen.
+1. Proxy starten, dann in der App über das Zahnrad **„API-Zugriff verwenden"** einschalten
+   und im Einstellungs-Dialog **Application-User-ID**, **Authentication Key** (Base64) und
+   **Account-ID** eintragen — Speichern legt sie direkt am Proxy ab
+   (`~/.wallee-proxy.json`, Dateirechte 600), nicht in der HTML-App; das Secret-Feld zeigt
+   beim erneuten Öffnen nie den Klartext, nur ob eines hinterlegt ist. Die eigenständige
+   `/setup`-Seite am Proxy bleibt als Fallback bestehen, falls die App einmal nicht
+   erreichbar ist.
+2. Die App prüft den Proxy per Health-Check (schon beim Laden der Seite, falls der
+   API-Modus bereits aktiv ist, sowie vor jedem Submit); ist er nicht erreichbar, gibt es
+   einen klaren Hinweis und den Rückfall auf den Kopieren-Modus — blockiert wird nie. Ein
+   Status-Punkt im Einstellungs-Dialog zeigt den zuletzt bekannten Proxy-Zustand.
+3. Query mit **„Query ausführen"** absetzen. Die App pollt den Status und schreibt bei
+   Erfolg einen Eintrag in den Abfrage-Verlauf; im Modus Terminal-Report wird das
+   Ergebnis-CSV zusätzlich sofort in die Gruppen-Auswertung übernommen. Alternativ lässt
+   sich unter „Vorhandenen queryToken abrufen" das Ergebnis einer bereits im Portal
+   gelaufenen Query holen.
 
 Der Proxy bindet nur an `127.0.0.1`, lässt nur die eigene (per `file://` geöffnete) App als
 Herkunft zu und verlangt einen eigenen Header — eine fremde Webseite kann ihn nicht

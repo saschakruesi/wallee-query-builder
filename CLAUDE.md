@@ -4,19 +4,22 @@ Eigenständige HTML-Applikation (Single File, kein Build, keine Runtime-Dependen
 SQL-Queries für **wallee Analytics** (PrestoDB / Amazon Athena) generiert. Zwei
 Betriebsmodi: **Kopieren-Modus** (Default) — SQL kopieren und im Portal unter
 **Account > Analytics > Submit Query** ausführen; **API-Modus** (opt-in) — Query direkt über
-einen lokalen Proxy absetzen und das Ergebnis automatisch in den Terminal-Report übernehmen.
+einen lokalen Proxy absetzen. Das Ergebnis landet im modus-eigenen **Abfrage-Verlauf**
+(CSV/Excel per Klick abrufbar) und, im Modus `terminal`, zusätzlich als Terminal-Report.
 
 Entstanden aus einer Kundenanfrage im Gastronomie-Umfeld: Tagesabschluss-Abgleich pro
 Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen. Seit v4 zusätzlich der
 integrierte Terminal-Report (Outlet-/Brand-Gruppen, XLSX-Export) und die direkte
-API-Anbindung.
+API-Anbindung. Seit v5 der Abfrage-Verlauf, der eigenständige `report`-Modus ist in
+`terminal` aufgegangen (Terminal-Report ist jetzt dessen Ausgabe, kein CSV-Upload mehr) und
+die Zugangsdaten lassen sich direkt im Einstellungs-Dialog pflegen.
 
 ## Dateien
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v4).** Sechs Modi inkl. Terminal-Report, zwei Betriebsmodi, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
-| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`. Start: `node wallee-proxy.mjs`. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
+| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`. Start: `node wallee-proxy.mjs`. |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
 | `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
@@ -31,17 +34,21 @@ Kein Framework, keine Dependencies, läuft offline per Doppelklick.
 ### State & Persistenz
 
 - Ein zentrales `state`-Objekt, persistiert via `localStorage`.
-- `STORAGE_KEY = 'wallee_query_builder_v5'` — **bei inkompatiblen State-Änderungen den Key
-  hochzählen.** `STORAGE_KEY_OLD = 'wallee_query_builder_v4'` bleibt zusätzlich stehen: nur
+- `STORAGE_KEY = 'wallee_query_builder_v6'` — **bei inkompatiblen State-Änderungen den Key
+  hochzählen.** `STORAGE_KEY_OLD = 'wallee_query_builder_v5'` bleibt zusätzlich stehen: nur
   wenn unter `STORAGE_KEY` noch nichts liegt, liest `loadState()` von `STORAGE_KEY_OLD` und
   migriert (u. a. Kartensuche vom Export-Modus in den eigenen `card`-Tab, `payoutref`
-  standardmässig deaktiviert). Das Ergebnis wird sofort unter `STORAGE_KEY` gesichert, der
+  standardmässig deaktiviert, ein alter `mode: 'report'` landet gezielt auf `terminal` statt
+  auf `brand` zurückzufallen). Das Ergebnis wird sofort unter `STORAGE_KEY` gesichert, der
   alte Schlüssel bleibt unangetastet stehen.
 - `loadState()` migriert auch ältere Felder (z. B. Einzelfeld `spaceId` → `spaces[]`) und
   gleicht `exportColumns` gegen den Spaltenkatalog ab (neue Spalten bekommen ihren
-  `def`-Wert).
+  `def`-Wert). Die Modus-Whitelist ist `['brand','terminal','export','card','settlement']`
+  — ein unbekannter Modus fällt auf `brand` zurück.
 - Gespeichert werden: Modus, Spaces, Zeitraum, Terminals, Spaltenauswahl, Kartensuche,
-  Settlement-Aufschlüsselung nach Terminal, User-Presets (max. 12).
+  Settlement-Aufschlüsselung nach Terminal, User-Presets (max. 12), Betriebsmodus
+  (`apiMode`, `proxyUrl`, `sqlSichtbar`). Der Abfrage-Verlauf liegt bewusst **nicht** in
+  `state`, sondern unter einem eigenen, unversionierten Key (siehe „Abfrage-Verlauf" unten).
 
 Seit v4 enthält die HTML-Datei **zwei** `<script>`-Blöcke: den eingebetteten SheetJS-Vendor
 (`<script id="vendor-xlsx">`, ~700 KB minified, nur für den XLSX-Export) und den App-Code
@@ -50,18 +57,20 @@ reinen Funktionen brauchen SheetJS nicht. Beim Einbetten minifizierten Codes mus
 Ersetzung eine Replacer-**Funktion** nutzen — String-Ersatz deutet `$&`/`` $` ``/`$1` als
 Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
 
-### Sechs Modi
+### Fünf Modi
 
 1. **`brand`** – Aggregat pro Space × Brand × Währung (`GROUP BY`). Spalten: Anzahl,
    `unsettled_anzahl` (keine Gebühr UND kein Settlement-Record = wartet noch auf die
    Abrechnung), Brutto, Fees, Netto, `tip_total` (Trinkgeld-Anteil, bereits im Brutto
    enthalten).
-2. **`terminal`** – wie `brand`, zusätzlich Pflichtfilter + Gruppierung auf
-   `paymentterminal.identifier` / `.name`. Gleiche `unsettled_anzahl`/`tip_total`-Spalten.
-2a. **`report`** – **Terminal-Report**, im Mode-Selector rechts neben `terminal`. Erzeugt
-   **kein SQL**, sondern wertet einen CSV-Export aus: Terminals → Outlet-Gruppen, Brands →
-   Brand-Gruppen, totalisiert. Eigener Kern aus reinen Funktionen (siehe „Terminal-Report").
-   `generate()` steigt für diesen Modus früh aus, das SQL-Panel ist ausgeblendet.
+2. **`terminal`** ("Terminal-Report" im Mode-Selector) – wie `brand`, zusätzlich
+   Pflichtfilter + Gruppierung auf `paymentterminal.identifier` / `.name`. Gleiche
+   `unsettled_anzahl`/`tip_total`-Spalten. Der frühere eigenständige `report`-Modus (CSV-
+   Upload) ist **aufgegangen**: das Report-Panel (Outlet-/Brand-Gruppen, XLSX-Export) hängt
+   jetzt an diesem Modus und wird ausschliesslich über das API-Ergebnis der eigenen Query
+   befüllt (`ingestReportCsv`, ausgelöst nach Submit oder per „Als Report öffnen" aus dem
+   Abfrage-Verlauf) — kein Datei-Upload mehr für die Report-Daten selbst (der verbliebene
+   Datei-Input dient nur dem Import/Export der Gruppen-Konfiguration als JSON).
 3. **`export`** – **eine Zeile pro Transaktion**, Spalten frei wählbar (Checkbox-Katalog),
    Terminal-Filter optional. Enthält u. a. `tip_amount` und `gross_excl_tip`.
 4. **`card`** – Kartensuche: Transaktionen zu den letzten vier Kartenziffern
@@ -74,12 +83,13 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
 
 Sichtbarkeit der Panels steuert `setMode()` über die CSS-Klasse `.cond-section.active`
 (Terminal-Panel in `terminal`/`export`/`card`/`settlement`, Spalten-Panel nur `export`,
-Kartensuche-Panel nur `card`, Settlement-Panel nur `settlement`, Report-Panel nur `report`).
-Im `report`-Modus wird das SQL-Panel per `.hidden` ausgeblendet. **Wichtig:** Die
-Modus-Whitelist in `loadState()` muss `report` kennen, sonst fällt der Tab nach einem
-Neuladen auf `brand` zurück.
+Kartensuche-Panel nur `card`, Settlement-Panel nur `settlement`, Report-Panel nur
+`terminal`). Die Modus-Whitelist in `loadState()` ist
+`['brand','terminal','export','card','settlement']` — ein alter State mit `mode: 'report'`
+wird gezielt auf `terminal` migriert statt auf `brand` zurückzufallen (siehe „State &
+Persistenz" oben).
 
-### Terminal-Report (Modus `report`, v4)
+### Terminal-Report (Ausgabe des Modus `terminal`, seit v4, seit v5 ohne CSV-Upload)
 
 Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Schicht:
 
@@ -100,8 +110,44 @@ Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Sch
   Private-Mode-sicher. **Export** über `reportExportBloecke()` (gemeinsame Basis für XLSX und
   CSV; Beträge als **Zahlen**, Schweizer Aussehen über das Excel-Zahlformat, nicht als
   formatierter String). XLSX über das eingebettete SheetJS, nur im Event-Pfad.
+- **Eingabe seit v5 ausschliesslich über den API-Modus**: `ingestReportCsv` wird vom
+  Submit-Pfad des `terminal`-Modus gespeist (`uebergibReportCsv`) sowie von
+  `historyAlsReport(token)`, wenn im Abfrage-Verlauf bei einem `terminal`-Eintrag auf „Als
+  Report öffnen" geklickt wird. Der Datei-Input im Report-Panel dient nur noch dem
+  Import/Export der Gruppen-Konfiguration (`reportImportCfgInput`, JSON), nicht mehr dem
+  Laden der Report-Rohdaten.
 
-### Betriebsmodus & API (v4)
+### Abfrage-Verlauf (seit v5)
+
+Eigener, von `state` unabhängiger `localStorage`-Key `wallee_query_history_v1`
+(`HISTORY_KEY`, max. `HISTORY_MAX = 50` Einträge) — bewusst getrennt gehalten, damit er
+State-Bumps übersteht und **nur** Token + Anzeige-Metadaten enthält, nie SQL und nie das
+Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
+
+- **Reine Funktionen** (Harness-testbar): `historyEintragBauen(mode, token, st, jetztIso,
+  status)` baut den Eintrag (Modus, Token, Zeitstempel, Zusammenfassung von Spaces/Zeitraum/
+  Filter, Status); `historyEinfuegen(list, eintrag)` fügt vorne ein und entfernt Duplikate
+  desselben Tokens (`slice(0, HISTORY_MAX)`); `historyFuerModus(list, mode)` filtert für die
+  Tabellenanzeige — der Verlauf ist **pro Modus** gefiltert, jeder Modus sieht nur seine
+  eigenen Einträge.
+- **Laden/Speichern** `historyLaden()`/`historySpeichern(list)` — Private-Mode-sicher wie die
+  übrige Persistenz (try/catch, leeres Array als Fallback).
+- **Ergebnis-Abruf über den Token:** `holeErgebnisText(token)` → `GET /result/:token`, liefert
+  `{ ok, status, text, fehler }` ohne den Report zu befüllen — Basis für den Roh-Download.
+  `csvZuZeilen(text)` ist der logikfreie CSV-Parser für diesen Pfad (getrennt von
+  `parseReportCsv`, das die Report-spezifische Validierung/1e-8-Logik mitbringt).
+- **Download aus der Tabelle:** `historyDownloadCsv(token, mode)` liefert das rohe CSV 1:1;
+  `historyDownloadXlsx(token, mode)` baut mit `XLSX.utils.aoa_to_sheet` eine logikfreie
+  Excel-Datei aus denselben Zeilen (kein Zahlformat, keine Gruppierung) — nur für den
+  `terminal`-Modus gibt es zusätzlich „Als Report öffnen" (`historyAlsReport`), das dieselbe
+  Antwort stattdessen durch `ingestReportCsv` schickt und in die Gruppen-Auswertung springt.
+  Jeder erneute Abruf über den Token zählt bei wallee als Download (siehe „Wallee-
+  Referenzwissen").
+- **Befüllt wird der Verlauf bei jedem erfolgreichen Submit** (unabhängig vom Modus); nur der
+  `terminal`-Modus speist zusätzlich sofort den Report, um einen weiteren Result-Abruf zu
+  sparen.
+
+### Betriebsmodus & API (v4, Zugangsdaten-Dialog seit v5)
 
 - Zwei Modi im `state`: `apiMode` (Default `false`), `proxyUrl` (`http://localhost:8787`),
   `sqlSichtbar`. Umschaltung über das **Zahnrad** im Kopf (`settingsOverlay`) — die
@@ -111,9 +157,28 @@ Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Sch
   jedem Submit ein Health-Check (`pruefeProxy` → `deuteHealth`); ist der Proxy nicht bereit,
   klarer Hinweis + Rückfall, **nie** blockiert.
 - **Ablauf** (`submitUndReport`): `POST /submit` → `queryToken`; Status pollen über den
-  HTTP-Code (200 = fertig, 202 = weiter, `Retry-After` beachten); bei SUCCESS `/result` →
-  CSV → `ingestReportCsv` → Report-Tab. `holeErgebnisInReport(token)` ist der gemeinsame
-  Result-Pfad, auch für „Vorhandenen queryToken abrufen".
+  HTTP-Code (200 = fertig, 202 = weiter, `Retry-After` beachten); bei SUCCESS wird der
+  Eintrag in den Abfrage-Verlauf geschrieben und im `terminal`-Modus zusätzlich `/result` →
+  CSV → `ingestReportCsv` → Report-Panel befüllt. `holeErgebnisInReport(token)` ist der
+  gemeinsame Result-Pfad für den Report, auch für „Vorhandenen queryToken abrufen"
+  (`tokenAbrufen`).
+- **Zugangsdaten-Dialog (seit v5):** `credUserId`/`credAccount`/`credSecret` im
+  Einstellungs-Dialog, Speichern über `speichereCredentials()` → `POST /credentials` am
+  Proxy. `ladeCredentialsInDialog()` liest beim Öffnen des Dialogs (und bei Aktivieren des
+  API-Modus) über `leseCredentials()` → `GET /credentials` die vorhandenen Werte:
+  `userId`/`accountId` im Klartext, das Secret-Feld bleibt **immer leer**
+  (`credSecret.placeholder` signalisiert nur „hinterlegt"/„nicht hinterlegt" über
+  `daten.hasSecret`) — ein leeres Secret beim Speichern bedeutet für den Proxy „unverändert
+  lassen" (`mischeZugangsdaten`, siehe Proxy-Abschnitt). Die frühere In-App-Verlinkung auf
+  die eigenständige `/setup`-Seite (`proxySetupLink`) wurde entfernt; die `/setup`-Seite
+  selbst bleibt am Proxy als Fallback bestehen (z. B. wenn die App aus irgendeinem Grund
+  nicht erreichbar ist).
+- **Status-Punkt:** `.status-dot` (`#proxyStatusDot`, `data-art` ∈ `ok`/`warn`/`fehler`/
+  `info`) zeigt den zuletzt bekannten Proxy-Zustand im Dialog; gesetzt über
+  `meldeProxyZustand()`/`setzeProxyStatus()`, gespeist von `pruefeProxy()`.
+- **Start-Check:** ist `apiMode` beim Laden der Seite bereits aktiv, prüft der Init-Block den
+  Proxy sofort (`pruefeProxy(state.proxyUrl, 2000)` im Init, zusätzlich beim Umschalten des
+  Toggles) — der Nutzer sieht den Status-Punkt, bevor er überhaupt auf Submit geht.
 
 ### Spaltenkatalog (`EXPORT_COLUMNS`)
 
@@ -207,22 +272,35 @@ aktive Zustände) — als Textfarbe auf hellem Grund ist das helle Türkis zu ko
 Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum Einsatz:
 `#0da69c` (`--accent-hover`) und `#225956` (`--accent-dark`, z. B. für `.brand-mark`).
 
-## Proxy (`wallee-proxy.mjs`, v4)
+## Proxy (`wallee-proxy.mjs`, v4, `/credentials` seit v5)
 
 Einzelnes Node-Script, nur Builtins (`http`, `crypto`, `fs`), **kein npm install**. Start
 `node wallee-proxy.mjs`, Port über `WALLEE_PROXY_PORT`. Endpunkte: `/health`, `GET`+`POST`
-`/setup`, `POST /submit`, `GET /status/:token`, `GET /result/:token`, `DELETE /query/:token`.
+`/setup`, `GET`+`POST /credentials`, `POST /submit`, `GET /status/:token`,
+`GET /result/:token`, `DELETE /query/:token`.
 
 - **Warum überhaupt:** Browser dürfen `app-wallee.com` nicht direkt rufen (CORS), und die
   JWT-Signatur bräuchte sonst das Secret im Browser. Der Proxy signiert lokal; das Secret
   liegt nur in `~/.wallee-proxy.json` (Rechte 600), geht nie an die App zurück, wird nie
   geloggt.
+- **`GET /credentials`** (Route `credentials-lesen`) liefert `credentialsAnzeige(zugangsdaten)`:
+  `userId`/`accountId` im Klartext plus `hasSecret` (Bool) — das Secret selbst geht **nie**
+  zurück, auch nicht maskiert. Speist den In-Dialog-Editor beim Öffnen
+  (`ladeCredentialsInDialog()` in der App).
+- **`POST /credentials`** (Route `credentials-speichern`) nimmt `{ userId, accountId, secret }`
+  per JSON entgegen. `mischeZugangsdaten(alt, neu)` behandelt ein **leeres** `secret` als
+  „unverändert lassen" — so kann der Nutzer `userId`/`accountId` ändern, ohne das Secret
+  erneut einzutippen (er sieht es im Dialog ohnehin nie). Das gemischte Ergebnis läuft durch
+  dieselbe `speichereZugangsdaten()`/`pruefeZugangsdaten()`-Validierung wie `/setup` und wird
+  mit Dateirechten 600 geschrieben. `credentialsAnzeige` und `mischeZugangsdaten` sind reine
+  Funktionen, ohne Netz getestet (`test/proxy.test.js`).
 - **Missbrauchsschutz** (ein lokaler Server ist von jeder offenen Webseite erreichbar):
   Bindung nur auf `127.0.0.1`; Herkunft nur `null` (per `file://` geöffnete App) und die
   eigenen Proxy-Origins, **nie** `*`; zusätzlicher Header `X-Wallee-Proxy`, den eine fremde
   Seite nicht ohne Preflight setzen kann. Reine Funktionen (`findeRoute`, `signRequest`/
   `baueToken`, `pruefeZugangsdaten`, `originErlaubt`, `corsHeader`, `extrahiereDownloadUrl`,
-  `walleeFehlertext`, `leseRetryAfter`) sind ohne Netz getestet (`test/proxy.test.js`).
+  `walleeFehlertext`, `leseRetryAfter`, `credentialsAnzeige`, `mischeZugangsdaten`) sind ohne
+  Netz getestet (`test/proxy.test.js`).
 - **Fehlertexte** von wallee werden durchgereicht (`walleeFehlertext` → Feld `fehler`) und
   auf der Konsole geloggt — ohne das im Klartext hätte die Diagnose der API-Anbindung nicht
   funktioniert.
