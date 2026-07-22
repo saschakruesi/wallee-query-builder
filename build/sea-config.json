@@ -1,8 +1,0 @@
-{
-  "main": "dist/server.cjs",
-  "output": "dist/sea.blob",
-  "disableExperimentalSEAWarning": true,
-  "assets": {
-    "app.html": "wallee_query_builder.html"
-  }
-}

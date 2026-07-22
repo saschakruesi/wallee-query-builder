@@ -22,14 +22,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
-
-// createRequire, um im ESM-Quelltext die eingebauten Module node:sea und
-// node:child_process lazy zu laden - beide werden nur im Serve-/Binary-Betrieb
-// gebraucht, nicht von den (importierten) reinen Funktionen.
-// Im gebauten SEA-Binary ist import.meta.url undefined; der Fallback-Basispfad
-// ist fuer das Aufloesen von Builtins ohnehin egal, muss aber gueltig sein.
-const require = createRequire(import.meta.url || 'file:///wallee-proxy.mjs');
+import { spawn } from 'node:child_process';
 
 // --- Konfiguration ---------------------------------------------------------
 
@@ -716,36 +709,26 @@ function reicheWalleeDurch(res, antwort, origin, kontext) {
 
 // --- Start -----------------------------------------------------------------
 
-// Die App-HTML fuer die /-Route. Im gebauten Binary aus dem eingebetteten
-// SEA-Asset ("app.html"), sonst - im Dev-Betrieb per `node wallee-proxy.mjs` -
-// aus der Datei neben diesem Script. Einmal gelesen und gecacht.
+// Die App-HTML fuer die /-Route: aus der Datei neben diesem Script. Einmal
+// gelesen und gecacht. So laesst sich die App same-origin vom Proxy laden
+// (Doppelklick-Launcher, siehe Start-macOS.command / Start-Windows.bat).
 let appHtmlCache = null;
 function ladeAppHtml() {
   if (appHtmlCache !== null) return appHtmlCache;
-  try {
-    const sea = require('node:sea');
-    if (sea.isSea && sea.isSea()) {
-      appHtmlCache = sea.getAsset('app.html', 'utf8');
-      return appHtmlCache;
-    }
-  } catch (e) { /* node:sea nicht verfuegbar -> Datei-Fallback */ }
   const datei = path.join(path.dirname(fileURLToPath(import.meta.url)), 'wallee_query_builder.html');
   appHtmlCache = fs.readFileSync(datei, 'utf8');
   return appHtmlCache;
 }
 
-// Laeuft der Proxy als gebautes Binary (SEA), soll er sich wie eine App
-// verhalten und den Browser selbst oeffnen. Beim CLI-Start nur auf Wunsch
-// (WALLEE_OPEN=1), damit `node wallee-proxy.mjs` nicht ungefragt ein Fenster
-// aufreisst.
+// Den Browser nur auf Wunsch oeffnen (WALLEE_OPEN=1) - die Launcher setzen das,
+// damit sich beim Doppelklick sofort die App zeigt. Ein blosses
+// `node wallee-proxy.mjs` reisst so nicht ungefragt ein Fenster auf.
 function sollBrowserOeffnen() {
-  try { if (require('node:sea').isSea()) return true; } catch (e) {}
   return process.env.WALLEE_OPEN === '1';
 }
 
 function oeffneBrowser(url) {
   try {
-    const { spawn } = require('node:child_process');
     if (process.platform === 'win32') {
       // Der leere erste Parameter ist der Fenstertitel, den `start` sonst aus der URL zieht.
       spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
@@ -770,12 +753,7 @@ export function starteServer({ port = PORT, host = HOST } = {}) {
 }
 
 // Nur starten, wenn die Datei direkt aufgerufen wird - beim Import aus den
-// Tests soll kein Server hochkommen. Im gebauten Binary (SEA) uebernimmt der
-// Build-Entry den Start (build/entry.mjs), deshalb hier nicht zusaetzlich.
-function laeuftAlsBinary() {
-  try { return require('node:sea').isSea(); } catch (e) { return false; }
-}
-const direktAufgerufen = !laeuftAlsBinary()
-  && process.argv[1]
+// Tests soll kein Server hochkommen.
+const direktAufgerufen = process.argv[1]
   && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (direktAufgerufen) starteServer();
