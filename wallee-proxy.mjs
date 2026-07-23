@@ -806,9 +806,33 @@ function oeffneBrowser(url) {
   } catch (e) { /* Browser laesst sich nicht oeffnen - Nutzer oeffnet die URL selbst */ }
 }
 
+// Klartext-Meldung fuer Fehler beim Serverstart - allen voran der belegte Port
+// (EADDRINUSE), damit statt eines Node-Stacktraces ein verstaendlicher Hinweis
+// kommt (die Launcher richten sich an nicht-technische Nutzer). Rein, damit sie
+// ohne echten Server getestet werden kann.
+export function startFehlertext(err, host = HOST, port = PORT) {
+  if (err && err.code === 'EADDRINUSE') {
+    return `Port ${port} ist bereits belegt - vermutlich laeuft der Proxy schon. `
+      + `Pruefe ${`http://${host}:${port}`}/health im Browser; ist er erreichbar, ist `
+      + `kein zweiter Start noetig. Sonst den anderen Prozess auf Port ${port} beenden `
+      + `oder mit der Umgebungsvariable WALLEE_PROXY_PORT einen anderen Port waehlen.`;
+  }
+  if (err && err.code === 'EACCES') {
+    return `Keine Berechtigung, Port ${port} zu oeffnen. Bitte ueber WALLEE_PROXY_PORT `
+      + `einen Port oberhalb von 1024 waehlen.`;
+  }
+  return `Server konnte nicht gestartet werden: ${err && err.message ? err.message : String(err)}`;
+}
+
 export function starteServer({ port = PORT, host = HOST } = {}) {
   zugangsdaten = ladeZugangsdaten();
   const server = http.createServer((req, res) => { behandleAnfrage(req, res); });
+  // Ohne diesen Handler wirft ein Listen-Fehler (z. B. belegter Port) ein
+  // unbehandeltes 'error'-Event und beendet den Prozess mit Stacktrace.
+  server.on('error', (err) => {
+    console.error(startFehlertext(err, host, port));
+    process.exit(1);
+  });
   server.listen(port, host, () => {
     const url = `http://${host}:${port}`;
     console.log(`wallee Query Builder laeuft auf ${url}`);

@@ -40,6 +40,20 @@ test('browserOeffnenBefehl waehlt das OS-Kommando', () => {
   assert.strictEqual(P.browserOeffnenBefehl('freebsd'), 'xdg-open');
 });
 
+test('startFehlertext: belegter Port ergibt eine klare Meldung statt Stacktrace', () => {
+  const belegt = P.startFehlertext({ code: 'EADDRINUSE' }, '127.0.0.1', 8787);
+  assert.match(belegt, /8787/, 'Port wird genannt');
+  assert.match(belegt, /bereits belegt|laeuft der Proxy schon/i, 'Ursache benannt');
+  assert.match(belegt, /WALLEE_PROXY_PORT/, 'Hinweis auf den Ausweg-Port');
+
+  const rechte = P.startFehlertext({ code: 'EACCES' }, '127.0.0.1', 80);
+  assert.match(rechte, /Berechtigung/i, 'EACCES eigene Meldung');
+
+  const sonst = P.startFehlertext({ message: 'irgendwas' }, '127.0.0.1', 8787);
+  assert.match(sonst, /irgendwas/, 'unbekannter Fehler reicht die Message durch');
+  assert.doesNotThrow(() => P.startFehlertext(null), 'null-Eingabe wirft nicht');
+});
+
 test('Routing: Token wird aus dem Pfad gelesen', () => {
   const status = P.findeRoute('GET', '/status/abc-123');
   assert.strictEqual(status.name, 'status');
