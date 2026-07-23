@@ -163,7 +163,7 @@ export function pruefeZugangsdaten(werte) {
 // Die App und der Proxy tragen dieselbe Version; pro Release gebumpt (auch der
 // <h1>-Badge in der HTML). Der Updater laedt ausschliesslich vom fest
 // verdrahteten GitHub-Repo ueber HTTPS - Owner/Repo kommen NIE aus Eingaben.
-export const APP_VERSION = '5.5.0';
+export const APP_VERSION = '5.5.1';
 export const UPDATE_REPO = { owner: 'saschakruesi', repo: 'wallee-query-builder' };
 export const UPDATE_DATEIEN = ['wallee_query_builder.html', 'wallee-proxy.mjs'];
 
