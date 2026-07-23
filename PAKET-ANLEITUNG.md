@@ -49,6 +49,22 @@ Beim ersten Start sind noch keine wallee-Zugangsdaten gespeichert:
 2. **Application User ID**, **Account** und **Secret (HMAC-Key)** eintragen, **speichern**.
 3. Fertig — die Daten bleiben lokal auf deinem Rechner und verlassen ihn nie.
 
+## Update
+
+Erscheint oben in der App ein Banner **„Update verfügbar"**, gibt es eine neuere Version:
+
+1. Auf **„Jetzt aktualisieren"** klicken (nur möglich, solange der Starter läuft — das
+   Banner öffnet sonst nur die Release-Seite zum manuellen Herunterladen).
+2. Kurz bestätigen — das Update ersetzt die App-Datei und den lokalen Server und startet den
+   Starter automatisch neu.
+3. Die Seite lädt sich nach ein paar Sekunden von selbst neu. Fertig.
+
+**Falls etwas schiefgeht:** Im Ordner neben `wallee_query_builder.html` und
+`wallee-proxy.mjs` liegen dann `wallee_query_builder.html.bak` und `wallee-proxy.mjs.bak` —
+die Sicherung des letzten funktionierenden Stands. Zum Zurücksetzen: die `.bak`-Dateien
+umbenennen (die Endung `.bak` entfernen, damit sie die Originale ersetzen) und den Starter
+neu aufrufen (bzw. `node wallee-proxy.mjs` in einer Konsole).
+
 ## Beenden
 
 Das **Starter-Fenster offen lassen**, solange du arbeitest. Zum Beenden das Fenster
