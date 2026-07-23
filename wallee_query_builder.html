@@ -1736,7 +1736,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   // Wirft nicht - jeder Fehler wird als Toast gemeldet.
   async function synchronisiereTerminals() {
     if (!state.apiMode) { settingsOeffnen(); return; }
-    const spaceIds = (state.spaces || []).filter(s => s.selected).map(s => String(s.id));
+    const spaceIds = (state.spaces || []).filter(s => s.selected && /^\d+$/.test(String(s.id))).map(s => String(s.id));
     if (!spaceIds.length) {
       showToast('Bitte oben mindestens einen Space auswählen.', true);
       return;
@@ -4032,7 +4032,6 @@ ORDER BY
   // Terminals
   addTerminalBtn.addEventListener('click', addTerminal);
   syncTerminalsBtn.addEventListener('click', () => {
-    if (syncTerminalsBtn.classList.contains('deaktiviert')) { settingsOeffnen(); return; }
     synchronisiereTerminals();
   });
   syncInfoMarker.addEventListener('click', () => {
