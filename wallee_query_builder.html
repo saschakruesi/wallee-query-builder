@@ -719,7 +719,7 @@
     <span class="pk-datum" id="reportPrintDatum"></span>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.4.0</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.4.1</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -770,6 +770,7 @@
     <div class="presets" id="builtinPresets">
       <button class="preset-chip" data-preset="today">Heute</button>
       <button class="preset-chip" data-preset="yesterday">Gestern</button>
+      <button class="preset-chip" data-preset="lastWeekend">Letztes Wochenende</button>
       <button class="preset-chip" data-preset="last7">Letzte 7 Tage</button>
       <button class="preset-chip" data-preset="last30">Letzte 30 Tage</button>
       <button class="preset-chip" data-preset="thisMonth">Aktueller Monat</button>
@@ -1460,6 +1461,14 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     switch (name) {
       case 'today':        s = new Date(now); e = new Date(now); break;
       case 'yesterday':    s = new Date(now); s.setDate(s.getDate()-1); e = new Date(s); break;
+      case 'lastWeekend': {
+        // Das zuletzt VOLLSTAENDIG vergangene Sa-So. An einem Wochenenden-Tag
+        // damit das Wochenende der Vorwoche, nicht das laufende (getDay(): So=0).
+        const offsetToSun = (now.getDay() === 0) ? 7 : now.getDay();
+        e = new Date(now); e.setDate(e.getDate() - offsetToSun);   // Sonntag
+        s = new Date(e);   s.setDate(s.getDate() - 1);             // Samstag davor
+        break;
+      }
       case 'last7':        s = new Date(now); s.setDate(s.getDate()-6); e = new Date(now); break;
       case 'last30':       s = new Date(now); s.setDate(s.getDate()-29); e = new Date(now); break;
       case 'thisMonth':    s = new Date(now.getFullYear(), now.getMonth(), 1);
