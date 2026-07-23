@@ -297,6 +297,23 @@
   /* Terminal-Report */
   .report-error { color: var(--danger); font-weight: 600; }
 
+  /* Terminal-Sync */
+  .sync-row { position: relative; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 4px; }
+  .sync-row-hint { color: var(--muted); font-size: 13px; }
+  /* Kopiermodus: Button ausgegraut/inaktiv. */
+  #syncTerminalsBtn.deaktiviert { opacity: .5; cursor: not-allowed; pointer-events: none; }
+  /* API-Modus: Button hervorgehoben. */
+  #syncTerminalsBtn.aktiv { box-shadow: 0 0 0 2px var(--accent); }
+  .sync-info-marker { border: none; background: none; color: var(--accent-hover); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
+  .sync-info-marker.hidden { display: none; }
+  .sync-info-overlay { position: absolute; top: 100%; left: 0; z-index: 20; margin-top: 6px; max-width: 320px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+  .sync-info-overlay.hidden { display: none; }
+  .sync-info-overlay p { margin: 0 0 10px; font-size: 13px; color: var(--text); }
+  .sync-info-close { position: absolute; top: 4px; right: 8px; border: none; background: none; font-size: 18px;
+    color: var(--muted); cursor: pointer; line-height: 1; }
+
   .submit-fortschritt {
     margin: 12px 0;
     padding: 12px 14px;
@@ -886,6 +903,20 @@
       <button class="btn" id="selectAllBtn" title="Alle Terminals in der Liste aktivieren">Alle auswählen</button>
       <button class="btn" id="deselectAllBtn" title="Auswahl aller Terminals zurücknehmen (Liste bleibt erhalten)">Auswahl löschen</button>
       <button class="btn" id="clearAllBtn" title="ACHTUNG: löscht alle gespeicherten Terminals komplett (Rückfrage erfolgt)">Liste leeren</button>
+    </div>
+
+    <div class="sync-row">
+      <button class="btn btn-primary" id="syncTerminalsBtn"
+              title="Lädt die Terminals der oben gewählten Spaces aus wallee und führt sie in die Liste ein.">🔄 Synchronisieren</button>
+      <button class="sync-info-marker" id="syncInfoMarker" type="button"
+              aria-label="Warum ist Synchronisieren deaktiviert?">ⓘ</button>
+      <span class="sync-row-hint">Basierend auf deiner Space-Auswahl oben werden die Terminals aus wallee geladen (Identifier + Name).</span>
+
+      <div class="sync-info-overlay hidden" id="syncInfoOverlay" role="dialog" aria-label="Hinweis zur Synchronisation">
+        <button class="sync-info-close" id="syncInfoOverlayClose" type="button" aria-label="Schliessen">×</button>
+        <p>Die Synchronisation braucht die API-Verbindung. Aktiviere im Zahnrad ⚙ oben den <strong>API-Modus</strong> und hinterlege die Zugangsdaten.</p>
+        <button class="btn" id="syncInfoOverlaySettingsLink" type="button">Einstellungen öffnen</button>
+      </div>
     </div>
 
     <p class="hint">Gespeicherte Terminals bleiben im Browser erhalten (<code>localStorage</code>). Nur <strong>ausgewählte</strong> Terminals (Checkbox aktiviert) fliessen in die Query ein.</p>
