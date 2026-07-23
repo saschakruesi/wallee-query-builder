@@ -1255,6 +1255,17 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   const sqlEinfuegenHinweis = document.getElementById('sqlEinfuegenHinweis');
   const settingsBtn     = document.getElementById('settingsBtn');
   const settingsOverlay = document.getElementById('settingsOverlay');
+  const updateBanner        = document.getElementById('updateBanner');
+  const updateBannerText    = document.getElementById('updateBannerText');
+  const updateBannerBtn     = document.getElementById('updateBannerBtn');
+  const updateCurrentVersion= document.getElementById('updateCurrentVersion');
+  const updateLatestVersion = document.getElementById('updateLatestVersion');
+  const updateNowBtn        = document.getElementById('updateNowBtn');
+  const updateCheckBtn      = document.getElementById('updateCheckBtn');
+  const updateProgressEl    = document.getElementById('updateProgress');
+  const updateProgressBar   = document.getElementById('updateProgressBar');
+  const updateStatusEl      = document.getElementById('updateStatus');
+  const updateSectionEl     = document.getElementById('updateSection');
   const settingsCloseBtn = document.getElementById('settingsCloseBtn');
   const apiModeToggle   = document.getElementById('apiModeToggle');
   const apiSettings     = document.getElementById('apiSettings');
@@ -1765,6 +1776,84 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       return { latestTag: null, verfuegbar: false };
     }
   }
+
+  // Merkt sich den zuletzt bekannten neuesten Tag fuer den Update-Ablauf.
+  let letzterLatestTag = null;
+
+  function setzeUpdateProgress(prozent, text) {
+    updateProgressEl.classList.remove('hidden');
+    updateProgressBar.style.width = Math.max(0, Math.min(100, prozent)) + '%';
+    if (text !== undefined) updateStatusEl.textContent = text;
+  }
+
+  // Banner + Settings-Abschnitt an das Check-Ergebnis anpassen.
+  function zeigeUpdateZustand(ergebnis) {
+    letzterLatestTag = ergebnis && ergebnis.latestTag ? ergebnis.latestTag : null;
+    updateCurrentVersion.textContent = 'v' + APP_VERSION;
+    updateLatestVersion.textContent = letzterLatestTag || '–';
+    const verfuegbar = !!(ergebnis && ergebnis.verfuegbar);
+    updateBanner.classList.toggle('hidden', !verfuegbar);
+    if (verfuegbar) updateBannerText.textContent = 'Update verfügbar: ' + letzterLatestTag;
+    updateNowBtn.disabled = !verfuegbar;
+  }
+
+  // Manueller/Init-Check.
+  async function checkeUpdate(force) {
+    const ergebnis = await pruefeUpdate(force);
+    zeigeUpdateZustand(ergebnis);
+    return ergebnis;
+  }
+
+  // Der Update-Ablauf. Nur im API-Modus; sonst Release-Seite oeffnen. Wirft nicht.
+  async function aktualisiereApp() {
+    if (!letzterLatestTag) { return; }
+    if (!state.apiMode) {
+      window.open(UPDATE_RELEASE_PAGE, '_blank', 'noopener');
+      return;
+    }
+    if (!confirm('Das ersetzt die App UND das Proxy-Programm und startet den Proxy neu. Fortfahren?')) return;
+    updateNowBtn.disabled = true;
+    try {
+      setzeUpdateProgress(10, 'Prüfe Verbindung zum Proxy …');
+      const zustand = await pruefeProxy(state.proxyUrl);
+      if (!zustand.erreichbar || !zustand.bereit) {
+        setzeUpdateProgress(0, 'Proxy nicht erreichbar. Update abgebrochen.');
+        updateNowBtn.disabled = false; return;
+      }
+      setzeUpdateProgress(35, 'Lade und ersetze die Dateien …');
+      const { status, daten } = await proxyJson('/update', 'POST', { tag: letzterLatestTag });
+      if (status !== 200 || !daten || !daten.ok) {
+        setzeUpdateProgress(0, 'Update fehlgeschlagen: ' + ((daten && daten.fehler) || ('Status ' + status)));
+        updateNowBtn.disabled = false; return;
+      }
+      // Proxy startet jetzt neu - auf /health warten.
+      setzeUpdateProgress(65, 'Proxy startet neu, verbinde neu …');
+      const bereit = await warteAufProxyNeustart(45000);
+      if (!bereit) {
+        setzeUpdateProgress(90, 'Neustart dauert länger als erwartet. Bitte die Seite manuell neu laden.');
+        return;
+      }
+      setzeUpdateProgress(100, 'Fertig — lädt neu …');
+      setTimeout(() => location.reload(), 600);
+    } catch (e) {
+      setzeUpdateProgress(0, 'Update fehlgeschlagen: ' + (e && e.message ? e.message : 'unbekannter Fehler'));
+      updateNowBtn.disabled = false;
+    }
+  }
+
+  // Pollt /health, bis der neu gestartete Proxy antwortet (oder Timeout).
+  async function warteAufProxyNeustart(timeoutMs) {
+    const bis = Date.now() + timeoutMs;
+    // Kurz warten, bis der alte Prozess sicher weg ist (Bind-Verzoegerung ~1.2s).
+    await new Promise(r => setTimeout(r, 1500));
+    while (Date.now() < bis) {
+      const z = await pruefeProxy(state.proxyUrl, 2000);
+      if (z.erreichbar) return true;
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    return false;
+  }
+
   // Fuehrt die aus wallee synchronisierten Terminals mit der lokalen Liste
   // zusammen. Schluessel ist der identifier (= pt.identifier im SQL). Neue werden
   // ausgewaehlt angehaengt, bestehende behalten ihre Auswahl, ihr Label wird aus
@@ -4302,6 +4391,18 @@ ORDER BY
       copyBtn.classList.remove('copied');
     }, 1800);
   });
+  updateBannerBtn.addEventListener('click', () => {
+    if (state.apiMode) { settingsOeffnen(); if (updateSectionEl) updateSectionEl.scrollIntoView({ block: 'center' }); aktualisiereApp(); }
+    else window.open(UPDATE_RELEASE_PAGE, '_blank', 'noopener');
+  });
+  updateNowBtn.addEventListener('click', () => aktualisiereApp());
+  updateCheckBtn.addEventListener('click', async () => {
+    updateStatusEl.textContent = 'Prüfe …';
+    const e = await checkeUpdate(true);
+    updateStatusEl.textContent = e.latestTag
+      ? (e.verfuegbar ? 'Update verfügbar: ' + e.latestTag : 'Aktuell auf dem neuesten Stand.')
+      : 'Prüfung nicht möglich (offline?).';
+  });
 
   // --- Init ----------------------------------------------------------------
   loadState();
@@ -4335,6 +4436,8 @@ ORDER BY
     pruefeProxy(state.proxyUrl, 2000).then(z => { proxyBereit = meldeProxyZustand(z); aktualisiereSyncButton(); });
   }
   setMode(state.mode || 'brand');
+  // Beim Laden einmal (gedrosselt) auf ein Update pruefen.
+  checkeUpdate(false);
 </script>
 </body>
 </html>
