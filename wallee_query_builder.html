@@ -1854,6 +1854,32 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     return false;
   }
 
+  // Anzeige-String fuer die Space eines Terminals: "<id> · <name>", nur id, oder
+  // nur name. Rein, harness-getestet.
+  function spaceLabelBauen(id, name) {
+    const i = id == null ? '' : String(id).trim();
+    const n = name == null ? '' : String(name).trim();
+    if (i && n) return i + ' · ' + n;
+    return i || n;
+  }
+
+  // Ob ein Terminal zum Filtertext passt (Identifier, Label oder Space). Leerer
+  // Filter matcht alles. Case-insensitiver Substring. Rein, harness-getestet.
+  function terminalMatchtFilter(t, filter) {
+    const f = (filter == null ? '' : String(filter)).trim().toLowerCase();
+    if (!f) return true;
+    return [t && t.id, t && t.label, t && t.space]
+      .some(x => (x == null ? '' : String(x)).toLowerCase().includes(f));
+  }
+
+  // Original-Indizes der Terminals, die zum Filter passen - damit die gerenderten
+  // Zeilen ihre echten State-Indizes behalten. Rein, harness-getestet.
+  function gefilterteIndices(list, filter) {
+    const out = [];
+    (list || []).forEach((t, i) => { if (terminalMatchtFilter(t, filter)) out.push(i); });
+    return out;
+  }
+
   // Fuehrt die aus wallee synchronisierten Terminals mit der lokalen Liste
   // zusammen. Schluessel ist der identifier (= pt.identifier im SQL). Neue werden
   // ausgewaehlt angehaengt, bestehende behalten ihre Auswahl, ihr Label wird aus
@@ -1869,11 +1895,15 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       if (!id || gesehen.has(id)) return;
       gesehen.add(id);
       const name = api && api.name ? String(api.name) : '';
+      const space = api && api.space ? String(api.space) : '';
       const bestehend = nachId.get(id);
       if (bestehend) {
-        if (name && bestehend.label !== name) { bestehend.label = name; aktualisiertCount++; }
+        let geaendert = false;
+        if (name && bestehend.label !== name) { bestehend.label = name; geaendert = true; }
+        if (space && bestehend.space !== space) { bestehend.space = space; geaendert = true; }
+        if (geaendert) aktualisiertCount++;
       } else {
-        const eintrag = { id, label: name || id, selected: true };
+        const eintrag = { id, label: name || id, selected: true, space };
         liste.push(eintrag);
         nachId.set(id, eintrag);
         neuCount++;
