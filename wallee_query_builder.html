@@ -633,6 +633,15 @@
   .status-dot[data-art="fehler"] { background:var(--danger); }
   .status-dot[data-art="info"]   { background:var(--muted); }
   .dialog-trenner { border:none; border-top:1px solid var(--border); margin:16px 0; }
+  .update-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--panel-3); border: 1px solid var(--accent); border-radius: 8px;
+    padding: 10px 14px; margin: 0 0 14px; color: var(--text); }
+  .update-banner.hidden { display: none; }
+  .update-progress { margin-top: 10px; height: 8px; border-radius: 4px; overflow: hidden;
+    background: var(--panel-3); border: 1px solid var(--border); }
+  .update-progress.hidden { display: none; }
+  .update-progress-bar { height: 100%; width: 0; background: var(--accent);
+    transition: width .3s ease; }
   .badge {
     display: inline-block;
     background: var(--panel-2);
@@ -717,6 +726,10 @@
     <span class="brand-mark">wallee</span>
     <span class="pk-titel">Terminal-Report</span>
     <span class="pk-datum" id="reportPrintDatum"></span>
+  </div>
+  <div class="update-banner hidden" id="updateBanner" role="status">
+    <span id="updateBannerText">Update verfügbar.</span>
+    <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
     <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.4.2</span></h1>
@@ -1131,6 +1144,24 @@
           <button class="btn btn-primary" id="credSaveBtn">Zugangsdaten speichern</button>
         </div>
         <p class="hint" id="credStatus" style="margin-top:8px;margin-bottom:0;"></p>
+      </div>
+
+      <div id="updateSection">
+        <hr class="dialog-trenner">
+        <h3 style="margin-bottom:4px;">Update</h3>
+        <p class="hint" style="margin-top:0;">
+          Aktuelle Version: <strong id="updateCurrentVersion">–</strong> ·
+          neueste: <strong id="updateLatestVersion">–</strong>.
+          Das Selbst-Update lädt App und Proxy neu und startet den Proxy neu — nur im API-Modus.
+        </p>
+        <div class="actions" style="margin-top:10px;">
+          <button class="btn btn-primary" id="updateNowBtn">Aktualisieren</button>
+          <button class="btn" id="updateCheckBtn">Jetzt prüfen</button>
+        </div>
+        <div class="update-progress hidden" id="updateProgress">
+          <div class="update-progress-bar" id="updateProgressBar"></div>
+        </div>
+        <p class="hint" id="updateStatus" style="margin-top:8px;margin-bottom:0;"></p>
       </div>
     </div>
   </div>

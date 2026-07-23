@@ -65,3 +65,11 @@ test('Sync-UI: die erwarteten Element-IDs sind im Markup', () => {
     assert.match(markup, new RegExp(`id="${id}"`), `ID ${id} fehlt im Markup`);
   });
 });
+
+test('Self-Update: die erwarteten Element-IDs sind im Markup', () => {
+  ['updateBanner','updateBannerText','updateBannerBtn','updateSection','updateCurrentVersion',
+   'updateLatestVersion','updateNowBtn','updateCheckBtn','updateProgress','updateProgressBar',
+   'updateStatus'].forEach(id => {
+    assert.match(markup, new RegExp(`id="${id}"`), `ID ${id} fehlt im Markup`);
+  });
+});
