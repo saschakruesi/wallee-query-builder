@@ -76,6 +76,13 @@ test('findeRoute erkennt /credentials GET und POST', () => {
   assert.strictEqual(P.findeRoute('GET', '/credentials?x=1').name, 'credentials-lesen');
 });
 
+test('Routing: /terminals wird erkannt und liest space aus dem Query', () => {
+  const r = P.findeRoute('GET', '/terminals?space=73192');
+  assert.strictEqual(r.name, 'terminals');
+  assert.strictEqual(r.space, '73192');
+  assert.strictEqual(P.findeRoute('GET', '/terminals').space, '', 'ohne space leerer String');
+});
+
 test('terminalPfad: baut Pfad mit limit/order und optionalem after', () => {
   assert.strictEqual(P.terminalPfad(), '/payment/terminals?limit=100&order=ASC');
   assert.strictEqual(P.terminalPfad({ limit: 50 }), '/payment/terminals?limit=50&order=ASC');
@@ -456,6 +463,57 @@ test('Proxy /submit: ausgehende Anfrage an wallee stimmt (Pfad, JWT, Body)', asy
     'signierter Pfad muss den gesendeten Pfad inkl. Query exakt abbilden');
   assert.strictEqual(inhalt.requestMethod, 'POST');
   assert.strictEqual(inhalt.sub, '12345');
+});
+
+test('Proxy /terminals: Space-Header, signierter Pfad und Paginierung', async () => {
+  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-proxy-')), 'config.json');
+  await P.speichereZugangsdaten(
+    { userId: '12345', secret: 'c2VjcmV0LXdlcnQtZnVlci1kZW4tdGVzdC1sYW5nLWdlbnVn', accountId: '1' }, cfg);
+  P.ladeZugangsdaten(cfg);
+
+  const original = globalThis.fetch;
+  const aufrufe = [];
+  globalThis.fetch = async (url, opts) => {
+    aufrufe.push({ url, opts });
+    // Erste Seite hasMore:true, zweite Seite hasMore:false.
+    const erste = aufrufe.length === 1;
+    return {
+      status: 200,
+      headers: new Map(),
+      text: async () => JSON.stringify(erste
+        ? { data: [{ identifier: '100', name: 'A', id: 1, state: 'ACTIVE' }], hasMore: true, limit: 1 }
+        : { data: [{ identifier: '200', name: 'B', id: 2, state: 'ACTIVE' }], hasMore: false, limit: 1 }),
+    };
+  };
+
+  let res;
+  try {
+    const paar = fakeReqRes({ method: 'GET', url: '/terminals?space=73192', origin: 'null' });
+    await P.behandleAnfrage(paar.req, paar.res);
+    res = await warteAufAntwort(paar.res);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  assert.strictEqual(aufrufe.length, 2, 'zwei Seiten wegen hasMore');
+  const u0 = new URL(aufrufe[0].url);
+  assert.strictEqual(u0.origin + u0.pathname, 'https://app-wallee.com/api/v2.0/payment/terminals');
+  assert.strictEqual(aufrufe[0].opts.headers.Space, '73192', 'Space-Header statt Account');
+  assert.strictEqual(aufrufe[0].opts.headers.Account, undefined, 'kein Account-Header fuer Terminals');
+  // Zweite Seite muss den after-Cursor der letzten id der ersten Seite tragen.
+  assert.match(String(aufrufe[1].url), /after=1/, 'Cursor after=<letzte id>');
+
+  const body = JSON.parse(res._body);
+  assert.strictEqual(body.ok, true);
+  assert.deepStrictEqual(body.terminals.map(t => t.identifier), ['100', '200'], 'beide Seiten aggregiert');
+});
+
+test('Proxy /terminals: fehlender space ergibt 400', async () => {
+  const paar = fakeReqRes({ method: 'GET', url: '/terminals', origin: 'null' });
+  await P.behandleAnfrage(paar.req, paar.res);
+  const res = await warteAufAntwort(paar.res);
+  assert.strictEqual(res._status, 400);
+  assert.match(JSON.parse(res._body).fehler, /space/i);
 });
 
 // --- Selbst-Herkunft der Setup-Seite --------------------------------------
