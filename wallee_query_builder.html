@@ -297,6 +297,23 @@
   /* Terminal-Report */
   .report-error { color: var(--danger); font-weight: 600; }
 
+  /* Terminal-Sync */
+  .sync-row { position: relative; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 4px; }
+  .sync-row-hint { color: var(--muted); font-size: 13px; }
+  /* Kopiermodus: Button ausgegraut/inaktiv. */
+  #syncTerminalsBtn.deaktiviert { opacity: .5; cursor: not-allowed; pointer-events: none; }
+  /* API-Modus: Button hervorgehoben. */
+  #syncTerminalsBtn.aktiv { box-shadow: 0 0 0 2px var(--accent); }
+  .sync-info-marker { border: none; background: none; color: var(--accent-hover); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
+  .sync-info-marker.hidden { display: none; }
+  .sync-info-overlay { position: absolute; top: 100%; left: 0; z-index: 20; margin-top: 6px; max-width: 320px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+  .sync-info-overlay.hidden { display: none; }
+  .sync-info-overlay p { margin: 0 0 10px; font-size: 13px; color: var(--text); }
+  .sync-info-close { position: absolute; top: 4px; right: 8px; border: none; background: none; font-size: 18px;
+    color: var(--muted); cursor: pointer; line-height: 1; }
+
   .submit-fortschritt {
     margin: 12px 0;
     padding: 12px 14px;
@@ -702,7 +719,7 @@
     <span class="pk-datum" id="reportPrintDatum"></span>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.3.2</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.4.0</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -886,6 +903,20 @@
       <button class="btn" id="selectAllBtn" title="Alle Terminals in der Liste aktivieren">Alle auswählen</button>
       <button class="btn" id="deselectAllBtn" title="Auswahl aller Terminals zurücknehmen (Liste bleibt erhalten)">Auswahl löschen</button>
       <button class="btn" id="clearAllBtn" title="ACHTUNG: löscht alle gespeicherten Terminals komplett (Rückfrage erfolgt)">Liste leeren</button>
+    </div>
+
+    <div class="sync-row">
+      <button class="btn btn-primary" id="syncTerminalsBtn"
+              title="Lädt die Terminals der oben gewählten Spaces aus wallee und führt sie in die Liste ein.">🔄 Synchronisieren</button>
+      <button class="sync-info-marker" id="syncInfoMarker" type="button"
+              aria-label="Warum ist Synchronisieren deaktiviert?">ⓘ</button>
+      <span class="sync-row-hint">Basierend auf deiner Space-Auswahl oben werden die Terminals aus wallee geladen (Identifier + Name).</span>
+
+      <div class="sync-info-overlay hidden" id="syncInfoOverlay" role="dialog" aria-label="Hinweis zur Synchronisation">
+        <button class="sync-info-close" id="syncInfoOverlayClose" type="button" aria-label="Schliessen">×</button>
+        <p>Die Synchronisation braucht die API-Verbindung. Aktiviere im Zahnrad ⚙ oben den <strong>API-Modus</strong> und hinterlege die Zugangsdaten.</p>
+        <button class="btn" id="syncInfoOverlaySettingsLink" type="button">Einstellungen öffnen</button>
+      </div>
     </div>
 
     <p class="hint">Gespeicherte Terminals bleiben im Browser erhalten (<code>localStorage</code>). Nur <strong>ausgewählte</strong> Terminals (Checkbox aktiviert) fliessen in die Query ein.</p>
@@ -1242,6 +1273,11 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   const addTerminalBtn   = document.getElementById('addTerminalBtn');
   const terminalListEl   = document.getElementById('terminalList');
   const terminalCount    = document.getElementById('terminalCount');
+  const syncTerminalsBtn = document.getElementById('syncTerminalsBtn');
+  const syncInfoMarker   = document.getElementById('syncInfoMarker');
+  const syncInfoOverlay  = document.getElementById('syncInfoOverlay');
+  const syncInfoOverlaySettingsLink = document.getElementById('syncInfoOverlaySettingsLink');
+  const syncInfoOverlayClose = document.getElementById('syncInfoOverlayClose');
   const selectAllBtn     = document.getElementById('selectAllBtn');
   const deselectAllBtn   = document.getElementById('deselectAllBtn');
   const clearAllBtn      = document.getElementById('clearAllBtn');
@@ -1646,6 +1682,101 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       });
     });
   }
+  // Fuehrt die aus wallee synchronisierten Terminals mit der lokalen Liste
+  // zusammen. Schluessel ist der identifier (= pt.identifier im SQL). Neue werden
+  // ausgewaehlt angehaengt, bestehende behalten ihre Auswahl, ihr Label wird aus
+  // dem aktuellen Namen aufgefrischt. Manuell/CSV-Eintraege ohne API-Treffer
+  // bleiben stehen. Rein und DOM-frei - ueber das Harness getestet.
+  function mergeSyncTerminals(vorhanden, neu) {
+    const liste = (vorhanden || []).map(t => ({ ...t }));
+    const nachId = new Map(liste.map(t => [t.id, t]));
+    let neuCount = 0, aktualisiertCount = 0;
+    const gesehen = new Set();
+    (neu || []).forEach(api => {
+      const id = api && api.identifier != null ? String(api.identifier) : '';
+      if (!id || gesehen.has(id)) return;
+      gesehen.add(id);
+      const name = api && api.name ? String(api.name) : '';
+      const bestehend = nachId.get(id);
+      if (bestehend) {
+        if (name && bestehend.label !== name) { bestehend.label = name; aktualisiertCount++; }
+      } else {
+        const eintrag = { id, label: name || id, selected: true };
+        liste.push(eintrag);
+        nachId.set(id, eintrag);
+        neuCount++;
+      }
+    });
+    return { liste, neuCount, aktualisiertCount };
+  }
+
+  // Sichtbarkeit/Aktivierung des Sync-Buttons. aktiv nur bei aktivem API-Modus
+  // UND erreichbarem Proxy; der Info-Marker erklaert das Aktivieren des
+  // API-Modus und erscheint, solange der API-Modus aus ist.
+  function syncButtonZustand(apiMode, proxyOk) {
+    return { aktiv: !!apiMode && !!proxyOk, infoSichtbar: !apiMode };
+  }
+
+  // Sync-Button an den aktuellen Betriebszustand anpassen (Kopiermodus vs API).
+  function aktualisiereSyncButton() {
+    const { aktiv, infoSichtbar } = syncButtonZustand(state.apiMode, proxyBereit);
+    syncTerminalsBtn.classList.toggle('deaktiviert', !aktiv);
+    syncTerminalsBtn.classList.toggle('aktiv', aktiv);
+    syncTerminalsBtn.setAttribute('aria-disabled', String(!aktiv));
+    syncInfoMarker.classList.toggle('hidden', !infoSichtbar);
+    if (!infoSichtbar) syncInfoOverlay.classList.add('hidden');
+    if (state.apiMode && !proxyBereit) {
+      syncTerminalsBtn.title = 'Proxy nicht erreichbar. Bitte den Proxy starten (Zahnrad ⚙ prüfen).';
+    } else {
+      syncTerminalsBtn.title = 'Lädt die Terminals der oben gewählten Spaces aus wallee und führt sie in die Liste ein.';
+    }
+  }
+
+  // Der Sync-Ablauf: pro ausgewaehltem Space die Terminals holen, mergen, melden.
+  // Wirft nicht - jeder Fehler wird als Toast gemeldet.
+  async function synchronisiereTerminals() {
+    if (!state.apiMode) { settingsOeffnen(); return; }
+    const spaceIds = (state.spaces || []).filter(s => s.selected && /^\d+$/.test(String(s.id))).map(s => String(s.id));
+    if (!spaceIds.length) {
+      showToast('Bitte oben mindestens einen Space auswählen.', true);
+      return;
+    }
+    const zustand = await pruefeProxy(state.proxyUrl);
+    proxyBereit = meldeProxyZustand(zustand);
+    aktualisiereSyncButton();
+    if (!proxyBereit) {
+      showToast('Proxy nicht erreichbar oder ohne Zugangsdaten. Bitte im Zahnrad ⚙ prüfen.', true);
+      return;
+    }
+
+    syncTerminalsBtn.disabled = true;
+    showToast('Synchronisiere Terminals …', false);
+    try {
+      let alle = [];
+      const fehlerSpaces = [];
+      for (const id of spaceIds) {
+        const { status, daten } = await proxyJson('/terminals?space=' + encodeURIComponent(id), 'GET');
+        if (status === 200 && daten && Array.isArray(daten.terminals)) {
+          alle = alle.concat(daten.terminals);
+        } else {
+          fehlerSpaces.push(id);
+        }
+      }
+      const { liste, neuCount, aktualisiertCount } = mergeSyncTerminals(state.terminals, alle);
+      state.terminals = liste;
+      saveState(); renderTerminals(); generate();
+
+      const bits = [`${neuCount} neu`, `${aktualisiertCount} aktualisiert`,
+        `${spaceIds.length - fehlerSpaces.length} Space${(spaceIds.length - fehlerSpaces.length) === 1 ? '' : 's'}`];
+      if (fehlerSpaces.length) bits.push(`${fehlerSpaces.length} Space${fehlerSpaces.length === 1 ? '' : 's'} fehlgeschlagen`);
+      showToast('✓ ' + bits.join(' · '), fehlerSpaces.length > 0);
+    } catch (e) {
+      showToast('Synchronisation fehlgeschlagen: ' + (e && e.message ? e.message : 'unbekannter Fehler'), true);
+    } finally {
+      syncTerminalsBtn.disabled = false;
+    }
+  }
+
   function addTerminal() {
     const id = newTerminalId.value.trim();
     if (!id) { newTerminalId.focus(); return; }
@@ -2555,6 +2686,7 @@ ORDER BY
   // Abbrechen und Fortschrittsanzeige haengen daran. abgebrochen wird gesetzt,
   // damit eine noch laufende Poll-Schleife nach dem Abbrechen nichts mehr tut.
   let apiLauf = null;   // { token, abgebrochen } oder null
+  let proxyBereit = false;
 
   // Als Objekt statt als Konstanten, damit die Tests das Poll-Intervall
   // heruntersetzen koennen, ohne 1.5s je Runde zu warten. Im Browser bleiben
@@ -3616,6 +3748,7 @@ ORDER BY
     } else {
       modeBadge.textContent = 'Brand';
     }
+    aktualisiereSyncButton();
     saveState();
     generate();
     renderHistory();
@@ -3683,8 +3816,10 @@ ORDER BY
     if (state.apiMode) {
       ladeCredentialsInDialog();
       setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
-      pruefeProxy(state.proxyUrl).then(meldeProxyZustand);
+      pruefeProxy(state.proxyUrl).then(z => { proxyBereit = meldeProxyZustand(z); aktualisiereSyncButton(); });
     }
+    if (!state.apiMode) { proxyBereit = false; }
+    aktualisiereSyncButton();
   });
 
   proxyUrlInput.addEventListener('input', () => {
@@ -3896,6 +4031,17 @@ ORDER BY
 
   // Terminals
   addTerminalBtn.addEventListener('click', addTerminal);
+  syncTerminalsBtn.addEventListener('click', () => {
+    synchronisiereTerminals();
+  });
+  syncInfoMarker.addEventListener('click', () => {
+    syncInfoOverlay.classList.toggle('hidden');
+  });
+  syncInfoOverlayClose.addEventListener('click', () => syncInfoOverlay.classList.add('hidden'));
+  syncInfoOverlaySettingsLink.addEventListener('click', () => {
+    syncInfoOverlay.classList.add('hidden');
+    settingsOeffnen();
+  });
   newTerminalId.addEventListener('keydown', e => { if (e.key === 'Enter') addTerminal(); });
   newTerminalLabel.addEventListener('keydown', e => { if (e.key === 'Enter') addTerminal(); });
 
@@ -4103,7 +4249,7 @@ ORDER BY
   // Nutzer sofort, ob der Proxy laeuft, ohne selbst zu klicken.
   if (state.apiMode) {
     setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
-    pruefeProxy(state.proxyUrl, 2000).then(meldeProxyZustand);
+    pruefeProxy(state.proxyUrl, 2000).then(z => { proxyBereit = meldeProxyZustand(z); aktualisiereSyncButton(); });
   }
   setMode(state.mode || 'brand');
 </script>

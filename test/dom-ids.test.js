@@ -58,3 +58,10 @@ test('Terminal-Report ist im terminal-Modus aufgegangen, kein eigener Report-Tab
   assert.doesNotMatch(markup, /id="reportDropzone"/, 'CSV-Upload-Dropzone haette entfernt werden muessen');
   assert.doesNotMatch(markup, /id="reportFileInput"/, 'CSV-Datei-Input haette entfernt werden muessen');
 });
+
+test('Sync-UI: die erwarteten Element-IDs sind im Markup', () => {
+  ['syncTerminalsBtn', 'syncInfoMarker', 'syncInfoOverlay',
+   'syncInfoOverlaySettingsLink', 'syncInfoOverlayClose'].forEach(id => {
+    assert.match(markup, new RegExp(`id="${id}"`), `ID ${id} fehlt im Markup`);
+  });
+});

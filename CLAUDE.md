@@ -18,8 +18,8 @@ die Zugangsdaten lassen sich direkt im Einstellungs-Dialog pflegen.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.3.2).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl. Hier weiterentwickeln. |
-| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.4.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung. Hier weiterentwickeln. |
+| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
@@ -94,6 +94,16 @@ Kartensuche-Panel nur `card`, Settlement-Panel nur `settlement`, Report-Panel nu
 `['brand','terminal','export','card','settlement']` — ein alter State mit `mode: 'report'`
 wird gezielt auf `terminal` migriert statt auf `brand` zurückzufallen (siehe „State &
 Persistenz" oben).
+
+**Terminal-Filter befüllen (`#terminalSection`, seit v5.4):** drei Wege, kombinierbar —
+manuell hinzufügen, CSV-Import, und **„🔄 Synchronisieren"**. Synchronisieren holt über die
+Proxy-Route `GET /terminals?space=<id>` die Terminals der oben gewählten Spaces und führt sie
+per `mergeSyncTerminals(vorhanden, neu)` in die bestehende Liste ein: neue Terminals kommen
+ausgewählt dazu, bereits vorhandene (auch manuell angelegte) behalten ihre Auswahl, das Label
+kommt aus `name`. Kein `STORAGE_KEY`-Bump, da nur bestehende `state.terminals`-Einträge
+gemischt werden. Der Button ist **nur im API-Modus aktiv**; im Kopieren-Modus greyed-out mit
+einem ⓘ-Info-Overlay, das auf das Zahnrad/den API-Modus verweist (`syncButtonZustand(apiMode,
+proxyOk)` → `{ aktiv, infoSichtbar }`, angewendet über `aktualisiereSyncButton()`).
 
 ### Terminal-Report (Ausgabe des Modus `terminal`, seit v4, seit v5 ohne CSV-Upload)
 
@@ -286,13 +296,13 @@ aktive Zustände) — als Textfarbe auf hellem Grund ist das helle Türkis zu ko
 Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum Einsatz:
 `#0da69c` (`--accent-hover`) und `#225956` (`--accent-dark`, z. B. für `.brand-mark`).
 
-## Proxy (`wallee-proxy.mjs`, v4, `/credentials` seit v5)
+## Proxy (`wallee-proxy.mjs`, v4, `/credentials` seit v5, `/terminals` seit v5.4)
 
 Einzelnes Node-Script, nur Builtins (`http`, `crypto`, `fs`), **kein npm install**. Start
 `node wallee-proxy.mjs`, Port über `WALLEE_PROXY_PORT`. Endpunkte: `GET /` (+ `/app`,
 `/index.html`) liefert die **App-HTML selbst** (Standalone-/Serve-Betrieb, siehe unten),
 `/health`, `GET`+`POST /setup`, `GET`+`POST /credentials`, `POST /submit`,
-`GET /status/:token`, `GET /result/:token`, `DELETE /query/:token`.
+`GET /status/:token`, `GET /result/:token`, `DELETE /query/:token`, `GET /terminals?space=<id>`.
 
 ### Launcher-Skripte (seit v5.2, kein Terminal-Befehl nötig)
 
@@ -338,6 +348,14 @@ CI-Aufwand). Sicherheitsmodell unverändert: Bind nur `127.0.0.1`, Secret lokal 
   dieselbe `speichereZugangsdaten()`/`pruefeZugangsdaten()`-Validierung wie `/setup` und wird
   mit Dateirechten 600 geschrieben. `credentialsAnzeige` und `mischeZugangsdaten` sind reine
   Funktionen, ohne Netz getestet (`test/proxy.test.js`).
+- **`GET /terminals?space=<id>`** (Route `terminals`, seit v5.4) lädt die Terminals eines
+  Space über `GET /api/v2.0/payment/terminals` (Header `Space: <id>` statt `Account` — dafür
+  bekommt `rufeApi` eine `optionen.space`). Die wallee-API paginiert per Cursor
+  (`limit`/`after`, Antwort `hasMore`); der Proxy blättert intern durch (Sicherheitsnetz:
+  max. 100 Seiten), sammelt alle Seiten über `mappeTerminal(obj)` (→
+  `{identifier,name,id,state}`) ein und liefert `{ ok:true, terminals:[...] }` in einer
+  Antwort. `terminalPfad`/`mappeTerminal` sind reine Funktionen, ohne Netz getestet
+  (`test/proxy.test.js`).
 - **Missbrauchsschutz** (ein lokaler Server ist von jeder offenen Webseite erreichbar):
   Bindung nur auf `127.0.0.1`; Herkunft nur `null` (per `file://` geöffnete App) und die
   eigenen Proxy-Origins, **nie** `*`; zusätzlicher Header `X-Wallee-Proxy`, den eine fremde
@@ -388,6 +406,14 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
   - PAR: `1739873828282` · Expiry (yearMonthContent): `1456765711187`
   - Nachschlagen: `https://app-wallee.com/en-us/doc/api/label-descriptor/view/<ID>`
 - **Sales-Channel-IDs:** Ecommerce `1582816223150`, Physical Terminal `1582819151330`.
+- **Terminal-Liste:** `GET /api/v2.0/payment/terminals`, Header `Space: <id>` (nicht
+  `Account` — Terminals hängen am Space, nicht am Account). Cursor-Paginierung über
+  `limit`/`after`, Antwort `{ data:[...], hasMore }`; `after` ist die `id` des letzten
+  Elements der vorigen Seite. Feld `identifier` ist derselbe Wert, den `buildTerminalQuery`/
+  `buildExportQuery` als `paymentterminal.identifier` filtern — die Synchronisierung
+  (`GET /terminals` am Proxy) nutzt exakt diesen Endpunkt. Der portal-interne Endpunkt
+  `/api/client/getPaymentTerminals` (Session-/Cookie-Auth der Web-UI) ist **nicht**
+  JWT-fähig und daher **nicht** verwendet.
 - **Trinkgeld ist im Bruttobetrag enthalten — an echten Daten bestätigt.** Mit
   `sql/tip_verifikation.sql` gegen Produktivdaten geprüft: (a) im geprüften Space kommen nur
   die `lineitem.type`-Werte `PRODUCT` und `TIP` vor — der Wert `TIP` ist damit als korrekt

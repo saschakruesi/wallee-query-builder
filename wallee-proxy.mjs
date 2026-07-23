@@ -51,6 +51,33 @@ export const API_PFADE = {
   cancel: token => `/analytics/queries/queryToken/${encodeURIComponent(token)}`,
 };
 
+// Terminal-Endpunkt (REST, verifiziert am python-sdk payment_terminals_service.py):
+//   GET /api/v2.0/payment/terminals  Header "Space: <id>", Cursor-Paginierung
+//   ueber limit (max 100) + after=<letzte objId>, Antwort { data, hasMore, limit }.
+// Der Query-String gehoert in den signierten requestPath (baueToken haengt pfad an),
+// deshalb wird er hier deterministisch gebaut, damit Signatur und Fetch identisch sind.
+export function terminalPfad({ limit = 100, after } = {}) {
+  let pfad = `/payment/terminals?limit=${limit}&order=ASC`;
+  if (after !== undefined && after !== null && Number(after) > 0) {
+    pfad += `&after=${encodeURIComponent(after)}`;
+  }
+  return pfad;
+}
+
+// Ein wallee-PaymentTerminal auf die von der App benoetigten Felder eindampfen.
+// identifier = der auf dem Geraet angezeigte Wert (in SQL pt.identifier),
+// id = interne Objekt-ID (Cursor fuer die Paginierung).
+export function mappeTerminal(obj) {
+  const o = obj && typeof obj === 'object' ? obj : {};
+  const idZahl = Number(o.id);
+  return {
+    identifier: o.identifier == null ? '' : String(o.identifier),
+    name: o.name == null ? '' : String(o.name),
+    id: Number.isFinite(idZahl) ? idZahl : null,
+    state: o.state == null ? '' : String(o.state),
+  };
+}
+
 // --- Zugangsdaten ----------------------------------------------------------
 // Liegen ausschliesslich hier und in der Config-Datei. Sie gehen NIE an die
 // App zurueck und werden NIE geloggt.
@@ -274,6 +301,12 @@ export function findeRoute(methode, pfad) {
   treffer = /^\/query\/(.+)$/.exec(p);
   if (m === 'DELETE' && treffer) return { name: 'cancel', token: decodeURIComponent(treffer[1]) };
 
+  if (m === 'GET' && p === '/terminals') {
+    const query = String(pfad || '').split('?')[1] || '';
+    const space = (new URLSearchParams(query).get('space') || '').trim();
+    return { name: 'terminals', space };
+  }
+
   return { name: 'unbekannt' };
 }
 
@@ -298,11 +331,17 @@ async function rufeApi(methode, pfad, koerper, optionen = {}) {
     // deshalb pro Aufruf setzbar; Default ist JSON fuer submit/status/cancel.
     Accept: optionen.accept || 'application/json',
   };
-  // Alle Analytics-Endpunkte verlangen die Account-ID als Header "Account"
-  // (im SDK: AnalyticsQueriesService, headerParameters['Account']). Ohne ihn
-  // antwortet wallee mit 400 account_invalid. Der Header ist NICHT Teil der
+  // Analytics-Endpunkte verlangen die Account-ID als Header "Account" (im SDK:
+  // AnalyticsQueriesService, headerParameters['Account']; ohne ihn antwortet
+  // wallee mit 400 account_invalid); der Terminal-Endpunkt verlangt stattdessen
+  // "Space: <id>" und kennt Account nicht. Ist optionen.space gesetzt, wird
+  // Space gesendet und Account weggelassen. Keiner der Header ist Teil der
   // JWT-Signatur, deshalb genuegt es, ihn zusaetzlich zu setzen.
-  if (zugangsdaten.accountId) kopf.Account = String(zugangsdaten.accountId);
+  if (optionen.space !== undefined && optionen.space !== null && optionen.space !== '') {
+    kopf.Space = String(optionen.space);
+  } else if (zugangsdaten.accountId) {
+    kopf.Account = String(zugangsdaten.accountId);
+  }
   if (koerper !== undefined) kopf['Content-Type'] = 'application/json';
 
   const antwort = await fetch(API_BASE + API_PATH + pfad, {
@@ -609,6 +648,35 @@ export async function behandleAnfrage(req, res) {
         // Das SDK bricht per DELETE ab, nicht per POST.
         const antwort = await rufeApi('DELETE', API_PFADE.cancel(route.token));
         reicheWalleeDurch(res, antwort, origin, 'cancel');
+        return;
+      }
+
+      case 'terminals': {
+        // Terminals eines Space laden. wallee paginiert per Cursor (after=<id>),
+        // hier wird intern durchgeblaettert, bis hasMore false ist, damit die App
+        // in einem Aufruf die volle Liste bekommt.
+        if (!/^\d+$/.test(route.space)) {
+          sendeJson(res, 400, { ok: false, fehler: 'Query-Parameter "space" (Zahl) fehlt.' }, origin);
+          return;
+        }
+        const gesammelt = [];
+        let after;
+        // Sicherheitsnetz gegen Endlosschleifen: max. 100 Seiten (= bis 10'000 Terminals).
+        for (let seite = 0; seite < 100; seite++) {
+          const antwort = await rufeApi('GET', terminalPfad({ limit: 100, after }), undefined,
+            { space: route.space });
+          if (antwort.status >= 400) {
+            reicheWalleeDurch(res, antwort, origin, 'terminals');
+            return;
+          }
+          const body = reicheDurch(antwort);
+          const daten = body && Array.isArray(body.data) ? body.data : [];
+          daten.forEach(t => gesammelt.push(mappeTerminal(t)));
+          const letzte = daten.length ? daten[daten.length - 1] : null;
+          if (!body || body.hasMore !== true || !letzte || letzte.id == null) break;
+          after = letzte.id;
+        }
+        sendeJson(res, 200, { ok: true, terminals: gesammelt }, origin);
         return;
       }
 
