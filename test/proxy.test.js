@@ -76,6 +76,27 @@ test('findeRoute erkennt /credentials GET und POST', () => {
   assert.strictEqual(P.findeRoute('GET', '/credentials?x=1').name, 'credentials-lesen');
 });
 
+test('terminalPfad: baut Pfad mit limit/order und optionalem after', () => {
+  assert.strictEqual(P.terminalPfad(), '/payment/terminals?limit=100&order=ASC');
+  assert.strictEqual(P.terminalPfad({ limit: 50 }), '/payment/terminals?limit=50&order=ASC');
+  assert.strictEqual(P.terminalPfad({ after: 4711 }),
+    '/payment/terminals?limit=100&order=ASC&after=4711');
+  assert.strictEqual(P.terminalPfad({ limit: 100, after: 0 }),
+    '/payment/terminals?limit=100&order=ASC', 'after=0 ist kein gueltiger Cursor und entfaellt');
+});
+
+test('mappeTerminal: liest identifier/name/id/state defensiv', () => {
+  assert.deepStrictEqual(
+    P.mappeTerminal({ identifier: '33024744', name: 'Kasse 1', id: 42, state: 'ACTIVE', extra: 'x' }),
+    { identifier: '33024744', name: 'Kasse 1', id: 42, state: 'ACTIVE' });
+  assert.deepStrictEqual(
+    P.mappeTerminal({ identifier: '9' }),
+    { identifier: '9', name: '', id: null, state: '' }, 'fehlende Felder werden neutralisiert');
+  assert.deepStrictEqual(
+    P.mappeTerminal(null),
+    { identifier: '', name: '', id: null, state: '' }, 'null-Eingabe wirft nicht');
+});
+
 // --- Zugangsdaten ----------------------------------------------------------
 
 test('Zugangsdaten: gueltige Eingabe wird angenommen', () => {

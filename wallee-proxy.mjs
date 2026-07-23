@@ -51,6 +51,33 @@ export const API_PFADE = {
   cancel: token => `/analytics/queries/queryToken/${encodeURIComponent(token)}`,
 };
 
+// Terminal-Endpunkt (REST, verifiziert am python-sdk payment_terminals_service.py):
+//   GET /api/v2.0/payment/terminals  Header "Space: <id>", Cursor-Paginierung
+//   ueber limit (max 100) + after=<letzte objId>, Antwort { data, hasMore, limit }.
+// Der Query-String gehoert in den signierten requestPath (baueToken haengt pfad an),
+// deshalb wird er hier deterministisch gebaut, damit Signatur und Fetch identisch sind.
+export function terminalPfad({ limit = 100, after } = {}) {
+  let pfad = `/payment/terminals?limit=${limit}&order=ASC`;
+  if (after !== undefined && after !== null && Number(after) > 0) {
+    pfad += `&after=${encodeURIComponent(after)}`;
+  }
+  return pfad;
+}
+
+// Ein wallee-PaymentTerminal auf die von der App benoetigten Felder eindampfen.
+// identifier = der auf dem Geraet angezeigte Wert (in SQL pt.identifier),
+// id = interne Objekt-ID (Cursor fuer die Paginierung).
+export function mappeTerminal(obj) {
+  const o = obj && typeof obj === 'object' ? obj : {};
+  const idZahl = Number(o.id);
+  return {
+    identifier: o.identifier == null ? '' : String(o.identifier),
+    name: o.name == null ? '' : String(o.name),
+    id: Number.isFinite(idZahl) ? idZahl : null,
+    state: o.state == null ? '' : String(o.state),
+  };
+}
+
 // --- Zugangsdaten ----------------------------------------------------------
 // Liegen ausschliesslich hier und in der Config-Datei. Sie gehen NIE an die
 // App zurueck und werden NIE geloggt.
