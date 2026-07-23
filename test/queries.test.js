@@ -438,7 +438,10 @@ test('Beide Schluessel leer: Defaults greifen, keine Exception', () => {
   const b = loadBuilders();
   const state = b.getState();
   assert.strictEqual(state.mode, 'brand');
-  assert.ok(Array.isArray(state.spaces) && state.spaces.length > 0);
+  // Kein leerer Platzhalter-Space mehr vorgewaehlt: frischer Start hat eine
+  // leere Space-Liste (renderSpaces zeigt dann den Hinweis zum Hinzufuegen).
+  assert.ok(Array.isArray(state.spaces));
+  assert.strictEqual(state.spaces.length, 0);
   assert.strictEqual(state.cardLast4, '');
   assert.strictEqual(state.settlementByTerminal, false);
 });

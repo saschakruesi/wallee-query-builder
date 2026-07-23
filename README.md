@@ -102,7 +102,9 @@ zusammengeführt.
   Query wird das Ergebnis automatisch in die Gruppen-Auswertung übernommen. Der verbliebene
   Datei-Input im Report-Panel dient nur noch dem Import/Export der Gruppen-Konfiguration als
   JSON, nicht mehr dem Laden der Report-Rohdaten.
-- **Export:** echtes `.xlsx` (Beträge als Zahlen mit Schweizer Zahlformat, vier Blätter),
+- **Export:** echtes `.xlsx` — alle Abschnitte (Detail, Outlet-/Brand-Totale, Gesamttotal)
+  in **einem Blatt** untereinander gestapelt wie der PDF-Report, Beträge als Zahlen mit
+  Schweizer Zahlformat, gebrandeter Titel und türkiser Kopf,
   CSV (UTF-8 mit BOM, Semikolon) und PDF über die Druckfunktion.
 - **Persistenz:** die Gruppen-Zuordnung liegt unter `wallee_terminal_report_cfg_v1`, per
   JSON exportier- und importierbar. Die Zahlen bleiben vollständig auf dem Gerät.

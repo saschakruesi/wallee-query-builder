@@ -570,3 +570,27 @@ test('holeErgebnisText meldet 204 als leer', async () => {
   assert.strictEqual(r.ok, false);
   assert.match(r.fehler, /keine Zeilen/i);
 });
+
+// --- Transiente 404 beim Status-Poll (erster Submit einer Sitzung) ----------
+test('submitUndReport toleriert transiente 404 beim Status-Poll und laeuft dann durch', async () => {
+  let statusCalls = 0;
+  const fetchStub = async (url) => {
+    if (/\/submit$/.test(url)) return { status: 200, json: async () => ({ portalQueryToken: 'TT' }) };
+    if (/\/status\//.test(url)) {
+      statusCalls++;
+      if (statusCalls <= 2) return { status: 404, json: async () => ({ fehler: 'token not found' }) };
+      return { status: 200, json: async () => ({ status: 'SUCCESS' }) };
+    }
+    if (/\/result\//.test(url)) return { status: 200, text: async () => 'a,b\n1,2', json: async () => null };
+    return { status: 200, json: async () => ({ ok: true }) };
+  };
+  const x = loadBuilders({ fetch: fetchStub });
+  const st = x.getState();
+  st.proxyUrl = 'http://localhost:8787';
+  st.mode = 'brand';                 // brand: kein /result, aber Verlaufseintrag bei Erfolg
+  x.apiPollConfig.retryStandardSek = 0;
+  await x.submitUndReport('SELECT 1');
+  const hist = plain(x.historyLaden());
+  assert.strictEqual(hist[0] && hist[0].token, 'TT', 'trotz transienter 404 muss der Lauf erfolgreich sein');
+  assert.ok(statusCalls >= 3, 'die 404 muessen erneut gepollt worden sein, nicht sofort abbrechen');
+});

@@ -97,67 +97,78 @@ async function exportiereUndLies() {
 
 // --- Tests -----------------------------------------------------------------
 
-test('XLSX-Export erzeugt eine gueltige Arbeitsmappe', async () => {
-  const { bytes, wb } = await exportiereUndLies();
+// Alle Abschnitte liegen jetzt in EINEM Blatt "Terminal-Report" untereinander
+// (wie der PDF-Report), nicht mehr in vier Tabs. Diese Helfer finden einen
+// Abschnitt an seiner Titelzeile.
+function blattZeilen(wb) {
+  return XLSX.utils.sheet_to_json(wb.Sheets['Terminal-Report'], { header: 1, blankrows: true });
+}
+function titelZeile(zeilen, name) {
+  const t = zeilen.findIndex(z => (z[0] || '') === name);
+  assert.notStrictEqual(t, -1, `Abschnitt "${name}" fehlt im Blatt`);
+  return t;                 // Titel bei t, Spaltenkopf bei t+1, Daten ab t+2
+}
+// Datenzeilen eines Abschnitts bis zur naechsten Leerzeile.
+function abschnittDaten(zeilen, name) {
+  const t = titelZeile(zeilen, name);
+  const daten = [];
+  for (let i = t + 2; i < zeilen.length; i++) {
+    const z = zeilen[i];
+    if (!z || z.length === 0 || (z.length === 1 && z[0] === '')) break;
+    daten.push(z);
+  }
+  return daten;
+}
 
-  // "PK" - ein XLSX ist ein ZIP.
-  assert.strictEqual(bytes[0], 0x50);
+test('XLSX-Export erzeugt eine gueltige Arbeitsmappe mit EINEM Blatt', async () => {
+  const { bytes, wb } = await exportiereUndLies();
+  assert.strictEqual(bytes[0], 0x50);   // "PK" - ein XLSX ist ein ZIP.
   assert.strictEqual(bytes[1], 0x4b);
   assert.ok(bytes.length > 2000, 'Datei wirkt verdaechtig klein');
-  assert.deepStrictEqual(plain(wb.SheetNames),
-    ['Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal', 'Detail']);
+  // Alles in einem Blatt (nicht mehr vier Tabs) - wie der PDF-Report.
+  assert.deepStrictEqual(plain(wb.SheetNames), ['Terminal-Report']);
 });
 
 test('XLSX: Gesamttotal steht mit den richtigen Zahlen drin', async () => {
   const { wb } = await exportiereUndLies();
-  const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Gesamttotal'], { header: 1 });
-
-  // Zwei Titelzeilen (wallee — Terminal-Report + Untertitel) stehen ueber dem Spaltenkopf.
-  assert.deepStrictEqual(plain(zeilen[2]), ['', 'Complete Demand', 'Tip', 'Unmatched', 'Anz.']);
-  assert.deepStrictEqual(plain(zeilen[3]), ['Total', 62756.16, 793.46, 889, 2070]);
+  const zeilen = blattZeilen(wb);
+  const t = titelZeile(zeilen, 'Gesamttotal');
+  assert.deepStrictEqual(plain(zeilen[t + 1]), ['', 'Complete Demand', 'Tip', 'Unmatched', 'Anz.']);
+  assert.deepStrictEqual(plain(zeilen[t + 2]), ['Total', 62756.16, 793.46, 889, 2070]);
 });
 
-test('XLSX: Betraege sind Zahlen, keine Texte', async () => {
+test('XLSX: Betraege sind Zahlen mit Schweizer Zahlformat', async () => {
   const { wb } = await exportiereUndLies();
-  const ws = wb.Sheets['Gesamttotal'];
-
-  // B4 = Complete Demand des Gesamttotals (zwei Titelzeilen + Spaltenkopf davor)
-  assert.strictEqual(ws['B4'].t, 'n', 'Betrag muss als Zahl gespeichert sein, sonst kann Excel nicht rechnen');
-  assert.strictEqual(ws['B4'].v, 62756.16);
-});
-
-test('XLSX: Betragsspalten tragen das Schweizer Zahlformat', async () => {
-  const { wb } = await exportiereUndLies();
-  const ws = wb.Sheets['Gesamttotal'];
-
-  assert.strictEqual(ws['B4'].z, '#,##0.00', 'Betrag ohne Zahlformat');
-  assert.strictEqual(ws['D4'].z, '#,##0', 'Zaehler ohne Zahlformat');
+  const ws = wb.Sheets['Terminal-Report'];
+  const t = titelZeile(blattZeilen(wb), 'Gesamttotal');
+  const datenR = t + 2;                 // 0-basierter Zeilenindex der Total-Zeile
+  const b = ws[XLSX.utils.encode_cell({ r: datenR, c: 1 })];   // Complete Demand
+  const d = ws[XLSX.utils.encode_cell({ r: datenR, c: 3 })];   // Anz.
+  assert.strictEqual(b.t, 'n', 'Betrag muss als Zahl gespeichert sein, sonst kann Excel nicht rechnen');
+  assert.strictEqual(b.v, 62756.16);
+  assert.strictEqual(b.z, '#,##0.00', 'Betrag ohne Zahlformat');
+  assert.strictEqual(d.z, '#,##0', 'Zaehler ohne Zahlformat');
 });
 
 test('XLSX: Brand-Totals vollstaendig und korrekt', async () => {
   const { wb } = await exportiereUndLies();
-  const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Total Brand-Gruppen'], { header: 1 });
-
-  // slice(3): zwei Titelzeilen + Spaltenkopf ueberspringen.
-  assert.deepStrictEqual(plain(zeilen.slice(3)), [
+  const daten = abschnittDaten(blattZeilen(wb), 'Total Brand-Gruppen');
+  assert.deepStrictEqual(plain(daten), [
     ['Lunch-Check', 31, 0, 1, 2],
     ['Wallee', 62725.16, 793.46, 888, 2068],
   ]);
 });
 
-test('XLSX: Detail-Blatt hat eine Zeile je Terminal und Marke', async () => {
+test('XLSX: Detail-Abschnitt hat eine Zeile je Terminal und Marke', async () => {
   const { wb } = await exportiereUndLies();
-  const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Detail'], { header: 1 });
-
+  const daten = abschnittDaten(blattZeilen(wb), 'Detail');
   const res = parseReportCsv(FIXTURE);
-  assert.strictEqual(zeilen.length - 3, res.rows.length,
-    'Detail muss jede CSV-Zeile abbilden');
+  assert.strictEqual(daten.length, res.rows.length, 'Detail muss jede CSV-Zeile abbilden');
 });
 
 test('XLSX: Summe der Outlet-Totals ergibt das Gesamttotal', async () => {
   const { wb } = await exportiereUndLies();
-  const zeilen = XLSX.utils.sheet_to_json(wb.Sheets['Total Outlet-Gruppen'], { header: 1 }).slice(3);
-
-  const summe = zeilen.reduce((a, r) => a + r[2], 0);
+  const daten = abschnittDaten(blattZeilen(wb), 'Total Outlet-Gruppen');
+  const summe = daten.reduce((a, r) => a + r[2], 0);
   assert.strictEqual(Math.round(summe * 100) / 100, 62756.16);
 });

@@ -702,7 +702,7 @@
     <span class="pk-datum" id="reportPrintDatum"></span>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.3.1</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.3.2</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -940,44 +940,6 @@
     <p class="hint" style="margin-top:14px;margin-bottom:0;"><code>tip_total</code>: Trinkgeld-Anteil (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.</p>
   </div>
 
-  <!-- Terminal-Report: buendelt Terminals zu Outlet-Gruppen und Kartenmarken zu
-       Brand-Gruppen. Ausgabe des 'terminal'-Modus - die Daten kommen aus dem
-       API-Ergebnis (ingestReportCsv), kein eigener CSV-Upload mehr. -->
-  <div class="panel cond-section" id="reportSection">
-    <p class="hint" id="reportStatus" style="margin-bottom:0;"></p>
-
-    <!-- Gruppen-Zuordnung: erscheint erst, wenn eine CSV geladen ist. -->
-    <div id="reportConfigArea" class="hidden">
-      <div class="report-cfg-grid">
-        <div>
-          <h3>Outlet-Gruppen</h3>
-          <p class="hint">Terminals mit gleichem Gruppennamen werden zusammengefasst.</p>
-          <div id="reportOutletCfg" class="report-cfg-list"></div>
-        </div>
-        <div>
-          <h3>Brand-Gruppen</h3>
-          <p class="hint">Kartenmarken mit gleichem Gruppennamen werden zusammengefasst.</p>
-          <div id="reportBrandCfg" class="report-cfg-list"></div>
-        </div>
-      </div>
-
-      <div class="actions report-actions">
-        <button class="btn btn-primary" id="reportXlsxBtn">Excel-Datei (.xlsx)</button>
-        <button class="btn" id="reportCsvBtn">CSV</button>
-        <button class="btn" id="reportPrintBtn">Drucken / PDF</button>
-      </div>
-
-      <div class="actions report-actions">
-        <button class="btn" id="reportResetCfgBtn">Vorschläge zurücksetzen</button>
-        <button class="btn" id="reportExportCfgBtn">Konfiguration speichern (JSON)</button>
-        <button class="btn" id="reportImportCfgBtn">Konfiguration laden (JSON)</button>
-        <input type="file" id="reportImportCfgInput" accept=".json,application/json" class="hidden">
-      </div>
-    </div>
-
-    <div id="reportOutput"></div>
-  </div>
-
   <div class="panel" id="sqlPanel">
     <div class="output-header">
       <span class="output-title">Abfrage <span class="badge" id="modeBadge">Brand</span></span>
@@ -1028,6 +990,44 @@
 
     <pre id="sqlOutput"></pre>
     <p class="hint" id="sqlEinfuegenHinweis">Zum Einfügen in: <em>Account &gt; Analytics &gt; Submit Query</em>. Ob eine Auszahlung schon erfolgt ist, zeigt <code>settlement_state</code> im Modus <em>Settlement / Auszahlung</em> sowie als Spalte im Transaktions-Export: SETTLED = ausbezahlt, <strong>NO_RECORD</strong> (noch kein Settlement-Record vorhanden) = bisher der beobachtete Normalfall für „noch nicht abgerechnet". UPCOMING (ausstehend) und PARTIAL (teilweise ausbezahlt) sind zusätzlich vorgesehen, wurden bislang aber nicht beobachtet. NO_RECORD gibt es nur im Modus <em>Settlement / Auszahlung</em> — im Export bleibt die Zelle in diesem Fall leer.</p>
+  </div>
+
+  <!-- Terminal-Report: buendelt Terminals zu Outlet-Gruppen und Kartenmarken zu
+       Brand-Gruppen. Ausgabe des 'terminal'-Modus - die Daten kommen aus dem
+       API-Ergebnis (ingestReportCsv), kein eigener CSV-Upload mehr. -->
+  <div class="panel cond-section" id="reportSection">
+    <p class="hint" id="reportStatus" style="margin-bottom:0;"></p>
+
+    <!-- Gruppen-Zuordnung: erscheint erst, wenn eine CSV geladen ist. -->
+    <div id="reportConfigArea" class="hidden">
+      <div class="report-cfg-grid">
+        <div>
+          <h3>Outlet-Gruppen</h3>
+          <p class="hint">Terminals mit gleichem Gruppennamen werden zusammengefasst.</p>
+          <div id="reportOutletCfg" class="report-cfg-list"></div>
+        </div>
+        <div>
+          <h3>Brand-Gruppen</h3>
+          <p class="hint">Kartenmarken mit gleichem Gruppennamen werden zusammengefasst.</p>
+          <div id="reportBrandCfg" class="report-cfg-list"></div>
+        </div>
+      </div>
+
+      <div class="actions report-actions">
+        <button class="btn btn-primary" id="reportXlsxBtn">Excel-Datei (.xlsx)</button>
+        <button class="btn" id="reportCsvBtn">CSV</button>
+        <button class="btn" id="reportPrintBtn">Drucken / PDF</button>
+      </div>
+
+      <div class="actions report-actions">
+        <button class="btn" id="reportResetCfgBtn">Vorschläge zurücksetzen</button>
+        <button class="btn" id="reportExportCfgBtn">Konfiguration speichern (JSON)</button>
+        <button class="btn" id="reportImportCfgBtn">Konfiguration laden (JSON)</button>
+        <input type="file" id="reportImportCfgInput" accept=".json,application/json" class="hidden">
+      </div>
+    </div>
+
+    <div id="reportOutput"></div>
   </div>
 
 </div>
@@ -1262,7 +1262,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
 
   let state = {
     mode: 'brand',
-    spaces: [{ id: '', label: '', selected: true }],
+    spaces: [],
     startDate: '2026-05-01',
     startTime: '00:00:00',
     endDate:   '2026-05-31',
@@ -1337,9 +1337,13 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         }
       }
     } catch (e) {}
-    if (!state.spaces || !state.spaces.length) {
-      state.spaces = [{ id: '', label: '', selected: true }];
-    }
+    // Kein leerer Space als Vorauswahl - eine leere Liste zeigt in renderSpaces
+    // den Hinweis "Noch keine Spaces. Space-ID oben hinzufügen." statt einer
+    // leeren, vorgewaehlten Zeile. Leere Platzhalter-Eintraege (ohne ID) werden
+    // beim Laden entfernt - sie waren nie nutzbar und raeumen auch bei bereits
+    // gespeichertem State auf.
+    if (!Array.isArray(state.spaces)) state.spaces = [];
+    state.spaces = state.spaces.filter(s => s && String(s.id || '').trim() !== '');
   }
   function saveState() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
@@ -2558,7 +2562,11 @@ ORDER BY
   // retryStandardSek greift, wenn eine 202-Antwort kein Retry-After mitliefert.
   // maxVersuche ist ein Backstop gegen Endlospolling (der Endpunkt long-pollt,
   // jeder Versuch kann bis 97 s blockieren).
-  const apiPollConfig = { maxVersuche: 400, retryStandardSek: 2 };
+  // transientMax: wie oft ein voruebergehender Fehler beim Status-Poll (404/502/503,
+  // v. a. wenn der frisch submittete Token bei wallee noch nicht propagiert ist -
+  // typisch beim allerersten Submit einer Sitzung) toleriert und erneut versucht
+  // wird, bevor abgebrochen wird.
+  const apiPollConfig = { maxVersuche: 400, retryStandardSek: 2, transientMax: 8 };
 
   // --- Abfrage-Verlauf -----------------------------------------------------
   // Eigener localStorage-Key, unabhaengig von "state": ueberlebt State-Bumps,
@@ -2711,6 +2719,7 @@ ORDER BY
       // Submit-Response (201) traegt nur den Token, keinen Status.
       let status = '';
       let versuche = 0;
+      let transient = 0;
       while (true) {
         if (apiLauf.abgebrochen) return;
         if (++versuche > apiPollConfig.maxVersuche) {
@@ -2720,6 +2729,17 @@ ORDER BY
           return;
         }
         const s = await proxyJson('/status/' + encodeURIComponent(token), 'GET');
+        // Direkt nach dem Submit (v. a. der erste einer Sitzung) ist der Token bei
+        // wallee gelegentlich noch nicht propagiert -> 404 (oder 502/503). Ein paar
+        // Mal tolerieren und erneut pollen, statt sofort abzubrechen - das war die
+        // Ursache fuer den "beim ersten Mal 404, beim zweiten klappt es"-Effekt.
+        if ((s.status === 404 || s.status === 502 || s.status === 503)
+            && transient < apiPollConfig.transientMax) {
+          transient++;
+          zeigeFortschritt(`Query wird registriert … (Versuch ${transient})`);
+          await warte(apiPollConfig.retryStandardSek * 1000);
+          continue;
+        }
         if (s.status >= 400) {
           zeigeFortschritt(fehlerText(s, 'Der Status konnte nicht abgefragt werden.'), 'fehler');
           return;
@@ -2881,7 +2901,11 @@ ORDER BY
     }
     list.forEach(e => {
       const tr = document.createElement('tr');
-      const zeit = (e.submittedAt || '').replace('T', ' ').slice(0, 16);
+      // submittedAt ist in UTC gespeichert; fuer die Anzeige in lokale Systemzeit
+      // umrechnen (getHours/getMinutes etc. sind lokal), statt das Zulu-ISO zu zeigen.
+      const dt = new Date(e.submittedAt);
+      const zeit = isNaN(dt.getTime()) ? (e.submittedAt || '')
+        : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
       const zsf = escapeHtml([e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · '));
       // Im Terminal-Report deckt der Report-Export unten (mit Titel/Branding, XLSX/
       // CSV/PDF) das Excel ab, und der Report erscheint nach dem Submit ohnehin -
@@ -3195,54 +3219,61 @@ ORDER BY
     const wb = XLSX.utils.book_new();
     const d = new Date();
     const datum = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
-    const KOPF = 2;   // zwei Titelzeilen (wallee-Branding wie im PDF), dann der Spaltenkopf
 
-    reportExportBloecke(modell).forEach(block => {
-      const ncols = block.header.length;
-      const ws = XLSX.utils.aoa_to_sheet([
-        ['wallee — Terminal-Report'],
-        [`${block.name} · Erstellt am ${datum}`],
-        block.header,
-        ...block.rows,
-      ]);
+    // Alles in EIN Blatt, die Abschnitte untereinander gestapelt - genau wie der
+    // PDF-/Bildschirm-Report (Detail, dann die Totale), statt mehrerer Tabs.
+    const bloecke = reportExportBloecke(modell);
+    const REIHENFOLGE = ['Detail', 'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal'];
+    const sortiert = REIHENFOLGE.map(n => bloecke.find(b => b.name === n)).filter(Boolean);
+    const maxCols = Math.max(1, ...sortiert.map(b => b.header.length));
 
-      // Titelzeilen ueber alle Spalten mergen und branden (wie der PDF-Kopf).
-      ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: ncols - 1 } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: ncols - 1 } },
-      ];
-      const titelZelle = ws[XLSX.utils.encode_cell({ r: 0, c: 0 })];
-      if (titelZelle) titelZelle.s = {
-        font: { bold: true, sz: 14, color: { rgb: XLSX_FARBE.text } },
-        alignment: { horizontal: 'left', vertical: 'center' },
-      };
-      const unterZelle = ws[XLSX.utils.encode_cell({ r: 1, c: 0 })];
-      if (unterZelle) unterZelle.s = { font: { sz: 10, color: { rgb: '6B7A79' } } };
+    const aoa = [];
+    const stile = [];    // { r, c, s, z } - nach aoa_to_sheet angewandt
+    const merges = [];
+    const spanne = (r) => merges.push({ s: { r, c: 0 }, e: { r, c: maxCols - 1 } });
 
-      // Spaltenkopf in wallee-Tuerkis (jetzt Zeile KOPF). Die Werte bleiben echte
-      // Zahlen; nur ihre Darstellung bekommt Tausendertrennung (s.numFmt/z) und die
-      // Zellen einen feinen Rahmen plus Zebra - Excel kann weiter damit rechnen.
-      xlsxKopfEinfaerben(ws, ncols, KOPF);
-      for (let i = 0; i < block.rows.length; i++) {
-        const zeile = KOPF + 1 + i;
+    aoa.push(['wallee — Terminal-Report']); spanne(0);
+    stile.push({ r: 0, c: 0, s: { font: { bold: true, sz: 14, color: { rgb: XLSX_FARBE.text } },
+      alignment: { horizontal: 'left', vertical: 'center' } } });
+    aoa.push([`Erstellt am ${datum}`]); spanne(1);
+    stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: '6B7A79' } } } });
+    aoa.push([]);
+    let r = 3;
+
+    sortiert.forEach(block => {
+      // Abschnittstitel
+      aoa.push([block.name]); spanne(r);
+      stile.push({ r, c: 0, s: { font: { bold: true, sz: 12, color: { rgb: XLSX_FARBE.text } } } });
+      r++;
+      // Spaltenkopf (tuerkis)
+      aoa.push(block.header.slice());
+      for (let c = 0; c < block.header.length; c++) stile.push({ r, c, s: xlsxKopfStil() });
+      r++;
+      // Datenzeilen (Zahlformat + Zebra + Rahmen)
+      block.rows.forEach((row, i) => {
+        aoa.push(row.slice());
         const zebra = i % 2 === 1;
-        block.typen.forEach((typ, spalte) => {
-          const zelle = ws[XLSX.utils.encode_cell({ r: zeile, c: spalte })];
-          if (!zelle) return;
-          const format = zelle.t === 'n' ? XLSX_FORMAT[typ] : null;
-          zelle.s = xlsxZellStil(zebra, zelle.t === 'n', format || null);
-          if (format) zelle.z = format;
+        block.typen.forEach((typ, c) => {
+          const format = (typ === 'betrag' || typ === 'zahl') ? XLSX_FORMAT[typ] : null;
+          stile.push({ r, c, s: xlsxZellStil(zebra, !!format, format || null), z: format });
         });
-      }
-
-      ws['!cols'] = block.header.map((titelText, i) => ({
-        wch: block.typen[i] === 'text' ? Math.max(14, String(titelText).length + 2) : 16,
-      }));
-
-      // Excel begrenzt Blattnamen auf 31 Zeichen.
-      XLSX.utils.book_append_sheet(wb, ws, block.name.slice(0, 31));
+        r++;
+      });
+      aoa.push([]); r++;   // Leerzeile zwischen den Abschnitten
     });
 
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!merges'] = merges;
+    stile.forEach(op => {
+      const zelle = ws[XLSX.utils.encode_cell({ r: op.r, c: op.c })];
+      if (!zelle) return;
+      if (op.s) zelle.s = op.s;
+      if (op.z && zelle.t === 'n') zelle.z = op.z;
+    });
+    // Erste Spalten breiter (Text), die Kennzahl-Spalten schmaler.
+    ws['!cols'] = Array.from({ length: maxCols }, (_, i) => ({ wch: i < 3 ? 18 : 15 }));
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Terminal-Report');
     const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
     downloadDatei(
       new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
