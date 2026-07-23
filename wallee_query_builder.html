@@ -314,6 +314,11 @@
   .sync-info-close { position: absolute; top: 4px; right: 8px; border: none; background: none; font-size: 18px;
     color: var(--muted); cursor: pointer; line-height: 1; }
 
+  .terminal-filter-row { display: flex; align-items: center; gap: 10px; margin: 4px 0 10px; }
+  .terminal-filter-row input { flex: 1; min-width: 0; }
+  .item-space { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+    background: var(--panel-3); border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+
   .submit-fortschritt {
     margin: 12px 0;
     padding: 12px 14px;
@@ -910,6 +915,12 @@
     </div>
 
     <hr class="section-divider" style="margin: 16px 0;" />
+
+    <div class="terminal-filter-row">
+      <input id="terminalFilter" type="text" placeholder="Nach Identifier, Label oder Space filtern …"
+             title="Filtert die Liste unten. „Alle auswählen“/„Auswahl löschen“ wirken dann nur auf die gefilterten Terminals." />
+      <span class="hint" id="terminalVisibleCount"></span>
+    </div>
 
     <div class="item-list" id="terminalList"></div>
 
