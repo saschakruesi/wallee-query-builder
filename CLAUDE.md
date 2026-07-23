@@ -20,7 +20,7 @@ selbst auf neuere Releases und kann sich im API-Modus per Klick selbst aktualisi
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.5.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.6.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -106,6 +106,25 @@ kommt aus `name`. Kein `STORAGE_KEY`-Bump, da nur bestehende `state.terminals`-E
 gemischt werden. Der Button ist **nur im API-Modus aktiv**; im Kopieren-Modus greyed-out mit
 einem ⓘ-Info-Overlay, das auf das Zahnrad/den API-Modus verweist (`syncButtonZustand(apiMode,
 proxyOk)` → `{ aktiv, infoSichtbar }`, angewendet über `aktualisiereSyncButton()`).
+
+**Terminal-Space + Filter (seit v5.6):** Jedes Terminal trägt optional ein `space`-Feld
+(Anzeige-String, reine UI-Information — SQL/Report bleiben unberührt), als kleines Badge in
+der Liste sichtbar. Gesetzt wird es beim **Sync** — pro abgefragtem Space über
+`spaceLabelBauen(spaceId, spaceName)` ("`<id> · <name>`", nur `id` oder nur `name` falls das
+andere fehlt) — und beim **CSV-Import**: eine Space-Spalte im CSV geht vor, sonst greift die
+einzeln gewählte Space oberhalb (mehrere gewählte Spaces → leer, da nicht eindeutig
+zuordenbar). Ein neues **Filterfeld** (`#terminalFilter`) grenzt die Terminalliste live ein:
+`terminalMatchtFilter(t, filter)` matcht case-insensitiv als Substring über Identifier, Label
+**und** Space, leerer Filter matcht alles. `gefilterteIndices(state.terminals, filter)`
+liefert die passenden **Original-Indizes** (nicht gefilterte Kopien), damit `renderTerminals()`
+Zeilen weiterhin gegen den echten State adressiert; ein Hinweis (`#terminalVisibleCount`) zeigt
+„X von Y sichtbar". **„Alle auswählen"/„Auswahl löschen" wirken nur auf die gefilterte Menge**
+(über dieselben `gefilterteIndices`) — bei aktivem Filter bleiben nicht sichtbare Terminals
+unverändert; „Liste leeren" ist davon nicht betroffen und leert weiterhin alles. Reine
+Funktionen (`spaceLabelBauen`, `terminalMatchtFilter`, `gefilterteIndices`), harness-getestet.
+Kein `STORAGE_KEY`-Bump — `space` ist ein neues, optionales Feld auf bestehenden
+`state.terminals`-Einträgen. v5.6.0 enthält ausserdem den bereits vorher committeten, aber
+nie separat veröffentlichten Sync-Button-Fix aus v5.5.2.
 
 ### Terminal-Report (Ausgabe des Modus `terminal`, seit v4, seit v5 ohne CSV-Upload)
 

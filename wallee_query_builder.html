@@ -314,6 +314,11 @@
   .sync-info-close { position: absolute; top: 4px; right: 8px; border: none; background: none; font-size: 18px;
     color: var(--muted); cursor: pointer; line-height: 1; }
 
+  .terminal-filter-row { display: flex; align-items: center; gap: 10px; margin: 4px 0 10px; }
+  .terminal-filter-row input { flex: 1; min-width: 0; }
+  .item-space { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+    background: var(--panel-3); border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+
   .submit-fortschritt {
     margin: 12px 0;
     padding: 12px 14px;
@@ -732,7 +737,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.5.2</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.6.0</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -910,6 +915,12 @@
     </div>
 
     <hr class="section-divider" style="margin: 16px 0;" />
+
+    <div class="terminal-filter-row">
+      <input id="terminalFilter" type="text" placeholder="Nach Identifier, Label oder Space filtern …"
+             title="Filtert die Liste unten. „Alle auswählen“/„Auswahl löschen“ wirken dann nur auf die gefilterten Terminals." />
+      <span class="hint" id="terminalVisibleCount"></span>
+    </div>
 
     <div class="item-list" id="terminalList"></div>
 
@@ -1324,6 +1335,8 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   const selectAllBtn     = document.getElementById('selectAllBtn');
   const deselectAllBtn   = document.getElementById('deselectAllBtn');
   const clearAllBtn      = document.getElementById('clearAllBtn');
+  const terminalFilterInput = document.getElementById('terminalFilter');
+  const terminalVisibleCount = document.getElementById('terminalVisibleCount');
 
   const colGrid          = document.getElementById('colGrid');
   const colCount         = document.getElementById('colCount');
@@ -1681,25 +1694,47 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   }
 
   // --- Terminals UI --------------------------------------------------------
+  let terminalFilter = '';
+
+  // Setzt den Terminal-Filter zurueck (Modul-Variable + Eingabefeld), damit nach
+  // Import/Sync/Leeren alle (neuen) Terminals sichtbar sind - sonst verdeckt ein
+  // noch aktiver Filter frisch importierte Terminals.
+  function terminalFilterZuruecksetzen() {
+    terminalFilter = '';
+    if (terminalFilterInput) terminalFilterInput.value = '';
+  }
   function renderTerminals() {
     terminalCount.textContent = state.terminals.length;
     if (state.terminals.length === 0) {
       terminalListEl.innerHTML = '<div class="empty">Noch keine Terminals gespeichert. Identifier oben hinzufügen.</div>';
+      if (terminalVisibleCount) terminalVisibleCount.textContent = '';
       return;
     }
-    terminalListEl.innerHTML = state.terminals.map((t, idx) => `
+    const indices = gefilterteIndices(state.terminals, terminalFilter);
+    if (terminalVisibleCount) {
+      terminalVisibleCount.textContent = terminalFilter.trim()
+        ? `${indices.length} von ${state.terminals.length} sichtbar` : '';
+    }
+    if (indices.length === 0) {
+      terminalListEl.innerHTML = '<div class="empty">Keine Terminals passen zum Filter.</div>';
+      return;
+    }
+    terminalListEl.innerHTML = indices.map(idx => {
+      const t = state.terminals[idx];
+      return `
       <div class="item-row">
         <input type="checkbox" data-idx="${idx}" ${t.selected ? 'checked' : ''} />
         <div class="item-info" data-idx="${idx}">
           <span class="item-id">${escapeHtml(t.id)}</span>
           ${t.label ? `<span class="item-label">${escapeHtml(t.label)}</span>` : ''}
+          ${t.space ? `<span class="item-space">${escapeHtml(t.space)}</span>` : ''}
         </div>
         <div class="row-actions">
           <button class="btn-icon" data-action="edit" data-idx="${idx}" title="Bearbeiten">✎</button>
           <button class="btn-icon danger" data-action="delete" data-idx="${idx}" title="Löschen">✕</button>
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
 
     terminalListEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.addEventListener('change', e => {
@@ -1737,7 +1772,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.5.2';
+  const APP_VERSION = '5.6.0';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -1854,6 +1889,32 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     return false;
   }
 
+  // Anzeige-String fuer die Space eines Terminals: "<id> · <name>", nur id, oder
+  // nur name. Rein, harness-getestet.
+  function spaceLabelBauen(id, name) {
+    const i = id == null ? '' : String(id).trim();
+    const n = name == null ? '' : String(name).trim();
+    if (i && n) return i + ' · ' + n;
+    return i || n;
+  }
+
+  // Ob ein Terminal zum Filtertext passt (Identifier, Label oder Space). Leerer
+  // Filter matcht alles. Case-insensitiver Substring. Rein, harness-getestet.
+  function terminalMatchtFilter(t, filter) {
+    const f = (filter == null ? '' : String(filter)).trim().toLowerCase();
+    if (!f) return true;
+    return [t && t.id, t && t.label, t && t.space]
+      .some(x => (x == null ? '' : String(x)).toLowerCase().includes(f));
+  }
+
+  // Original-Indizes der Terminals, die zum Filter passen - damit die gerenderten
+  // Zeilen ihre echten State-Indizes behalten. Rein, harness-getestet.
+  function gefilterteIndices(list, filter) {
+    const out = [];
+    (list || []).forEach((t, i) => { if (terminalMatchtFilter(t, filter)) out.push(i); });
+    return out;
+  }
+
   // Fuehrt die aus wallee synchronisierten Terminals mit der lokalen Liste
   // zusammen. Schluessel ist der identifier (= pt.identifier im SQL). Neue werden
   // ausgewaehlt angehaengt, bestehende behalten ihre Auswahl, ihr Label wird aus
@@ -1869,11 +1930,15 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       if (!id || gesehen.has(id)) return;
       gesehen.add(id);
       const name = api && api.name ? String(api.name) : '';
+      const space = api && api.space ? String(api.space) : '';
       const bestehend = nachId.get(id);
       if (bestehend) {
-        if (name && bestehend.label !== name) { bestehend.label = name; aktualisiertCount++; }
+        let geaendert = false;
+        if (name && bestehend.label !== name) { bestehend.label = name; geaendert = true; }
+        if (space && bestehend.space !== space) { bestehend.space = space; geaendert = true; }
+        if (geaendert) aktualisiertCount++;
       } else {
-        const eintrag = { id, label: name || id, selected: true };
+        const eintrag = { id, label: name || id, selected: true, space };
         liste.push(eintrag);
         nachId.set(id, eintrag);
         neuCount++;
@@ -1936,14 +2001,16 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       for (const id of spaceIds) {
         const { status, daten } = await proxyJson('/terminals?space=' + encodeURIComponent(id), 'GET');
         if (status === 200 && daten && Array.isArray(daten.terminals)) {
-          alle = alle.concat(daten.terminals);
+          const sp = state.spaces.find(s => String(s.id) === id);
+          const spaceAnzeige = spaceLabelBauen(id, sp && sp.label);
+          alle = alle.concat(daten.terminals.map(t => ({ ...t, space: spaceAnzeige })));
         } else {
           fehlerSpaces.push(id);
         }
       }
       const { liste, neuCount, aktualisiertCount } = mergeSyncTerminals(state.terminals, alle);
       state.terminals = liste;
-      saveState(); renderTerminals(); generate();
+      saveState(); terminalFilterZuruecksetzen(); renderTerminals(); generate();
 
       const bits = [`${neuCount} neu`, `${aktualisiertCount} aktualisiert`,
         `${spaceIds.length - fehlerSpaces.length} Space${(spaceIds.length - fehlerSpaces.length) === 1 ? '' : 's'}`];
@@ -4208,6 +4275,10 @@ ORDER BY
 
   // Terminals
   addTerminalBtn.addEventListener('click', addTerminal);
+  terminalFilterInput.addEventListener('input', () => {
+    terminalFilter = terminalFilterInput.value;
+    renderTerminals();
+  });
   syncTerminalsBtn.addEventListener('click', () => {
     synchronisiereTerminals();
   });
@@ -4300,6 +4371,9 @@ ORDER BY
     const nameIdx = findColIdx(headers, [/terminal\s*configuration\s*name/i, /terminal\s*name/i, /^name$/i]);
     const locIdx  = findColIdx(headers, [/^location\s*id$/i]);
     const extIdx  = findColIdx(headers, [/terminal\s*external\s*id/i]);
+    const spaceIdx = findColIdx(headers, [/^space$/i, /^space\s*id$/i, /^space\s*name$/i]);
+    const gewaehlteSpaces = state.spaces.filter(s => s.selected);
+    const einzelSpace = gewaehlteSpaces.length === 1 ? gewaehlteSpaces[0] : null;
 
     if (idIdx < 0) {
       showToast('Spalte „Terminal ID" wurde nicht gefunden. Bitte den Wallee-Standard-Export verwenden.', true);
@@ -4314,10 +4388,19 @@ ORDER BY
       if (nameIdx >= 0 && row[nameIdx]) parts.push(row[nameIdx]);
       if (locIdx  >= 0 && row[locIdx])  parts.push(`Loc ${row[locIdx]}`);
       if (!parts.length && extIdx >= 0 && row[extIdx]) parts.push(row[extIdx].slice(0, 8) + '…');
-      state.terminals.push({ id, label: parts.join(' · '), selected: true });
+      let space = '';
+      const spaceRoh = spaceIdx >= 0 ? (row[spaceIdx] || '').trim() : '';
+      if (spaceRoh) {
+        const bekannt = state.spaces.find(s => String(s.id) === spaceRoh);
+        space = bekannt ? spaceLabelBauen(spaceRoh, bekannt.label) : spaceRoh;
+      } else if (einzelSpace) {
+        space = spaceLabelBauen(einzelSpace.id, einzelSpace.label);
+      }
+      state.terminals.push({ id, label: parts.join(' · '), selected: true, space });
       added++;
     });
     saveState();
+    terminalFilterZuruecksetzen();
     renderTerminals();
     generate();
 
@@ -4360,18 +4443,18 @@ ORDER BY
   });
 
   selectAllBtn.addEventListener('click', () => {
-    state.terminals.forEach(t => t.selected = true);
+    gefilterteIndices(state.terminals, terminalFilter).forEach(i => state.terminals[i].selected = true);
     saveState(); renderTerminals(); generate();
   });
   deselectAllBtn.addEventListener('click', () => {
-    state.terminals.forEach(t => t.selected = false);
+    gefilterteIndices(state.terminals, terminalFilter).forEach(i => state.terminals[i].selected = false);
     saveState(); renderTerminals(); generate();
   });
   clearAllBtn.addEventListener('click', () => {
     if (state.terminals.length === 0) return;
     if (confirm(`Wirklich alle ${state.terminals.length} Terminals löschen?`)) {
       state.terminals = [];
-      saveState(); renderTerminals(); generate();
+      saveState(); terminalFilterZuruecksetzen(); renderTerminals(); generate();
     }
   });
 

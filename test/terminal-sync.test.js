@@ -13,8 +13,8 @@ test('mergeSyncTerminals: neue Terminals werden ausgewaehlt angehaengt', () => {
   assert.strictEqual(r.neuCount, 2);
   assert.strictEqual(r.aktualisiertCount, 0);
   assert.deepStrictEqual(plain(r.liste), [
-    { id: '100', label: 'Kasse 1', selected: true },
-    { id: '200', label: '200', selected: true },
+    { id: '100', label: 'Kasse 1', selected: true, space: '' },
+    { id: '200', label: '200', selected: true, space: '' },
   ], 'leerer Name faellt auf den identifier als Label zurueck');
 });
 
@@ -27,8 +27,8 @@ test('mergeSyncTerminals: bestehende behalten Auswahl, Label wird aktualisiert',
   assert.strictEqual(r.neuCount, 0);
   assert.strictEqual(r.aktualisiertCount, 1);
   assert.deepStrictEqual(plain(r.liste), [
-    { id: '100', label: 'Neu', selected: false },      // Auswahl unveraendert, Label neu
-    { id: 'manuell', label: 'Hand', selected: true },  // ohne API-Treffer unveraendert
+    { id: '100', label: 'Neu', selected: false },
+    { id: 'manuell', label: 'Hand', selected: true },
   ]);
 });
 
@@ -46,7 +46,21 @@ test('mergeSyncTerminals: Duplikate in neu werden per identifier entschaerft, le
     { identifier: '', name: 'leer' },
   ]);
   assert.strictEqual(r.neuCount, 1);
-  assert.deepStrictEqual(plain(r.liste), [{ id: '5', label: 'erst', selected: true }]);
+  assert.deepStrictEqual(plain(r.liste), [{ id: '5', label: 'erst', selected: true, space: '' }]);
+});
+
+test('mergeSyncTerminals: space wird gesetzt und bei bestehenden aktualisiert', () => {
+  // neu: space landet am neuen Eintrag
+  const r1 = X.mergeSyncTerminals([], [{ identifier: '9', name: 'T9', space: '83954 · Zürich' }]);
+  assert.deepStrictEqual(plain(r1.liste), [
+    { id: '9', label: 'T9', selected: true, space: '83954 · Zürich' },
+  ]);
+  // bestehend ohne space -> bekommt space, zaehlt als aktualisiert
+  const r2 = X.mergeSyncTerminals([{ id: '9', label: 'T9', selected: false }],
+    [{ identifier: '9', name: 'T9', space: '73192 · Bern' }]);
+  assert.strictEqual(r2.aktualisiertCount, 1, 'Space-Aenderung zaehlt');
+  assert.strictEqual(plain(r2.liste)[0].space, '73192 · Bern');
+  assert.strictEqual(plain(r2.liste)[0].selected, false, 'Auswahl bleibt');
 });
 
 test('syncButtonZustand: im API-Modus immer aktiv, Info-Marker nur im Kopiermodus', () => {

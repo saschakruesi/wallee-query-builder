@@ -73,3 +73,9 @@ test('Self-Update: die erwarteten Element-IDs sind im Markup', () => {
     assert.match(markup, new RegExp(`id="${id}"`), `ID ${id} fehlt im Markup`);
   });
 });
+
+test('Terminal-Filter: die erwarteten Element-IDs sind im Markup', () => {
+  ['terminalFilter', 'terminalVisibleCount'].forEach(id => {
+    assert.match(markup, new RegExp(`id="${id}"`), `ID ${id} fehlt im Markup`);
+  });
+});

@@ -117,6 +117,9 @@ const EXPORTED = [
   'holeErgebnisText',
   'mergeSyncTerminals',
   'syncButtonZustand',
+  'spaceLabelBauen',
+  'terminalMatchtFilter',
+  'gefilterteIndices',
   // Verlauf (Task 5), reine Funktionen
   'HISTORY_KEY',
   'HISTORY_MAX',
