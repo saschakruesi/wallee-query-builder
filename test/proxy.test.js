@@ -894,3 +894,27 @@ test('ladeUndSchreibeUpdate: kaputter Proxy faellt an node --check durch (422)',
     assert.strictEqual(fs.readFileSync(ziel.proxyPfad, 'utf8'), 'ALT', 'unveraendert');
   } finally { globalThis.fetch = original; }
 });
+
+test('/update ohne X-Wallee-Proxy-Header wird abgelehnt (403, gleicher Schutz wie /submit)', async () => {
+  // Bewusst nicht fakeReqRes() - der setzt den Header immer. Minimaler req/res
+  // ohne den Header, um das Gate selbst zu pruefen (nicht nur den Helper).
+  const req = new (require('node:events').EventEmitter)();
+  req.method = 'POST';
+  req.url = '/update';
+  req.headers = { origin: 'null' }; // kein x-wallee-proxy
+
+  const res = {
+    _status: 0, _headers: {}, _body: '',
+    writeHead(status, headers) { this._status = status; Object.assign(this._headers, headers || {}); },
+    end(text) { this._body = text || ''; this._fertig = true; },
+  };
+  setImmediate(() => { req.emit('end'); });
+
+  await P.behandleAnfrage(req, res);
+  await new Promise(resolve => {
+    const t = setInterval(() => { if (res._fertig) { clearInterval(t); resolve(); } }, 2);
+  });
+
+  assert.strictEqual(res._status, 403, 'ohne den Header muss /update wie /submit blockiert werden');
+  assert.match(res._body, /x-wallee-proxy/i, 'Fehlermeldung soll den fehlenden Header benennen');
+});

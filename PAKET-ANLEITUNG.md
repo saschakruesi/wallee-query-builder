@@ -56,7 +56,7 @@ Erscheint oben in der App ein Banner **„Update verfügbar"**, gibt es eine neu
 1. Auf **„Jetzt aktualisieren"** klicken (nur möglich, solange der Starter läuft — das
    Banner öffnet sonst nur die Release-Seite zum manuellen Herunterladen).
 2. Kurz bestätigen — das Update ersetzt die App-Datei und den lokalen Server und startet den
-   Starter automatisch neu.
+   Server automatisch neu.
 3. Die Seite lädt sich nach ein paar Sekunden von selbst neu. Fertig.
 
 **Falls etwas schiefgeht:** Im Ordner neben `wallee_query_builder.html` und

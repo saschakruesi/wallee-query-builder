@@ -904,8 +904,9 @@ export async function ladeUndSchreibeUpdate(tag, ziel) {
   const tmpProxy = path.join(ziel.verzeichnis, '.proxy-update.mjs');
   fs.writeFileSync(tmpProxy, proxyText);
   try {
-    execFileSync(process.execPath, ['--check', tmpProxy], { stdio: 'ignore' });
+    execFileSync(process.execPath, ['--check', tmpProxy], { stdio: ['ignore', 'ignore', 'pipe'] });
   } catch (err) {
+    console.error('[update] node --check fehlgeschlagen:', err && err.stderr ? String(err.stderr) : (err && err.message) || err);
     try { fs.unlinkSync(tmpProxy); } catch (e2) {}
     const e = new Error('Neuer Proxy-Code ist fehlerhaft (node --check).'); e.status = 422; throw e;
   }
@@ -926,7 +927,10 @@ export function starteNeustart(verzeichnis) {
   const skript = path.join(verzeichnis, 'wallee-proxy.mjs');
   spawn(process.execPath, [skript], {
     cwd: verzeichnis, detached: true, stdio: 'ignore',
-    env: { ...process.env, WALLEE_RESTART_DELAY_MS: '1200' },
+    // WALLEE_OPEN explizit auf '0': location.reload() im Browser haengt sich bereits an den
+    // bestehenden Tab, ein zusaetzliches Browser-Oeffnen durch den neu gestarteten Prozess
+    // (WALLEE_OPEN=1 wird sonst vom Launcher geerbt) waere ein doppelter Tab.
+    env: { ...process.env, WALLEE_OPEN: '0', WALLEE_RESTART_DELAY_MS: '1200' },
   }).unref();
   process.exit(0);
 }
