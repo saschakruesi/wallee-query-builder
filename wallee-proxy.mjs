@@ -159,6 +159,34 @@ export function pruefeZugangsdaten(werte) {
   return fehler;
 }
 
+// --- Self-Update ----------------------------------------------------------
+// Die App und der Proxy tragen dieselbe Version; pro Release gebumpt (auch der
+// <h1>-Badge in der HTML). Der Updater laedt ausschliesslich vom fest
+// verdrahteten GitHub-Repo ueber HTTPS - Owner/Repo kommen NIE aus Eingaben.
+export const APP_VERSION = '5.5.0';
+export const UPDATE_REPO = { owner: 'saschakruesi', repo: 'wallee-query-builder' };
+export const UPDATE_DATEIEN = ['wallee_query_builder.html', 'wallee-proxy.mjs'];
+
+export function tagValide(tag) {
+  return typeof tag === 'string' && /^v?\d+\.\d+\.\d+$/.test(tag);
+}
+
+export function updatePfad(tag, datei) {
+  if (!tagValide(tag)) throw new Error('Ungueltiger Tag.');
+  if (!UPDATE_DATEIEN.includes(datei)) throw new Error('Unerlaubte Datei.');
+  const { owner, repo } = UPDATE_REPO;
+  return `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(tag)}/${datei}`;
+}
+
+// Grobe Plausibilitaet der heruntergeladenen Dateien, bevor irgendetwas
+// ueberschrieben wird - fangen z. B. eine GitHub-Fehlerseite statt der Datei ab.
+export function sanityHtml(text) {
+  return typeof text === 'string' && text.includes('<script id="app-logic">');
+}
+export function sanityProxy(text) {
+  return typeof text === 'string' && text.includes('function starteServer');
+}
+
 // --- Authentifizierung -----------------------------------------------------
 // Am offiziellen SDK verifiziert. Drei unabhaengige Implementierungen stimmen
 // ueberein:

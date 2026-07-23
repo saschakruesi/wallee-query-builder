@@ -118,6 +118,32 @@ test('mappeTerminal: liest identifier/name/id/state defensiv', () => {
     { identifier: '', name: '', id: null, state: '' }, 'null-Eingabe wirft nicht');
 });
 
+test('tagValide akzeptiert nur Semver-Tags', () => {
+  assert.ok(P.tagValide('v5.5.0'));
+  assert.ok(P.tagValide('5.5.0'));
+  assert.ok(!P.tagValide('main'));
+  assert.ok(!P.tagValide('5.5'));
+  assert.ok(!P.tagValide('v5.5.0; rm -rf /'));
+  assert.ok(!P.tagValide(''));
+  assert.ok(!P.tagValide(undefined));
+});
+
+test('updatePfad baut die raw-URL nur fuer erlaubte Dateien', () => {
+  assert.strictEqual(P.updatePfad('v5.5.0', 'wallee-proxy.mjs'),
+    'https://raw.githubusercontent.com/saschakruesi/wallee-query-builder/v5.5.0/wallee-proxy.mjs');
+  assert.strictEqual(P.updatePfad('v5.5.0', 'wallee_query_builder.html'),
+    'https://raw.githubusercontent.com/saschakruesi/wallee-query-builder/v5.5.0/wallee_query_builder.html');
+  assert.throws(() => P.updatePfad('main', 'wallee-proxy.mjs'), /Tag/);
+  assert.throws(() => P.updatePfad('v5.5.0', '../secret'), /Datei/);
+});
+
+test('sanityHtml/sanityProxy erkennen die echten Dateien', () => {
+  assert.ok(P.sanityHtml('<html><script id="app-logic">x</script>'));
+  assert.ok(!P.sanityHtml('<html>nix</html>'));
+  assert.ok(P.sanityProxy('export function starteServer(){}'));
+  assert.ok(!P.sanityProxy('nur text'));
+});
+
 // --- Zugangsdaten ----------------------------------------------------------
 
 test('Zugangsdaten: gueltige Eingabe wird angenommen', () => {
