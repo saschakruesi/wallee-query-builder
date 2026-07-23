@@ -1646,6 +1646,40 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       });
     });
   }
+  // Fuehrt die aus wallee synchronisierten Terminals mit der lokalen Liste
+  // zusammen. Schluessel ist der identifier (= pt.identifier im SQL). Neue werden
+  // ausgewaehlt angehaengt, bestehende behalten ihre Auswahl, ihr Label wird aus
+  // dem aktuellen Namen aufgefrischt. Manuell/CSV-Eintraege ohne API-Treffer
+  // bleiben stehen. Rein und DOM-frei - ueber das Harness getestet.
+  function mergeSyncTerminals(vorhanden, neu) {
+    const liste = (vorhanden || []).map(t => ({ ...t }));
+    const nachId = new Map(liste.map(t => [t.id, t]));
+    let neuCount = 0, aktualisiertCount = 0;
+    const gesehen = new Set();
+    (neu || []).forEach(api => {
+      const id = api && api.identifier != null ? String(api.identifier) : '';
+      if (!id || gesehen.has(id)) return;
+      gesehen.add(id);
+      const name = api && api.name ? String(api.name) : '';
+      const bestehend = nachId.get(id);
+      if (bestehend) {
+        if (name && bestehend.label !== name) { bestehend.label = name; aktualisiertCount++; }
+      } else {
+        const eintrag = { id, label: name || id, selected: true };
+        liste.push(eintrag);
+        nachId.set(id, eintrag);
+        neuCount++;
+      }
+    });
+    return { liste, neuCount, aktualisiertCount };
+  }
+
+  // Sichtbarkeit/Aktivierung des Sync-Buttons. aktiv nur bei aktivem API-Modus
+  // UND erreichbarem Proxy; der Info-Marker erklaert das Aktivieren des
+  // API-Modus und erscheint, solange der API-Modus aus ist.
+  function syncButtonZustand(apiMode, proxyOk) {
+    return { aktiv: !!apiMode && !!proxyOk, infoSichtbar: !apiMode };
+  }
   function addTerminal() {
     const id = newTerminalId.value.trim();
     if (!id) { newTerminalId.focus(); return; }

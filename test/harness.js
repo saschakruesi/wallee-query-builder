@@ -115,6 +115,8 @@ const EXPORTED = [
   'leseCredentials',
   'speichereCredentials',
   'holeErgebnisText',
+  'mergeSyncTerminals',
+  'syncButtonZustand',
   // Verlauf (Task 5), reine Funktionen
   'HISTORY_KEY',
   'HISTORY_MAX',
