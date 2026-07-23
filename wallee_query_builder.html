@@ -1335,6 +1335,8 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   const selectAllBtn     = document.getElementById('selectAllBtn');
   const deselectAllBtn   = document.getElementById('deselectAllBtn');
   const clearAllBtn      = document.getElementById('clearAllBtn');
+  const terminalFilterInput = document.getElementById('terminalFilter');
+  const terminalVisibleCount = document.getElementById('terminalVisibleCount');
 
   const colGrid          = document.getElementById('colGrid');
   const colCount         = document.getElementById('colCount');
@@ -1692,25 +1694,39 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   }
 
   // --- Terminals UI --------------------------------------------------------
+  let terminalFilter = '';
   function renderTerminals() {
     terminalCount.textContent = state.terminals.length;
     if (state.terminals.length === 0) {
       terminalListEl.innerHTML = '<div class="empty">Noch keine Terminals gespeichert. Identifier oben hinzufügen.</div>';
+      if (terminalVisibleCount) terminalVisibleCount.textContent = '';
       return;
     }
-    terminalListEl.innerHTML = state.terminals.map((t, idx) => `
+    const indices = gefilterteIndices(state.terminals, terminalFilter);
+    if (terminalVisibleCount) {
+      terminalVisibleCount.textContent = terminalFilter.trim()
+        ? `${indices.length} von ${state.terminals.length} sichtbar` : '';
+    }
+    if (indices.length === 0) {
+      terminalListEl.innerHTML = '<div class="empty">Keine Terminals passen zum Filter.</div>';
+      return;
+    }
+    terminalListEl.innerHTML = indices.map(idx => {
+      const t = state.terminals[idx];
+      return `
       <div class="item-row">
         <input type="checkbox" data-idx="${idx}" ${t.selected ? 'checked' : ''} />
         <div class="item-info" data-idx="${idx}">
           <span class="item-id">${escapeHtml(t.id)}</span>
           ${t.label ? `<span class="item-label">${escapeHtml(t.label)}</span>` : ''}
+          ${t.space ? `<span class="item-space">${escapeHtml(t.space)}</span>` : ''}
         </div>
         <div class="row-actions">
           <button class="btn-icon" data-action="edit" data-idx="${idx}" title="Bearbeiten">✎</button>
           <button class="btn-icon danger" data-action="delete" data-idx="${idx}" title="Löschen">✕</button>
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
 
     terminalListEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.addEventListener('change', e => {
@@ -1977,7 +1993,9 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       for (const id of spaceIds) {
         const { status, daten } = await proxyJson('/terminals?space=' + encodeURIComponent(id), 'GET');
         if (status === 200 && daten && Array.isArray(daten.terminals)) {
-          alle = alle.concat(daten.terminals);
+          const sp = state.spaces.find(s => String(s.id) === id);
+          const spaceAnzeige = spaceLabelBauen(id, sp && sp.label);
+          alle = alle.concat(daten.terminals.map(t => ({ ...t, space: spaceAnzeige })));
         } else {
           fehlerSpaces.push(id);
         }
@@ -4249,6 +4267,10 @@ ORDER BY
 
   // Terminals
   addTerminalBtn.addEventListener('click', addTerminal);
+  terminalFilterInput.addEventListener('input', () => {
+    terminalFilter = terminalFilterInput.value;
+    renderTerminals();
+  });
   syncTerminalsBtn.addEventListener('click', () => {
     synchronisiereTerminals();
   });
@@ -4341,6 +4363,9 @@ ORDER BY
     const nameIdx = findColIdx(headers, [/terminal\s*configuration\s*name/i, /terminal\s*name/i, /^name$/i]);
     const locIdx  = findColIdx(headers, [/^location\s*id$/i]);
     const extIdx  = findColIdx(headers, [/terminal\s*external\s*id/i]);
+    const spaceIdx = findColIdx(headers, [/^space$/i, /^space\s*id$/i, /^space\s*name$/i]);
+    const gewaehlteSpaces = state.spaces.filter(s => s.selected);
+    const einzelSpace = gewaehlteSpaces.length === 1 ? gewaehlteSpaces[0] : null;
 
     if (idIdx < 0) {
       showToast('Spalte „Terminal ID" wurde nicht gefunden. Bitte den Wallee-Standard-Export verwenden.', true);
@@ -4355,7 +4380,15 @@ ORDER BY
       if (nameIdx >= 0 && row[nameIdx]) parts.push(row[nameIdx]);
       if (locIdx  >= 0 && row[locIdx])  parts.push(`Loc ${row[locIdx]}`);
       if (!parts.length && extIdx >= 0 && row[extIdx]) parts.push(row[extIdx].slice(0, 8) + '…');
-      state.terminals.push({ id, label: parts.join(' · '), selected: true });
+      let space = '';
+      const spaceRoh = spaceIdx >= 0 ? (row[spaceIdx] || '').trim() : '';
+      if (spaceRoh) {
+        const bekannt = state.spaces.find(s => String(s.id) === spaceRoh);
+        space = bekannt ? spaceLabelBauen(spaceRoh, bekannt.label) : spaceRoh;
+      } else if (einzelSpace) {
+        space = spaceLabelBauen(einzelSpace.id, einzelSpace.label);
+      }
+      state.terminals.push({ id, label: parts.join(' · '), selected: true, space });
       added++;
     });
     saveState();
@@ -4401,11 +4434,11 @@ ORDER BY
   });
 
   selectAllBtn.addEventListener('click', () => {
-    state.terminals.forEach(t => t.selected = true);
+    gefilterteIndices(state.terminals, terminalFilter).forEach(i => state.terminals[i].selected = true);
     saveState(); renderTerminals(); generate();
   });
   deselectAllBtn.addEventListener('click', () => {
-    state.terminals.forEach(t => t.selected = false);
+    gefilterteIndices(state.terminals, terminalFilter).forEach(i => state.terminals[i].selected = false);
     saveState(); renderTerminals(); generate();
   });
   clearAllBtn.addEventListener('click', () => {
