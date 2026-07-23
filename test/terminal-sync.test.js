@@ -49,9 +49,11 @@ test('mergeSyncTerminals: Duplikate in neu werden per identifier entschaerft, le
   assert.deepStrictEqual(plain(r.liste), [{ id: '5', label: 'erst', selected: true }]);
 });
 
-test('syncButtonZustand: aktiv nur bei apiMode UND proxyOk, Info nur ohne apiMode', () => {
-  assert.deepStrictEqual(plain(X.syncButtonZustand(false, false)), { aktiv: false, infoSichtbar: true });
-  assert.deepStrictEqual(plain(X.syncButtonZustand(false, true)),  { aktiv: false, infoSichtbar: true });
-  assert.deepStrictEqual(plain(X.syncButtonZustand(true, false)),  { aktiv: false, infoSichtbar: false });
-  assert.deepStrictEqual(plain(X.syncButtonZustand(true, true)),   { aktiv: true,  infoSichtbar: false });
+test('syncButtonZustand: im API-Modus immer aktiv, Info-Marker nur im Kopiermodus', () => {
+  // Der Button haengt bewusst NICHT mehr an einem Proxy-Health-Signal (das war
+  // teils faelschlich false und liess den Button in einer Sackgasse ausgegraut).
+  // Erreichbarkeit/Zugangsdaten werden erst beim Klick geprueft und als klare
+  // Fehlermeldung gezeigt.
+  assert.deepStrictEqual(plain(X.syncButtonZustand(true)),  { aktiv: true,  infoSichtbar: false });
+  assert.deepStrictEqual(plain(X.syncButtonZustand(false)), { aktiv: false, infoSichtbar: true });
 });

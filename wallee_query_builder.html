@@ -732,7 +732,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.5.1</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.5.2</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -1737,7 +1737,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.5.1';
+  const APP_VERSION = '5.5.2';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -1882,26 +1882,28 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     return { liste, neuCount, aktualisiertCount };
   }
 
-  // Sichtbarkeit/Aktivierung des Sync-Buttons. aktiv nur bei aktivem API-Modus
-  // UND erreichbarem Proxy; der Info-Marker erklaert das Aktivieren des
-  // API-Modus und erscheint, solange der API-Modus aus ist.
-  function syncButtonZustand(apiMode, proxyOk) {
-    return { aktiv: !!apiMode && !!proxyOk, infoSichtbar: !apiMode };
+  // Sichtbarkeit/Aktivierung des Sync-Buttons. Bewusst NUR am API-Modus
+  // festgemacht, nicht mehr an einem Proxy-Health-Signal: das war teils
+  // faelschlich false (Health-Check lief ins Timeout oder es fehlten nur die
+  // Zugangsdaten) und liess den Button in einer Sackgasse ausgegraut - nicht
+  // mal anklickbar. Erreichbarkeit und Zugangsdaten werden jetzt erst beim
+  // Klick geprueft und als klare Fehlermeldung gezeigt. Der Info-Marker erklaert
+  // den API-Modus und erscheint, solange er aus ist.
+  function syncButtonZustand(apiMode) {
+    return { aktiv: !!apiMode, infoSichtbar: !apiMode };
   }
 
   // Sync-Button an den aktuellen Betriebszustand anpassen (Kopiermodus vs API).
   function aktualisiereSyncButton() {
-    const { aktiv, infoSichtbar } = syncButtonZustand(state.apiMode, proxyBereit);
+    const { aktiv, infoSichtbar } = syncButtonZustand(state.apiMode);
     syncTerminalsBtn.classList.toggle('deaktiviert', !aktiv);
     syncTerminalsBtn.classList.toggle('aktiv', aktiv);
     syncTerminalsBtn.setAttribute('aria-disabled', String(!aktiv));
     syncInfoMarker.classList.toggle('hidden', !infoSichtbar);
     if (!infoSichtbar) syncInfoOverlay.classList.add('hidden');
-    if (state.apiMode && !proxyBereit) {
-      syncTerminalsBtn.title = 'Proxy nicht erreichbar. Bitte den Proxy starten (Zahnrad ⚙ prüfen).';
-    } else {
-      syncTerminalsBtn.title = 'Lädt die Terminals der oben gewählten Spaces aus wallee und führt sie in die Liste ein.';
-    }
+    syncTerminalsBtn.title = aktiv
+      ? 'Lädt die Terminals der oben gewählten Spaces aus wallee und führt sie in die Liste ein.'
+      : 'Nur im API-Modus verfügbar — im Zahnrad ⚙ aktivieren.';
   }
 
   // Der Sync-Ablauf: pro ausgewaehltem Space die Terminals holen, mergen, melden.
@@ -1914,10 +1916,15 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       return;
     }
     const zustand = await pruefeProxy(state.proxyUrl);
-    proxyBereit = meldeProxyZustand(zustand);
-    aktualisiereSyncButton();
-    if (!proxyBereit) {
-      showToast('Proxy nicht erreichbar oder ohne Zugangsdaten. Bitte im Zahnrad ⚙ prüfen.', true);
+    meldeProxyZustand(zustand);   // aktualisiert den Status-Punkt im Dialog
+    if (!zustand.erreichbar) {
+      showToast('Proxy nicht erreichbar unter ' + (state.proxyUrl || '(keine Adresse)')
+        + '. Läuft „node wallee-proxy.mjs"? Adresse im Zahnrad ⚙ prüfen.', true);
+      return;
+    }
+    if (!zustand.bereit) {
+      showToast('Proxy läuft, aber es sind keine Zugangsdaten hinterlegt. Bitte im Zahnrad ⚙ eintragen.', true);
+      settingsOeffnen();
       return;
     }
 
@@ -2858,7 +2865,6 @@ ORDER BY
   // Abbrechen und Fortschrittsanzeige haengen daran. abgebrochen wird gesetzt,
   // damit eine noch laufende Poll-Schleife nach dem Abbrechen nichts mehr tut.
   let apiLauf = null;   // { token, abgebrochen } oder null
-  let proxyBereit = false;
 
   // Als Objekt statt als Konstanten, damit die Tests das Poll-Intervall
   // heruntersetzen koennen, ohne 1.5s je Runde zu warten. Im Browser bleiben
@@ -3988,9 +3994,8 @@ ORDER BY
     if (state.apiMode) {
       ladeCredentialsInDialog();
       setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
-      pruefeProxy(state.proxyUrl).then(z => { proxyBereit = meldeProxyZustand(z); aktualisiereSyncButton(); });
+      pruefeProxy(state.proxyUrl).then(z => { meldeProxyZustand(z); aktualisiereSyncButton(); });
     }
-    if (!state.apiMode) { proxyBereit = false; }
     aktualisiereSyncButton();
   });
 
@@ -4433,7 +4438,7 @@ ORDER BY
   // Nutzer sofort, ob der Proxy laeuft, ohne selbst zu klicken.
   if (state.apiMode) {
     setzeProxyStatus('info', 'Prüfe Verbindung zum Proxy …');
-    pruefeProxy(state.proxyUrl, 2000).then(z => { proxyBereit = meldeProxyZustand(z); aktualisiereSyncButton(); });
+    pruefeProxy(state.proxyUrl, 2000).then(z => { meldeProxyZustand(z); aktualisiereSyncButton(); });
   }
   setMode(state.mode || 'brand');
   // Beim Laden einmal (gedrosselt) auf ein Update pruefen.
