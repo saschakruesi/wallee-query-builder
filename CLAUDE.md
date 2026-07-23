@@ -304,6 +304,15 @@ Einzelnes Node-Script, nur Builtins (`http`, `crypto`, `fs`), **kein npm install
 `/health`, `GET`+`POST /setup`, `GET`+`POST /credentials`, `POST /submit`,
 `GET /status/:token`, `GET /result/:token`, `DELETE /query/:token`, `GET /terminals?space=<id>`.
 
+**Gotcha: laufenden Proxy nach Code-Änderungen neu starten.** Das Script lädt seinen Code
+(und via `ladeAppHtml()` die App-HTML gecacht) **einmal beim Start** — ein bereits laufender
+Proxy kennt neue Routen oder Fixes erst nach einem Neustart. Symptom: eine neu hinzugefügte
+Route antwortet `404 {"fehler":"Unbekannter Endpunkt."}`, obwohl sie im Code steht (so beim
+Live-Test von `/terminals` gegen einen noch aus der Vorversion laufenden Proxy passiert). Fix:
+alten Prozess beenden (`pkill -f wallee-proxy.mjs`) und `node wallee-proxy.mjs` neu starten;
+die Launcher-Skripte laden ohnehin immer die aktuelle Datei. Beim Testen frisch gemergter
+Proxy-Änderungen also **immer zuerst den Proxy neu starten**, bevor man das Verhalten beurteilt.
+
 ### Launcher-Skripte (seit v5.2, kein Terminal-Befehl nötig)
 
 Damit technisch nicht versierte Nutzer den API-Modus ohne Terminal-Befehl starten, gibt es
