@@ -118,6 +118,32 @@ test('mappeTerminal: liest identifier/name/id/state defensiv', () => {
     { identifier: '', name: '', id: null, state: '' }, 'null-Eingabe wirft nicht');
 });
 
+test('tagValide akzeptiert nur Semver-Tags', () => {
+  assert.ok(P.tagValide('v5.5.0'));
+  assert.ok(P.tagValide('5.5.0'));
+  assert.ok(!P.tagValide('main'));
+  assert.ok(!P.tagValide('5.5'));
+  assert.ok(!P.tagValide('v5.5.0; rm -rf /'));
+  assert.ok(!P.tagValide(''));
+  assert.ok(!P.tagValide(undefined));
+});
+
+test('updatePfad baut die raw-URL nur fuer erlaubte Dateien', () => {
+  assert.strictEqual(P.updatePfad('v5.5.0', 'wallee-proxy.mjs'),
+    'https://raw.githubusercontent.com/saschakruesi/wallee-query-builder/v5.5.0/wallee-proxy.mjs');
+  assert.strictEqual(P.updatePfad('v5.5.0', 'wallee_query_builder.html'),
+    'https://raw.githubusercontent.com/saschakruesi/wallee-query-builder/v5.5.0/wallee_query_builder.html');
+  assert.throws(() => P.updatePfad('main', 'wallee-proxy.mjs'), /Tag/);
+  assert.throws(() => P.updatePfad('v5.5.0', '../secret'), /Datei/);
+});
+
+test('sanityHtml/sanityProxy erkennen die echten Dateien', () => {
+  assert.ok(P.sanityHtml('<html><script id="app-logic">x</script>'));
+  assert.ok(!P.sanityHtml('<html>nix</html>'));
+  assert.ok(P.sanityProxy('export function starteServer(){}'));
+  assert.ok(!P.sanityProxy('nur text'));
+});
+
 // --- Zugangsdaten ----------------------------------------------------------
 
 test('Zugangsdaten: gueltige Eingabe wird angenommen', () => {
@@ -801,4 +827,94 @@ test('mischeZugangsdaten uebernimmt neues Secret bei Eingabe', () => {
   const alt = { userId: '1', secret: 'OLDSECRETOLDSECRET', accountId: '2' };
   const neu = { userId: '1', secret: 'NEWSECRETNEWSECRET', accountId: '2' };
   assert.strictEqual(P.mischeZugangsdaten(alt, neu).secret, 'NEWSECRETNEWSECRET');
+});
+
+// --- Selbst-Update -----------------------------------------------------
+
+test('Routing: POST /update wird erkannt', () => {
+  assert.strictEqual(P.findeRoute('POST', '/update').name, 'update');
+});
+
+test('ladeUndSchreibeUpdate: Erfolg schreibt Dateien und legt Backups an', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-update-'));
+  const ziel = {
+    verzeichnis: dir,
+    htmlPfad: path.join(dir, 'wallee_query_builder.html'),
+    proxyPfad: path.join(dir, 'wallee-proxy.mjs'),
+  };
+  fs.writeFileSync(ziel.htmlPfad, 'ALT-HTML');
+  fs.writeFileSync(ziel.proxyPfad, 'ALT-PROXY');
+
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => ({
+    ok: true, status: 200,
+    text: async () => String(url).endsWith('.html')
+      ? '<html><script id="app-logic">neu</script></html>'
+      : 'export function starteServer(){ /* neu */ }',
+  });
+  try {
+    const r = await P.ladeUndSchreibeUpdate('v5.6.0', ziel);
+    assert.strictEqual(r.to, 'v5.6.0');
+    assert.match(fs.readFileSync(ziel.htmlPfad, 'utf8'), /app-logic/);
+    assert.match(fs.readFileSync(ziel.proxyPfad, 'utf8'), /starteServer/);
+    assert.strictEqual(fs.readFileSync(ziel.htmlPfad + '.bak', 'utf8'), 'ALT-HTML');
+    assert.strictEqual(fs.readFileSync(ziel.proxyPfad + '.bak', 'utf8'), 'ALT-PROXY');
+  } finally { globalThis.fetch = original; }
+});
+
+test('ladeUndSchreibeUpdate: Download-Fehler laesst Dateien unveraendert (502)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-update-'));
+  const ziel = { verzeichnis: dir,
+    htmlPfad: path.join(dir, 'wallee_query_builder.html'),
+    proxyPfad: path.join(dir, 'wallee-proxy.mjs') };
+  fs.writeFileSync(ziel.htmlPfad, 'ALT'); fs.writeFileSync(ziel.proxyPfad, 'ALT');
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 404, text: async () => '' });
+  try {
+    await assert.rejects(() => P.ladeUndSchreibeUpdate('v5.6.0', ziel), e => e.status === 502);
+    assert.strictEqual(fs.readFileSync(ziel.htmlPfad, 'utf8'), 'ALT', 'unveraendert');
+  } finally { globalThis.fetch = original; }
+});
+
+test('ladeUndSchreibeUpdate: kaputter Proxy faellt an node --check durch (422)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-update-'));
+  const ziel = { verzeichnis: dir,
+    htmlPfad: path.join(dir, 'wallee_query_builder.html'),
+    proxyPfad: path.join(dir, 'wallee-proxy.mjs') };
+  fs.writeFileSync(ziel.htmlPfad, 'ALT'); fs.writeFileSync(ziel.proxyPfad, 'ALT');
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => ({
+    ok: true, status: 200,
+    text: async () => String(url).endsWith('.html')
+      ? '<script id="app-logic">x</script>'
+      : 'function starteServer(){ (((  // Syntaxfehler, passt aber die Sanity',
+  });
+  try {
+    await assert.rejects(() => P.ladeUndSchreibeUpdate('v5.6.0', ziel), e => e.status === 422);
+    assert.strictEqual(fs.readFileSync(ziel.proxyPfad, 'utf8'), 'ALT', 'unveraendert');
+  } finally { globalThis.fetch = original; }
+});
+
+test('/update ohne X-Wallee-Proxy-Header wird abgelehnt (403, gleicher Schutz wie /submit)', async () => {
+  // Bewusst nicht fakeReqRes() - der setzt den Header immer. Minimaler req/res
+  // ohne den Header, um das Gate selbst zu pruefen (nicht nur den Helper).
+  const req = new (require('node:events').EventEmitter)();
+  req.method = 'POST';
+  req.url = '/update';
+  req.headers = { origin: 'null' }; // kein x-wallee-proxy
+
+  const res = {
+    _status: 0, _headers: {}, _body: '',
+    writeHead(status, headers) { this._status = status; Object.assign(this._headers, headers || {}); },
+    end(text) { this._body = text || ''; this._fertig = true; },
+  };
+  setImmediate(() => { req.emit('end'); });
+
+  await P.behandleAnfrage(req, res);
+  await new Promise(resolve => {
+    const t = setInterval(() => { if (res._fertig) { clearInterval(t); resolve(); } }, 2);
+  });
+
+  assert.strictEqual(res._status, 403, 'ohne den Header muss /update wie /submit blockiert werden');
+  assert.match(res._body, /x-wallee-proxy/i, 'Fehlermeldung soll den fehlenden Header benennen');
 });

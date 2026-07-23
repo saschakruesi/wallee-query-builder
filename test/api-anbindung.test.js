@@ -180,7 +180,10 @@ test('Kopiermodus fragt den Proxy nie ab', async () => {
   // Bleibt im Default-Kopiermodus.
   assert.strictEqual(el('apiModeToggle').checked, false);
   await ruhe();
-  assert.strictEqual(rufe.length, 0, 'ohne API-Modus darf es keinen Netzaufruf geben');
+  // Der Self-Update-Check (Task 5) laeuft unabhaengig vom Betriebsmodus gegen
+  // die GitHub-Releases-API - das ist kein Proxy-Aufruf und hier bewusst erlaubt.
+  const proxyRufe = rufe.filter(r => !String(r.url).includes('api.github.com'));
+  assert.strictEqual(proxyRufe.length, 0, 'ohne API-Modus darf es keinen Netzaufruf an den Proxy geben');
 });
 
 // --- Antwort-Parser (Submit/Status) ---------------------------------------
@@ -491,9 +494,13 @@ test('speichereCredentials postet JSON an /credentials', async () => {
   x.getState().proxyUrl = 'http://localhost:8787';
   const res = await x.speichereCredentials({ userId: '1', accountId: '2', secret: 'S' });
   assert.strictEqual(res.status, 200);
-  assert.match(calls[0].url, /\/credentials$/);
-  assert.strictEqual(calls[0].opts.method, 'POST');
-  assert.deepStrictEqual(JSON.parse(calls[0].opts.body), { userId: '1', accountId: '2', secret: 'S' });
+  // Init laesst beim Laden zusaetzlich den Self-Update-Check (Task 5) gegen
+  // die GitHub-Releases-API laufen - deshalb gezielt den /credentials-Aufruf
+  // suchen statt calls[0] anzunehmen.
+  const credCall = calls.find(c => /\/credentials$/.test(c.url));
+  assert.ok(credCall, 'POST /credentials sollte aufgerufen worden sein');
+  assert.strictEqual(credCall.opts.method, 'POST');
+  assert.deepStrictEqual(JSON.parse(credCall.opts.body), { userId: '1', accountId: '2', secret: 'S' });
 });
 
 test('leseCredentials holt per GET', async () => {

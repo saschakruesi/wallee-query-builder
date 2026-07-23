@@ -4,8 +4,11 @@
 # Voraussetzung: Node.js ist installiert (einmalig von https://nodejs.org).
 
 # Ins Verzeichnis dieser Datei wechseln, damit wallee-proxy.mjs und die HTML
-# gefunden werden - egal, von wo aus doppelgeklickt wird.
-cd "$(dirname "$0")" || exit 1
+# gefunden werden - egal, von wo aus doppelgeklickt wird. Den absoluten Pfad
+# aufloesen und die .mjs spaeter absolut aufrufen, damit es auch von einem
+# Netzlaufwerk/Share aus zuverlaessig startet.
+DIR="$(cd "$(dirname "$0")" && pwd)" || exit 1
+cd "$DIR" || exit 1
 
 if ! command -v node >/dev/null 2>&1; then
   echo
@@ -27,4 +30,4 @@ echo
 
 # WALLEE_OPEN=1 laesst den Server den Standardbrowser selbst oeffnen.
 export WALLEE_OPEN=1
-exec node wallee-proxy.mjs
+exec node "$DIR/wallee-proxy.mjs"

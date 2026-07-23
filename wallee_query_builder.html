@@ -633,6 +633,15 @@
   .status-dot[data-art="fehler"] { background:var(--danger); }
   .status-dot[data-art="info"]   { background:var(--muted); }
   .dialog-trenner { border:none; border-top:1px solid var(--border); margin:16px 0; }
+  .update-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--panel-3); border: 1px solid var(--accent); border-radius: 8px;
+    padding: 10px 14px; margin: 0 0 14px; color: var(--text); }
+  .update-banner.hidden { display: none; }
+  .update-progress { margin-top: 10px; height: 8px; border-radius: 4px; overflow: hidden;
+    background: var(--panel-3); border: 1px solid var(--border); }
+  .update-progress.hidden { display: none; }
+  .update-progress-bar { height: 100%; width: 0; background: var(--accent);
+    transition: width .3s ease; }
   .badge {
     display: inline-block;
     background: var(--panel-2);
@@ -718,8 +727,12 @@
     <span class="pk-titel">Terminal-Report</span>
     <span class="pk-datum" id="reportPrintDatum"></span>
   </div>
+  <div class="update-banner hidden" id="updateBanner" role="status">
+    <span id="updateBannerText">Update verfügbar.</span>
+    <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
+  </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.4.2</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.5.0</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -1132,6 +1145,24 @@
         </div>
         <p class="hint" id="credStatus" style="margin-top:8px;margin-bottom:0;"></p>
       </div>
+
+      <div id="updateSection">
+        <hr class="dialog-trenner">
+        <h3 style="margin-bottom:4px;">Update</h3>
+        <p class="hint" style="margin-top:0;">
+          Aktuelle Version: <strong id="updateCurrentVersion">–</strong> ·
+          neueste: <strong id="updateLatestVersion">–</strong>.
+          Das Selbst-Update lädt App und Proxy neu und startet den Proxy neu — nur im API-Modus.
+        </p>
+        <div class="actions" style="margin-top:10px;">
+          <button class="btn btn-primary" id="updateNowBtn">Aktualisieren</button>
+          <button class="btn" id="updateCheckBtn">Jetzt prüfen</button>
+        </div>
+        <div class="update-progress hidden" id="updateProgress">
+          <div class="update-progress-bar" id="updateProgressBar"></div>
+        </div>
+        <p class="hint" id="updateStatus" style="margin-top:8px;margin-bottom:0;"></p>
+      </div>
     </div>
   </div>
 </div>
@@ -1224,6 +1255,17 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   const sqlEinfuegenHinweis = document.getElementById('sqlEinfuegenHinweis');
   const settingsBtn     = document.getElementById('settingsBtn');
   const settingsOverlay = document.getElementById('settingsOverlay');
+  const updateBanner        = document.getElementById('updateBanner');
+  const updateBannerText    = document.getElementById('updateBannerText');
+  const updateBannerBtn     = document.getElementById('updateBannerBtn');
+  const updateCurrentVersion= document.getElementById('updateCurrentVersion');
+  const updateLatestVersion = document.getElementById('updateLatestVersion');
+  const updateNowBtn        = document.getElementById('updateNowBtn');
+  const updateCheckBtn      = document.getElementById('updateCheckBtn');
+  const updateProgressEl    = document.getElementById('updateProgress');
+  const updateProgressBar   = document.getElementById('updateProgressBar');
+  const updateStatusEl      = document.getElementById('updateStatus');
+  const updateSectionEl     = document.getElementById('updateSection');
   const settingsCloseBtn = document.getElementById('settingsCloseBtn');
   const apiModeToggle   = document.getElementById('apiModeToggle');
   const apiSettings     = document.getElementById('apiSettings');
@@ -1691,6 +1733,127 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       });
     });
   }
+  // --- Self-Update ---------------------------------------------------------
+  // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
+  // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
+  // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
+  const APP_VERSION = '5.5.0';
+  const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
+  const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
+  const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
+  const UPDATE_CHECK_TTL = 6 * 60 * 60 * 1000;  // 6 h
+
+  // Semver-Vergleich, v-Praefix-tolerant. Formatfehler auf einer Seite -> false
+  // (nie ein Update auf Basis von Muell melden). Rein, harness-getestet.
+  function istNeuer(current, latest) {
+    const teile = v => {
+      const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(v == null ? '' : v).trim());
+      return m ? [ +m[1], +m[2], +m[3] ] : null;
+    };
+    const a = teile(current), b = teile(latest);
+    if (!a || !b) return false;
+    for (let i = 0; i < 3; i++) { if (b[i] > a[i]) return true; if (b[i] < a[i]) return false; }
+    return false;
+  }
+
+  // Fragt die neueste Release-Version ab, gedrosselt ueber localStorage. Wirft
+  // nicht - Netzwerkfehler ergeben einfach "kein Update".
+  async function pruefeUpdate(force) {
+    let cache = null;
+    try { cache = JSON.parse(localStorage.getItem(UPDATE_CHECK_KEY) || 'null'); } catch (e) {}
+    const jetzt = Date.now();
+    if (!force && cache && cache.checkedAt && (jetzt - cache.checkedAt) < UPDATE_CHECK_TTL) {
+      return { latestTag: cache.latestTag, verfuegbar: istNeuer(APP_VERSION, cache.latestTag) };
+    }
+    try {
+      const r = await fetch(UPDATE_API_URL, { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return { latestTag: null, verfuegbar: false };
+      const daten = await r.json();
+      const latestTag = daten && daten.tag_name ? String(daten.tag_name) : null;
+      try { localStorage.setItem(UPDATE_CHECK_KEY, JSON.stringify({ checkedAt: jetzt, latestTag })); } catch (e) {}
+      return { latestTag, verfuegbar: istNeuer(APP_VERSION, latestTag) };
+    } catch (e) {
+      return { latestTag: null, verfuegbar: false };
+    }
+  }
+
+  // Merkt sich den zuletzt bekannten neuesten Tag fuer den Update-Ablauf.
+  let letzterLatestTag = null;
+
+  function setzeUpdateProgress(prozent, text) {
+    updateProgressEl.classList.remove('hidden');
+    updateProgressBar.style.width = Math.max(0, Math.min(100, prozent)) + '%';
+    if (text !== undefined) updateStatusEl.textContent = text;
+  }
+
+  // Banner + Settings-Abschnitt an das Check-Ergebnis anpassen.
+  function zeigeUpdateZustand(ergebnis) {
+    letzterLatestTag = ergebnis && ergebnis.latestTag ? ergebnis.latestTag : null;
+    updateCurrentVersion.textContent = 'v' + APP_VERSION;
+    updateLatestVersion.textContent = letzterLatestTag || '–';
+    const verfuegbar = !!(ergebnis && ergebnis.verfuegbar);
+    updateBanner.classList.toggle('hidden', !verfuegbar);
+    if (verfuegbar) updateBannerText.textContent = 'Update verfügbar: ' + letzterLatestTag;
+    updateNowBtn.disabled = !verfuegbar;
+  }
+
+  // Manueller/Init-Check.
+  async function checkeUpdate(force) {
+    const ergebnis = await pruefeUpdate(force);
+    zeigeUpdateZustand(ergebnis);
+    return ergebnis;
+  }
+
+  // Der Update-Ablauf. Nur im API-Modus; sonst Release-Seite oeffnen. Wirft nicht.
+  async function aktualisiereApp() {
+    if (!letzterLatestTag) { return; }
+    if (!state.apiMode) {
+      window.open(UPDATE_RELEASE_PAGE, '_blank', 'noopener');
+      return;
+    }
+    if (!confirm('Das ersetzt die App UND das Proxy-Programm und startet den Proxy neu. Fortfahren?')) return;
+    updateNowBtn.disabled = true;
+    try {
+      setzeUpdateProgress(10, 'Prüfe Verbindung zum Proxy …');
+      const zustand = await pruefeProxy(state.proxyUrl);
+      if (!zustand.erreichbar || !zustand.bereit) {
+        setzeUpdateProgress(0, 'Proxy nicht erreichbar. Update abgebrochen.');
+        updateNowBtn.disabled = false; return;
+      }
+      setzeUpdateProgress(35, 'Lade und ersetze die Dateien …');
+      const { status, daten } = await proxyJson('/update', 'POST', { tag: letzterLatestTag });
+      if (status !== 200 || !daten || !daten.ok) {
+        setzeUpdateProgress(0, 'Update fehlgeschlagen: ' + ((daten && daten.fehler) || ('Status ' + status)));
+        updateNowBtn.disabled = false; return;
+      }
+      // Proxy startet jetzt neu - auf /health warten.
+      setzeUpdateProgress(65, 'Proxy startet neu, verbinde neu …');
+      const bereit = await warteAufProxyNeustart(45000);
+      if (!bereit) {
+        setzeUpdateProgress(90, 'Neustart dauert länger als erwartet. Bitte die Seite manuell neu laden.');
+        return;
+      }
+      setzeUpdateProgress(100, 'Fertig — lädt neu …');
+      setTimeout(() => location.reload(), 600);
+    } catch (e) {
+      setzeUpdateProgress(0, 'Update fehlgeschlagen: ' + (e && e.message ? e.message : 'unbekannter Fehler'));
+      updateNowBtn.disabled = false;
+    }
+  }
+
+  // Pollt /health, bis der neu gestartete Proxy antwortet (oder Timeout).
+  async function warteAufProxyNeustart(timeoutMs) {
+    const bis = Date.now() + timeoutMs;
+    // Kurz warten, bis der alte Prozess sicher weg ist (Bind-Verzoegerung ~1.2s).
+    await new Promise(r => setTimeout(r, 1500));
+    while (Date.now() < bis) {
+      const z = await pruefeProxy(state.proxyUrl, 2000);
+      if (z.erreichbar) return true;
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    return false;
+  }
+
   // Fuehrt die aus wallee synchronisierten Terminals mit der lokalen Liste
   // zusammen. Schluessel ist der identifier (= pt.identifier im SQL). Neue werden
   // ausgewaehlt angehaengt, bestehende behalten ihre Auswahl, ihr Label wird aus
@@ -4228,6 +4391,18 @@ ORDER BY
       copyBtn.classList.remove('copied');
     }, 1800);
   });
+  updateBannerBtn.addEventListener('click', () => {
+    if (state.apiMode) { settingsOeffnen(); if (updateSectionEl) updateSectionEl.scrollIntoView({ block: 'center' }); aktualisiereApp(); }
+    else window.open(UPDATE_RELEASE_PAGE, '_blank', 'noopener');
+  });
+  updateNowBtn.addEventListener('click', () => aktualisiereApp());
+  updateCheckBtn.addEventListener('click', async () => {
+    updateStatusEl.textContent = 'Prüfe …';
+    const e = await checkeUpdate(true);
+    updateStatusEl.textContent = e.latestTag
+      ? (e.verfuegbar ? 'Update verfügbar: ' + e.latestTag : 'Aktuell auf dem neuesten Stand.')
+      : 'Prüfung nicht möglich (offline?).';
+  });
 
   // --- Init ----------------------------------------------------------------
   loadState();
@@ -4261,6 +4436,8 @@ ORDER BY
     pruefeProxy(state.proxyUrl, 2000).then(z => { proxyBereit = meldeProxyZustand(z); aktualisiereSyncButton(); });
   }
   setMode(state.mode || 'brand');
+  // Beim Laden einmal (gedrosselt) auf ein Update pruefen.
+  checkeUpdate(false);
 </script>
 </body>
 </html>

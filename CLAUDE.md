@@ -12,14 +12,16 @@ Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen. Seit v4 zus
 integrierte Terminal-Report (Outlet-/Brand-Gruppen, XLSX-Export) und die direkte
 API-Anbindung. Seit v5 der Abfrage-Verlauf, der eigenständige `report`-Modus ist in
 `terminal` aufgegangen (Terminal-Report ist jetzt dessen Ausgabe, kein CSV-Upload mehr) und
-die Zugangsdaten lassen sich direkt im Einstellungs-Dialog pflegen.
+die Zugangsdaten lassen sich direkt im Einstellungs-Dialog pflegen. Seit v5.5 prüft die App
+selbst auf neuere Releases und kann sich im API-Modus per Klick selbst aktualisieren (siehe
+„Self-Update" unten).
 
 ## Dateien
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.4.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung. Hier weiterentwickeln. |
-| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.5.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
+| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
@@ -204,6 +206,45 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   Proxy sofort (`pruefeProxy(state.proxyUrl, 2000)` im Init, zusätzlich beim Umschalten des
   Toggles) — der Nutzer sieht den Status-Punkt, bevor er überhaupt auf Submit geht.
 
+### Self-Update (seit v5.5)
+
+- **Client-seitiger Check, unabhängig vom Betriebsmodus:** Beim Laden (gedrosselt) und über
+  „Jetzt prüfen" im Einstellungs-Dialog fragt `pruefeUpdate(force)` die öffentliche
+  GitHub-Releases-API (`api.github.com/repos/<owner>/<repo>/releases/latest`, CORS `*`, kein
+  Proxy nötig — funktioniert also auch im reinen `file://`-Kopieren-Modus) nach dem neuesten
+  Tag. `istNeuer(current, latest)` vergleicht Semver `v`-Präfix-tolerant, rein und
+  Harness-getestet; ein Formatfehler auf irgendeiner Seite ergibt bewusst `false` (nie ein
+  Update auf Basis von Datenmüll melden). Drosselung über `localStorage`
+  (`UPDATE_CHECK_KEY`, `UPDATE_CHECK_TTL = 6 h`) — `force=true` (Button) umgeht sie. Netzwerk-
+  fehler werfen nicht, sie ergeben einfach „kein Update".
+- **Anzeige:** `zeigeUpdateZustand()` steuert Banner (`#updateBanner`, oberhalb des Tools) und
+  den Update-Abschnitt im Einstellungs-Dialog (aktuelle/neueste Version, Fortschrittsbalken)
+  synchron aus demselben Check-Ergebnis.
+- **Ausführung nur im API-Modus.** Im Kopieren-Modus öffnet der Banner-/Settings-Button
+  stattdessen die GitHub-Release-Seite (`UPDATE_RELEASE_PAGE`) in einem neuen Tab — ein
+  `file://`-Dokument kann sich nicht selbst überschreiben. Im API-Modus fragt
+  `aktualisiereApp()` erst eine Bestätigung ab (das ersetzt zwei Dateien und startet den Proxy
+  neu), prüft den Proxy (`pruefeProxy`), ruft dann `POST /update {tag}` auf und pollt danach
+  `warteAufProxyNeustart()` gegen `/health`, bis der neu gestartete Proxy wieder antwortet
+  (Timeout 45 s, mit Hinweis auf manuelles Neuladen statt endlosem Warten) — bei Erfolg lädt
+  `location.reload()` die Seite neu und zeigt die neue Version.
+- **`POST /update`** am Proxy (siehe „Proxy" unten) lädt die neuen Laufzeit-Dateien vom
+  Release-Tag, validiert sie, sichert die alten als `.bak`, schreibt atomar und startet den
+  Prozess detached neu.
+- **Sicherheitsmodell:** TLS (HTTPS zu `raw.githubusercontent.com`) plus fest im Proxy-Code
+  verdrahtetes Repo (`UPDATE_REPO`, nie aus Eingaben) — vergleichbar mit einem `git pull` von
+  einer festen Remote. Das schützt gegen Manipulation auf dem Transportweg, **nicht** gegen
+  ein kompromittiertes GitHub-Konto des Maintainers, das einen bösartigen Tag veröffentlicht;
+  dieses Restrisiko ist bewusst in Kauf genommen, nicht versehentlich übersehen.
+- **Aktualisiert werden nur die zwei Laufzeit-Dateien** (`wallee_query_builder.html`,
+  `wallee-proxy.mjs`). Launcher-Skripte und Dokumentation bleiben aussen vor und müssen bei
+  Bedarf manuell nachgezogen werden (neues Zip).
+- **Recovery:** schlägt ein Update fehl oder verhält sich die neue Version unerwartet, liegen
+  `wallee_query_builder.html.bak` und `wallee-proxy.mjs.bak` neben den Originaldateien (das
+  Backup überschreibt bewusst nur den jeweils letzten Stand, kein Verlauf). Zurücksetzen: die
+  `.bak`-Dateien auf die Originalnamen zurückbenennen, Proxy neu starten
+  (`node wallee-proxy.mjs`).
+
 ### Spaltenkatalog (`EXPORT_COLUMNS`)
 
 Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
@@ -296,13 +337,14 @@ aktive Zustände) — als Textfarbe auf hellem Grund ist das helle Türkis zu ko
 Für Text und feine Linien auf hellem Grund kommen die dunkleren Abstufungen zum Einsatz:
 `#0da69c` (`--accent-hover`) und `#225956` (`--accent-dark`, z. B. für `.brand-mark`).
 
-## Proxy (`wallee-proxy.mjs`, v4, `/credentials` seit v5, `/terminals` seit v5.4)
+## Proxy (`wallee-proxy.mjs`, v4, `/credentials` seit v5, `/terminals` seit v5.4, `/update` seit v5.5)
 
 Einzelnes Node-Script, nur Builtins (`http`, `crypto`, `fs`), **kein npm install**. Start
 `node wallee-proxy.mjs`, Port über `WALLEE_PROXY_PORT`. Endpunkte: `GET /` (+ `/app`,
 `/index.html`) liefert die **App-HTML selbst** (Standalone-/Serve-Betrieb, siehe unten),
 `/health`, `GET`+`POST /setup`, `GET`+`POST /credentials`, `POST /submit`,
-`GET /status/:token`, `GET /result/:token`, `DELETE /query/:token`, `GET /terminals?space=<id>`.
+`GET /status/:token`, `GET /result/:token`, `DELETE /query/:token`, `GET /terminals?space=<id>`,
+`POST /update`.
 
 **Gotcha: laufenden Proxy nach Code-Änderungen neu starten.** Das Script lädt seinen Code
 (und via `ladeAppHtml()` die App-HTML gecacht) **einmal beim Start** — ein bereits laufender
@@ -365,6 +407,29 @@ CI-Aufwand). Sicherheitsmodell unverändert: Bind nur `127.0.0.1`, Secret lokal 
   `{identifier,name,id,state}`) ein und liefert `{ ok:true, terminals:[...] }` in einer
   Antwort. `terminalPfad`/`mappeTerminal` sind reine Funktionen, ohne Netz getestet
   (`test/proxy.test.js`).
+- **`POST /update {tag}`** (Route `update`, seit v5.5) lädt eine neue Version der Laufzeit-
+  Dateien vom fest verdrahteten GitHub-Repo (`UPDATE_REPO = {owner, repo}`, **nie** aus der
+  Anfrage) und ersetzt sich selbst:
+  - `tagValide(tag)` verlangt strikt `^v?\d+\.\d+\.\d+$` — ungültig/fehlend → `400`, bevor
+    überhaupt ein Netzwerkaufruf passiert.
+  - `updatePfad(tag, datei)` baut die Download-URL ausschliesslich gegen
+    `https://raw.githubusercontent.com/<owner>/<repo>/<tag>/<datei>` (HTTPS, `datei` gegen die
+    Whitelist `UPDATE_DATEIEN` geprüft) — kein Pfad kommt aus Nutzereingaben.
+  - `ladeUndSchreibeUpdate(tag, ziel)` lädt HTML **und** Proxy parallel, prüft: nicht-leere
+    Antwort, `sanityHtml`/`sanityProxy` (grobe Plausibilität — z. B. eine GitHub-Fehlerseite
+    statt der echten Datei erkennen), und lässt den neuen Proxy-Code als `.mjs`-Temp-Datei
+    durch `node --check` laufen (syntaktisch kaputter Code wird **vor** dem Ersetzen
+    verworfen). Erst wenn **alle** Gates bestehen: die alten Dateien werden nach `<datei>.bak`
+    kopiert (überschreibend — nur der letzte Stand), die neuen atomar geschrieben (Temp-Datei +
+    `rename` im selben Verzeichnis). Rückgabe `{ from: APP_VERSION, to: tag }`.
+  - Der Handler antwortet **erst** `200 { ok:true, restarting:true, from, to }` (Antwort geht
+    über `res.on('finish', …)` sicher noch raus), **dann** startet `starteNeustart()` einen
+    detached Kindprozess und beendet den aktuellen mit `process.exit(0)`. Der Kindprozess
+    wartet über `WALLEE_RESTART_DELAY_MS` (vom Elternprozess auf `1200` ms gesetzt), bis der
+    alte Prozess seinen Port sicher freigegeben hat, bevor er selbst `listen()` aufruft.
+  - Reine Funktionen (`tagValide`, `updatePfad`, `sanityHtml`, `sanityProxy`,
+    `ladeUndSchreibeUpdate`, `starteNeustart`) sind getestet, u. a. gegen einen gestubbten
+    `fetch` (`test/self-update.test.js`).
 - **Missbrauchsschutz** (ein lokaler Server ist von jeder offenen Webseite erreichbar):
   Bindung nur auf `127.0.0.1`; Herkunft nur `null` (per `file://` geöffnete App) und die
   eigenen Proxy-Origins, **nie** `*`; zusätzlicher Header `X-Wallee-Proxy`, den eine fremde
@@ -519,8 +584,9 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    `plain(v)` (JSON-Runde gegen Realm-Grenzen bei `deepStrictEqual`).
    Testdateien: `queries` (SQL), `report`/`report-render`/`report-xlsx` (Report-Kern, Render,
    XLSX end-to-end), `betriebsmodus`/`api-anbindung` (Modi, Health, Submit-Poll-Result),
-   `proxy` (reine Proxy-Funktionen inkl. JWT gegen RFC-7515), `embedding`/`dom-ids`
-   (Struktur-/ID-Wächter).
+   `proxy` (reine Proxy-Funktionen inkl. JWT gegen RFC-7515), `self-update` (`istNeuer`,
+   `tagValide`, `updatePfad`, Sanity-Checks, `ladeUndSchreibeUpdate` gegen gestubbten `fetch`,
+   `POST /update` am Route-Dispatch), `embedding`/`dom-ids` (Struktur-/ID-Wächter).
    **Einschränkung:** Der einfache Stub liefert für **jede** ID irgendein Element — eine
    verwaiste DOM-Referenz fällt so nicht auf. `test/dom-ids.test.js` gleicht deshalb die per
    `getElementById` angefragten IDs statisch gegen das Markup ab; nach UI-Änderungen bleibt
