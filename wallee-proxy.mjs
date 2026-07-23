@@ -22,7 +22,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 
 // --- Konfiguration ---------------------------------------------------------
 
@@ -334,6 +334,8 @@ export function findeRoute(methode, pfad) {
     const space = (new URLSearchParams(query).get('space') || '').trim();
     return { name: 'terminals', space };
   }
+
+  if (m === 'POST' && p === '/update') return { name: 'update' };
 
   return { name: 'unbekannt' };
 }
@@ -708,6 +710,35 @@ export async function behandleAnfrage(req, res) {
         return;
       }
 
+      case 'update': {
+        // Selbst-Update: neue Laufzeit-Dateien vom Release-Tag laden, pruefen,
+        // ersetzen und den Proxy neu starten. Der Tag kommt von der App (die ihn
+        // aus der GitHub-Releases-API hat) und wird streng validiert.
+        const roh = await leseKoerper(req);
+        let tag; try { tag = JSON.parse(roh).tag; } catch (e) { tag = undefined; }
+        if (!tagValide(tag)) {
+          sendeJson(res, 400, { ok: false, fehler: 'Ungueltiger oder fehlender Tag.' }, origin);
+          return;
+        }
+        const verzeichnis = path.dirname(fileURLToPath(import.meta.url));
+        const ziel = {
+          verzeichnis,
+          htmlPfad: path.join(verzeichnis, 'wallee_query_builder.html'),
+          proxyPfad: path.join(verzeichnis, 'wallee-proxy.mjs'),
+        };
+        let ergebnis;
+        try {
+          ergebnis = await ladeUndSchreibeUpdate(tag, ziel);
+        } catch (e) {
+          sendeJson(res, e.status || 500, { ok: false, fehler: e.message || 'Update fehlgeschlagen.' }, origin);
+          return;
+        }
+        // Erst antworten, dann neu starten - sonst sieht die App nie das ok.
+        res.on('finish', () => { setTimeout(() => starteNeustart(ziel.verzeichnis), 150); });
+        sendeJson(res, 200, { ok: true, restarting: true, ...ergebnis }, origin);
+        return;
+      }
+
       default:
         sendeJson(res, 404, { ok: false, fehler: 'Unbekannter Endpunkt.' }, origin);
     }
@@ -852,6 +883,54 @@ export function startFehlertext(err, host = HOST, port = PORT) {
   return `Server konnte nicht gestartet werden: ${err && err.message ? err.message : String(err)}`;
 }
 
+// Laedt die neuen Laufzeit-Dateien vom Release-Tag und ersetzt sie - aber erst,
+// wenn ALLE Gates bestehen (nicht leer, Sanity, node --check). Vorher wird nichts
+// ueberschrieben; die alten Dateien werden als <datei>.bak gesichert. Der neue
+// Proxy-Code wird als .mjs-Temp geschrieben, damit `node --check` ihn als ES-Modul
+// prueft. rename im selben Verzeichnis ist atomar.
+export async function ladeUndSchreibeUpdate(tag, ziel) {
+  const [htmlR, proxyR] = await Promise.all([
+    fetch(updatePfad(tag, 'wallee_query_builder.html')),
+    fetch(updatePfad(tag, 'wallee-proxy.mjs')),
+  ]);
+  if (!htmlR.ok || !proxyR.ok) { const e = new Error('Download vom Release fehlgeschlagen.'); e.status = 502; throw e; }
+  const htmlText = await htmlR.text();
+  const proxyText = await proxyR.text();
+  if (!htmlText || !proxyText) { const e = new Error('Leere Datei vom Release erhalten.'); e.status = 502; throw e; }
+  if (!sanityHtml(htmlText) || !sanityProxy(proxyText)) {
+    const e = new Error('Heruntergeladene Dateien sehen nicht wie der Query Builder aus.'); e.status = 422; throw e;
+  }
+  // Neuen Proxy als .mjs-Temp schreiben und syntaktisch pruefen.
+  const tmpProxy = path.join(ziel.verzeichnis, '.proxy-update.mjs');
+  fs.writeFileSync(tmpProxy, proxyText);
+  try {
+    execFileSync(process.execPath, ['--check', tmpProxy], { stdio: 'ignore' });
+  } catch (err) {
+    try { fs.unlinkSync(tmpProxy); } catch (e2) {}
+    const e = new Error('Neuer Proxy-Code ist fehlerhaft (node --check).'); e.status = 422; throw e;
+  }
+  // Backups (bewusst ueberschreibend - immer nur der letzte Stand).
+  if (fs.existsSync(ziel.htmlPfad)) fs.copyFileSync(ziel.htmlPfad, ziel.htmlPfad + '.bak');
+  if (fs.existsSync(ziel.proxyPfad)) fs.copyFileSync(ziel.proxyPfad, ziel.proxyPfad + '.bak');
+  // Atomar ersetzen.
+  const tmpHtml = path.join(ziel.verzeichnis, '.app-update.html');
+  fs.writeFileSync(tmpHtml, htmlText);
+  fs.renameSync(tmpHtml, ziel.htmlPfad);
+  fs.renameSync(tmpProxy, ziel.proxyPfad);
+  return { from: APP_VERSION, to: tag };
+}
+
+// Detached-Neustart: der Kindprozess wartet ueber WALLEE_RESTART_DELAY_MS, bis der
+// Elternprozess seinen Port freigegeben hat (process.exit beendet ihn sofort).
+export function starteNeustart(verzeichnis) {
+  const skript = path.join(verzeichnis, 'wallee-proxy.mjs');
+  spawn(process.execPath, [skript], {
+    cwd: verzeichnis, detached: true, stdio: 'ignore',
+    env: { ...process.env, WALLEE_RESTART_DELAY_MS: '1200' },
+  }).unref();
+  process.exit(0);
+}
+
 export function starteServer({ port = PORT, host = HOST } = {}) {
   zugangsdaten = ladeZugangsdaten();
   const server = http.createServer((req, res) => { behandleAnfrage(req, res); });
@@ -861,7 +940,7 @@ export function starteServer({ port = PORT, host = HOST } = {}) {
     console.error(startFehlertext(err, host, port));
     process.exit(1);
   });
-  server.listen(port, host, () => {
+  const startenListen = () => server.listen(port, host, () => {
     const url = `http://${host}:${port}`;
     console.log(`wallee Query Builder laeuft auf ${url}`);
     console.log(zugangsdaten
@@ -869,6 +948,8 @@ export function starteServer({ port = PORT, host = HOST } = {}) {
       : `Noch keine Zugangsdaten. Im Browser unter ${url} das Zahnrad oeffnen und eintragen.`);
     if (sollBrowserOeffnen()) oeffneBrowser(url);
   });
+  const verzoegerung = Number(process.env.WALLEE_RESTART_DELAY_MS) || 0;
+  if (verzoegerung > 0) setTimeout(startenListen, verzoegerung); else startenListen();
   return server;
 }
 

@@ -828,3 +828,69 @@ test('mischeZugangsdaten uebernimmt neues Secret bei Eingabe', () => {
   const neu = { userId: '1', secret: 'NEWSECRETNEWSECRET', accountId: '2' };
   assert.strictEqual(P.mischeZugangsdaten(alt, neu).secret, 'NEWSECRETNEWSECRET');
 });
+
+// --- Selbst-Update -----------------------------------------------------
+
+test('Routing: POST /update wird erkannt', () => {
+  assert.strictEqual(P.findeRoute('POST', '/update').name, 'update');
+});
+
+test('ladeUndSchreibeUpdate: Erfolg schreibt Dateien und legt Backups an', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-update-'));
+  const ziel = {
+    verzeichnis: dir,
+    htmlPfad: path.join(dir, 'wallee_query_builder.html'),
+    proxyPfad: path.join(dir, 'wallee-proxy.mjs'),
+  };
+  fs.writeFileSync(ziel.htmlPfad, 'ALT-HTML');
+  fs.writeFileSync(ziel.proxyPfad, 'ALT-PROXY');
+
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => ({
+    ok: true, status: 200,
+    text: async () => String(url).endsWith('.html')
+      ? '<html><script id="app-logic">neu</script></html>'
+      : 'export function starteServer(){ /* neu */ }',
+  });
+  try {
+    const r = await P.ladeUndSchreibeUpdate('v5.6.0', ziel);
+    assert.strictEqual(r.to, 'v5.6.0');
+    assert.match(fs.readFileSync(ziel.htmlPfad, 'utf8'), /app-logic/);
+    assert.match(fs.readFileSync(ziel.proxyPfad, 'utf8'), /starteServer/);
+    assert.strictEqual(fs.readFileSync(ziel.htmlPfad + '.bak', 'utf8'), 'ALT-HTML');
+    assert.strictEqual(fs.readFileSync(ziel.proxyPfad + '.bak', 'utf8'), 'ALT-PROXY');
+  } finally { globalThis.fetch = original; }
+});
+
+test('ladeUndSchreibeUpdate: Download-Fehler laesst Dateien unveraendert (502)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-update-'));
+  const ziel = { verzeichnis: dir,
+    htmlPfad: path.join(dir, 'wallee_query_builder.html'),
+    proxyPfad: path.join(dir, 'wallee-proxy.mjs') };
+  fs.writeFileSync(ziel.htmlPfad, 'ALT'); fs.writeFileSync(ziel.proxyPfad, 'ALT');
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 404, text: async () => '' });
+  try {
+    await assert.rejects(() => P.ladeUndSchreibeUpdate('v5.6.0', ziel), e => e.status === 502);
+    assert.strictEqual(fs.readFileSync(ziel.htmlPfad, 'utf8'), 'ALT', 'unveraendert');
+  } finally { globalThis.fetch = original; }
+});
+
+test('ladeUndSchreibeUpdate: kaputter Proxy faellt an node --check durch (422)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-update-'));
+  const ziel = { verzeichnis: dir,
+    htmlPfad: path.join(dir, 'wallee_query_builder.html'),
+    proxyPfad: path.join(dir, 'wallee-proxy.mjs') };
+  fs.writeFileSync(ziel.htmlPfad, 'ALT'); fs.writeFileSync(ziel.proxyPfad, 'ALT');
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => ({
+    ok: true, status: 200,
+    text: async () => String(url).endsWith('.html')
+      ? '<script id="app-logic">x</script>'
+      : 'function starteServer(){ (((  // Syntaxfehler, passt aber die Sanity',
+  });
+  try {
+    await assert.rejects(() => P.ladeUndSchreibeUpdate('v5.6.0', ziel), e => e.status === 422);
+    assert.strictEqual(fs.readFileSync(ziel.proxyPfad, 'utf8'), 'ALT', 'unveraendert');
+  } finally { globalThis.fetch = original; }
+});
