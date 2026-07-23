@@ -1695,6 +1695,14 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
 
   // --- Terminals UI --------------------------------------------------------
   let terminalFilter = '';
+
+  // Setzt den Terminal-Filter zurueck (Modul-Variable + Eingabefeld), damit nach
+  // Import/Sync/Leeren alle (neuen) Terminals sichtbar sind - sonst verdeckt ein
+  // noch aktiver Filter frisch importierte Terminals.
+  function terminalFilterZuruecksetzen() {
+    terminalFilter = '';
+    if (terminalFilterInput) terminalFilterInput.value = '';
+  }
   function renderTerminals() {
     terminalCount.textContent = state.terminals.length;
     if (state.terminals.length === 0) {
@@ -2002,7 +2010,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       }
       const { liste, neuCount, aktualisiertCount } = mergeSyncTerminals(state.terminals, alle);
       state.terminals = liste;
-      saveState(); renderTerminals(); generate();
+      saveState(); terminalFilterZuruecksetzen(); renderTerminals(); generate();
 
       const bits = [`${neuCount} neu`, `${aktualisiertCount} aktualisiert`,
         `${spaceIds.length - fehlerSpaces.length} Space${(spaceIds.length - fehlerSpaces.length) === 1 ? '' : 's'}`];
@@ -4392,6 +4400,7 @@ ORDER BY
       added++;
     });
     saveState();
+    terminalFilterZuruecksetzen();
     renderTerminals();
     generate();
 
@@ -4445,7 +4454,7 @@ ORDER BY
     if (state.terminals.length === 0) return;
     if (confirm(`Wirklich alle ${state.terminals.length} Terminals löschen?`)) {
       state.terminals = [];
-      saveState(); renderTerminals(); generate();
+      saveState(); terminalFilterZuruecksetzen(); renderTerminals(); generate();
     }
   });
 
