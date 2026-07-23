@@ -1691,6 +1691,49 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       });
     });
   }
+  // --- Self-Update ---------------------------------------------------------
+  // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
+  // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
+  // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
+  const APP_VERSION = '5.5.0';
+  const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
+  const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
+  const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
+  const UPDATE_CHECK_TTL = 6 * 60 * 60 * 1000;  // 6 h
+
+  // Semver-Vergleich, v-Praefix-tolerant. Formatfehler auf einer Seite -> false
+  // (nie ein Update auf Basis von Muell melden). Rein, harness-getestet.
+  function istNeuer(current, latest) {
+    const teile = v => {
+      const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(v == null ? '' : v).trim());
+      return m ? [ +m[1], +m[2], +m[3] ] : null;
+    };
+    const a = teile(current), b = teile(latest);
+    if (!a || !b) return false;
+    for (let i = 0; i < 3; i++) { if (b[i] > a[i]) return true; if (b[i] < a[i]) return false; }
+    return false;
+  }
+
+  // Fragt die neueste Release-Version ab, gedrosselt ueber localStorage. Wirft
+  // nicht - Netzwerkfehler ergeben einfach "kein Update".
+  async function pruefeUpdate(force) {
+    let cache = null;
+    try { cache = JSON.parse(localStorage.getItem(UPDATE_CHECK_KEY) || 'null'); } catch (e) {}
+    const jetzt = Date.now();
+    if (!force && cache && cache.checkedAt && (jetzt - cache.checkedAt) < UPDATE_CHECK_TTL) {
+      return { latestTag: cache.latestTag, verfuegbar: istNeuer(APP_VERSION, cache.latestTag) };
+    }
+    try {
+      const r = await fetch(UPDATE_API_URL, { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return { latestTag: null, verfuegbar: false };
+      const daten = await r.json();
+      const latestTag = daten && daten.tag_name ? String(daten.tag_name) : null;
+      try { localStorage.setItem(UPDATE_CHECK_KEY, JSON.stringify({ checkedAt: jetzt, latestTag })); } catch (e) {}
+      return { latestTag, verfuegbar: istNeuer(APP_VERSION, latestTag) };
+    } catch (e) {
+      return { latestTag: null, verfuegbar: false };
+    }
+  }
   // Fuehrt die aus wallee synchronisierten Terminals mit der lokalen Liste
   // zusammen. Schluessel ist der identifier (= pt.identifier im SQL). Neue werden
   // ausgewaehlt angehaengt, bestehende behalten ihre Auswahl, ihr Label wird aus

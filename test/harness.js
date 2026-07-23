@@ -127,6 +127,8 @@ const EXPORTED = [
   'historyLaden',
   'historySpeichern',
   'submitUndReport',
+  // Self-Update (Task 3), reine Funktion
+  'istNeuer',
 ];
 
 // Schneidet den Inhalt von <script id="..."> ... </script> aus dem HTML.
