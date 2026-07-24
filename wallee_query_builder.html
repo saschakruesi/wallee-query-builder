@@ -4111,9 +4111,13 @@ ORDER BY settlement_datum, transaction_id;`;
     if (apiLauf) return;                       // schon ein Lauf aktiv
     apiLauf = { token: '', abgebrochen: false };
     submitBtn.disabled = true;
-    // Einmal pro Lauf ermitteln und ueber Submit, Status und Result hinweg
-    // gleich halten - sonst liefen die drei Aufrufe im falschen Kontext.
+    // Einmal pro Lauf ermitteln und ueber Submit, Status, Result UND ein
+    // moegliches Abbrechen hinweg gleich halten - sonst liefen die Aufrufe im
+    // falschen Kontext (wichtig bei aktivem Super-User-Flip). Zusaetzlich auf
+    // apiLauf ablegen, damit brichSubmitAb() denselben Account fuer DELETE
+    // /query/:token verwendet.
     const account = aktiverAccount();
+    apiLauf.account = account;
 
     try {
       zeigeFortschritt('Query wird übermittelt …');
@@ -4396,11 +4400,15 @@ ORDER BY settlement_datum, transaction_id;`;
   async function brichSubmitAb() {
     if (!apiLauf) return;
     const token = apiLauf.token;
+    const account = apiLauf.account;
     apiLauf.abgebrochen = true;
     submitAbbrechenBtn.classList.add('hidden');
     zeigeFortschritt('Wird abgebrochen …');
     if (token) {
-      try { await proxyJson('/query/' + encodeURIComponent(token), 'DELETE'); } catch (e) {}
+      // Account mitgeben wie bei Status/Result (mitAccount) - sonst bricht
+      // der Proxy im konfigurierten statt im tatsaechlich verwendeten Account
+      // ab (relevant bei aktivem Super-User-Flip).
+      try { await proxyJson(mitAccount('/query/' + encodeURIComponent(token), account), 'DELETE'); } catch (e) {}
     }
     zeigeFortschritt('Abgebrochen.', 'fehler');
   }
