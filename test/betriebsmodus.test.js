@@ -221,4 +221,6 @@ test('Settlement-State: alter State ohne die neuen Felder bekommt die Defaults',
   assert.strictEqual(st.settlementAccountId, '');
   assert.strictEqual(st.settlementSuperUser, false);
   assert.strictEqual(st.settlementDetail, true);
+  assert.ok(!('settlementByTerminal' in st),
+    'Das veraltete Feld muss beim Laden aus dem State verschwinden');
 });
