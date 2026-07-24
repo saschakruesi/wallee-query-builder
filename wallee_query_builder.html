@@ -3332,6 +3332,38 @@ ORDER BY settlement_datum, transaction_id;`;
     return block.typen[c];
   }
 
+  // Bekannte lange Blocknamen -> kurze, sprechende Excel-Blattnamen. Der
+  // Blockname selbst (Bildschirm, CSV, PDF) bleibt unangetastet - nur das
+  // Excel-Blatt braucht wegen des 31-Zeichen-Limits eine kuerzere Form.
+  const XLSX_BLATTNAME_KUERZEL = {
+    'Aufschlüsselung nach Zahlungsmittel': 'Zahlungsmittel',
+  };
+
+  // Excel-Blattnamen sind auf 31 Zeichen begrenzt und vertragen keines der
+  // Zeichen : \ / ? * [ ]. Bekannte lange Namen werden ueber
+  // XLSX_BLATTNAME_KUERZEL sprechend gekuerzt (z. B. "Aufschlüsselung nach
+  // Zahlungsmittel" -> "Zahlungsmittel"); alles andere faellt auf ein
+  // wort-bewusstes Kuerzen zurueck, das an der letzten Wortgrenze vor dem
+  // Limit abschneidet - nie mitten im Wort und nie mitten in einer laufenden
+  // Nummer wie bei "Settlement 12: 05.01.2026" (die Nummer steht direkt nach
+  // dem ersten Wort und wird deshalb nie abgeschnitten).
+  function xlsxBlattName(name) {
+    const roh = String(name || '');
+    const kurz = XLSX_BLATTNAME_KUERZEL[roh] || roh;
+    const bereinigt = kurz.replace(/[:\\/?*[\]]/g, '-');
+    if (bereinigt.length <= 31) return bereinigt;
+    const worte = bereinigt.split(' ');
+    let ergebnis = '';
+    for (const wort of worte) {
+      const kandidat = ergebnis ? `${ergebnis} ${wort}` : wort;
+      if (kandidat.length > 31) break;
+      ergebnis = kandidat;
+    }
+    // Notnagel, falls schon das erste Wort laenger als 31 Zeichen ist (kein
+    // Leerzeichen zum Abschneiden vorhanden).
+    return ergebnis || bereinigt.slice(0, 31);
+  }
+
   function settlementExportBloecke(modell, optionen) {
     const m = modell || { kpi: {}, connectors: [],
       connectorTotal: { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 }, settlements: [],
@@ -4657,8 +4689,7 @@ ORDER BY settlement_datum, transaction_id;`;
         });
       });
       xlsxKopfEinfaerben(ws, block.header.length, 0);
-      // Blattnamen sind auf 31 Zeichen begrenzt und vertragen kein ':'.
-      const name = block.name.replace(/[:\\/?*[\]]/g, '-').slice(0, 31);
+      const name = xlsxBlattName(block.name);
       XLSX.utils.book_append_sheet(wb, ws, name);
     });
     XLSX.writeFile(wb, `settlement-report-${(settlementZeitraum.start || '').slice(0, 10)}.xlsx`);

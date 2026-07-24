@@ -170,6 +170,108 @@ test('Fallback: settlementExportBloecke(null, ...) liefert keine NaN-Werte', () 
   });
 });
 
+// --- xlsxBlattName: Excel-Blattnamen aus den Blocknamen ---------------------
+// Excel erlaubt maximal 31 Zeichen, keines der Zeichen : \ / ? * [ ], und zwei
+// Blaetter duerfen nicht gleich heissen. Der 35 Zeichen lange Blockname
+// "Aufschlüsselung nach Zahlungsmittel" wurde bisher per slice(0, 31) mitten im
+// Wort zu "Aufschlüsselung nach Zahlungsmi" abgeschnitten.
+
+const BEKANNTE_BLOCKNAMEN = [
+  'Zusammenfassung',
+  'Aufschlüsselung nach Zahlungsmittel',
+  'Settlement-Übersicht',
+  'Settlement 1: 05.01.2026',
+  'Settlement 42: Offen',
+];
+
+test('xlsxBlattName: alle bekannten Blocknamen bleiben innerhalb des 31-Zeichen-Limits', () => {
+  const { xlsxBlattName } = loadBuilders();
+  BEKANNTE_BLOCKNAMEN.forEach(n => {
+    const name = xlsxBlattName(n);
+    assert.ok(name.length <= 31, `"${name}" (${name.length} Zeichen) aus "${n}" ueberschreitet 31 Zeichen`);
+  });
+});
+
+test('xlsxBlattName: keines der verbotenen Zeichen : \\ / ? * [ ] im Ergebnis', () => {
+  const { xlsxBlattName } = loadBuilders();
+  const verboten = /[:\\/?*[\]]/;
+  BEKANNTE_BLOCKNAMEN.concat(['Sonderfall: a/b*c?d[e]f\\g']).forEach(n => {
+    const name = xlsxBlattName(n);
+    assert.ok(!verboten.test(name), `"${name}" aus "${n}" enthaelt noch ein verbotenes Zeichen`);
+  });
+});
+
+test('xlsxBlattName: "Aufschlüsselung nach Zahlungsmittel" wird sprechend gekuerzt, nicht mitten im Wort', () => {
+  const { xlsxBlattName } = loadBuilders();
+  const name = xlsxBlattName('Aufschlüsselung nach Zahlungsmittel');
+  assert.strictEqual(name, 'Zahlungsmittel');
+});
+
+test('xlsxBlattName: kurze Blocknamen bleiben unveraendert', () => {
+  const { xlsxBlattName } = loadBuilders();
+  assert.strictEqual(xlsxBlattName('Zusammenfassung'), 'Zusammenfassung');
+  assert.strictEqual(xlsxBlattName('Settlement-Übersicht'), 'Settlement-Übersicht');
+  // Das ':' wird durch '-' ersetzt (Excel vertraegt keinen Doppelpunkt).
+  assert.strictEqual(xlsxBlattName('Settlement 1: 05.01.2026'), 'Settlement 1- 05.01.2026');
+});
+
+test('xlsxBlattName: wort-bewusstes Kuerzen schneidet nie mitten im Wort ab', () => {
+  const { xlsxBlattName } = loadBuilders();
+  // Kein bekannter Blockname, aber realistisch lang - prueft den generischen
+  // Fallback-Pfad (nicht die Zuordnungstabelle).
+  const lang = 'Ein ziemlich langer Blattname mit vielen Woertern';
+  const name = xlsxBlattName(lang);
+  assert.ok(name.length <= 31, `"${name}" ueberschreitet 31 Zeichen`);
+  // Jedes Wort im Ergebnis muss vollstaendig aus dem Original stammen -
+  // kein Wort darf mitten drin enden.
+  const woerterOriginal = lang.split(' ');
+  name.split(' ').forEach((wort, i) => {
+    assert.strictEqual(wort, woerterOriginal[i], `Wort "${wort}" wurde mitten im Wort abgeschnitten`);
+  });
+});
+
+test('xlsxBlattName: die laufende Nummer eines Settlement-Blocks wird nie weggeschnitten', () => {
+  const { xlsxBlattName } = loadBuilders();
+  // Konstruierter Grenzfall: ein Blockname im "Settlement N: ..."-Format, bei
+  // dem der Teil nach der Nummer lang genug ist, um das 31-Zeichen-Limit zu
+  // reissen. Ein naives slice(0, 31) wuerde hier trotzdem nicht die Nummer
+  // kappen (die steht ja am Anfang) - der eigentliche Risikofall ist ein
+  // kuenftiges Namensschema, bei dem die Nummer erst spaeter im String steht.
+  // Das wort-bewusste Kuerzen schuetzt auch dagegen: es trennt nur an
+  // Leerzeichen, nie mitten in einem Token wie einer Nummer.
+  const namen = [
+    'Settlement 1: Ein sehr langer Beschreibungstext fuer den Bericht',
+    'Settlement 2: Ein sehr langer Beschreibungstext fuer den Bericht',
+    'Settlement 3: Ein sehr langer Beschreibungstext fuer den Bericht',
+  ];
+  const gekuerzt = namen.map(xlsxBlattName);
+  gekuerzt.forEach((n, i) => {
+    assert.ok(n.startsWith(`Settlement ${i + 1}`), `"${n}" verliert die laufende Nummer`);
+  });
+  assert.strictEqual(new Set(gekuerzt).size, gekuerzt.length,
+    `Blattnamen kollidieren: ${JSON.stringify(gekuerzt)}`);
+});
+
+test('xlsxBlattName: Eindeutigkeit ueber viele echte Settlement-Bloecke hinweg (Modell mit 40 Settlements)', () => {
+  const { settlementExportBloecke, xlsxBlattName } = loadBuilders();
+  // Ein Modell mit 40 Settlements an 40 verschiedenen Tagen - reicht, um die
+  // Blattnamen-Bildung ueber eine realistische Menge an Detailbloecken zu
+  // pruefen (Zusammenfassung, Zahlungsmittel, Uebersicht + 40 Detailbloecke).
+  const zeilen = [];
+  for (let tag = 1; tag <= 40; tag++) {
+    const datum = `2026-01-${String(tag).padStart(2, '0')}`;
+    zeilen.push(`${datum},SETTLED,${100 + tag},,50161,CHF,Visa,Ecommerce,,`
+      + '10.00000000,10.00000000,0.10000000,9.90000000,1');
+  }
+  const modellWert = modell(...zeilen);
+  const bloecke = settlementExportBloecke(modellWert, { detail: true });
+  assert.strictEqual(bloecke.length, 43, 'Zusammenfassung + Zahlungsmittel + Uebersicht + 40 Settlements');
+  const blattnamen = bloecke.map(b => xlsxBlattName(b.name));
+  blattnamen.forEach(n => assert.ok(n.length <= 31, `"${n}" ueberschreitet 31 Zeichen`));
+  assert.strictEqual(new Set(blattnamen).size, blattnamen.length,
+    `Blattnamen kollidieren im 40-Settlement-Modell: ${JSON.stringify(blattnamen)}`);
+});
+
 test('formatZahlCH: negativer Betrag (Refund) stimmt mit formatAmountCH ueberein', () => {
   const { formatZahlCH, formatAmountCH } = loadBuilders();
   // -530000000 in 1e-8-Einheiten entspricht -5.30 CHF.

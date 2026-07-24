@@ -41,6 +41,18 @@ test('App-HTML hat genau drei script-Bloecke mit den erwarteten ids', () => {
     ['<script id="vendor-xlsx">', '<script id="vendor-jspdf">', '<script id="app-logic">']);
 });
 
+test('Genau drei echte </script>-Enden im Rohdokument', () => {
+  // Die id-basierte Suche oben schuetzt vor String-Fragmenten, die wie ein
+  // OEFFNENDER Tag aussehen (siehe Kommentar oben), sagt aber nichts darueber,
+  // ob genau drei echte Script-Elemente auch wieder SCHLIESSEN. Zwei
+  // Bruchfaelle waeren sonst unentdeckt: ein vierter, echter Script-Block ohne
+  // id, oder ein Vendor-Block, der versehentlich einen rohen </script> enthaelt
+  // (dann endet das umschliessende Script-Element mitten im Vendor-Code).
+  const closes = html.match(/<\/script>/g) || [];
+  assert.strictEqual(closes.length, 3,
+    'Unerwartete Anzahl - ein neuer Script-Block ohne id oder ein roher </script> im Vendor-Code?');
+});
+
 test('Vendor-Block ist syntaktisch heiles JavaScript (keine $-Korruption)', () => {
   const vendor = blockInhalt('vendor-xlsx');
   // Der eingebettete xlsx-js-style-Bundle ist ~425 KB minifiziert; die Schwelle

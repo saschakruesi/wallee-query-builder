@@ -91,6 +91,7 @@ const EXPORTED = [
   'settlementExportBloecke',
   'buildSettlementReportCsv',
   'zellTyp',
+  'xlsxBlattName',
   'settlementPdfBloecke',
   'ingestSettlementCsv',
   'renderSettlementReport',
