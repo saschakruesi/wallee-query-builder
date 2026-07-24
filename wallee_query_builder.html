@@ -4418,7 +4418,6 @@ ORDER BY settlement_datum, transaction_id;`;
       terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl wird über alle Terminals der gewählten Spaces gesucht.';
     } else if (mode === 'settlement') {
       modeBadge.textContent = 'Settlement';
-      terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl werden alle Terminals der gewählten Spaces ausgewertet.';
     } else {
       modeBadge.textContent = 'Brand';
     }
