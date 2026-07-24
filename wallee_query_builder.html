@@ -364,6 +364,7 @@
   .report-table td.num, .report-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .report-table tr.subtotal td { font-weight: 600; background: var(--panel-2); }
   .report-table tr.grand td { font-weight: 700; border-top: 2px solid var(--accent); }
+  .report-output { margin-top: 10px; }
   .report-block { margin-top: 26px; }
   .report-block h3 { margin: 0 0 2px; font-size: 15px; }
   .report-outlet { margin-top: 16px; }
@@ -761,21 +762,23 @@
       <code>unsettled_anzahl</code>: Transaktionen ohne Gebühr (<code>totalappliedfees</code> NULL/0) <strong>und</strong> ohne bestehenden Settlement-Record – wartet noch auf die Abrechnung.
     </p>
 
-    <h2 style="margin-top:4px;">Spaces <span class="count-pill" id="spaceCount">0</span></h2>
-    <div class="add-row">
-      <input id="newSpaceId" type="text" inputmode="numeric" placeholder="Space-ID"
-             title="Numerische Space-ID. Mehrere Spaces können hinzugefügt werden – nur angehakte fliessen in die Query (spaceid IN (...))." />
-      <input id="newSpaceLabel" type="text" placeholder="Label / Name (optional)"
-             title="Frei wählbarer Text, nur zur Übersicht (z.B. Filialname). Kommt nicht ins SQL." />
-      <button class="btn btn-primary" id="addSpaceBtn" title="Space zur Liste hinzufügen (Enter funktioniert auch)">+ Hinzufügen</button>
+    <div id="spaceSection">
+      <h2 style="margin-top:4px;">Spaces <span class="count-pill" id="spaceCount">0</span></h2>
+      <div class="add-row">
+        <input id="newSpaceId" type="text" inputmode="numeric" placeholder="Space-ID"
+               title="Numerische Space-ID. Mehrere Spaces können hinzugefügt werden – nur angehakte fliessen in die Query (spaceid IN (...))." />
+        <input id="newSpaceLabel" type="text" placeholder="Label / Name (optional)"
+               title="Frei wählbarer Text, nur zur Übersicht (z.B. Filialname). Kommt nicht ins SQL." />
+        <button class="btn btn-primary" id="addSpaceBtn" title="Space zur Liste hinzufügen (Enter funktioniert auch)">+ Hinzufügen</button>
+      </div>
+      <div class="item-list" id="spaceList"></div>
+      <div class="list-actions">
+        <button class="btn" id="spaceSelectAll" title="Alle Spaces aktivieren">Alle auswählen</button>
+        <button class="btn" id="spaceDeselectAll" title="Auswahl aller Spaces zurücknehmen">Auswahl löschen</button>
+        <button class="btn" id="spaceClearAll" title="ACHTUNG: löscht alle gespeicherten Spaces">Liste leeren</button>
+      </div>
+      <p class="hint">Nur <strong>angehakte</strong> Spaces fliessen in die Query (<code>spaceid IN (...)</code>). Hinweis: eine Query läuft immer in <em>einem</em> Account – Spaces aus anderen Accounts gehen nicht in derselben Datei.</p>
     </div>
-    <div class="item-list" id="spaceList"></div>
-    <div class="list-actions">
-      <button class="btn" id="spaceSelectAll" title="Alle Spaces aktivieren">Alle auswählen</button>
-      <button class="btn" id="spaceDeselectAll" title="Auswahl aller Spaces zurücknehmen">Auswahl löschen</button>
-      <button class="btn" id="spaceClearAll" title="ACHTUNG: löscht alle gespeicherten Spaces">Liste leeren</button>
-    </div>
-    <p class="hint">Nur <strong>angehakte</strong> Spaces fliessen in die Query (<code>spaceid IN (...)</code>). Hinweis: eine Query läuft immer in <em>einem</em> Account – Spaces aus anderen Accounts gehen nicht in derselben Datei.</p>
 
     <hr class="section-divider" />
 
@@ -977,16 +980,27 @@
 
   <div class="panel cond-section" id="settlementSection">
     <h2>Settlement / Auszahlung</h2>
-    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Zeigt pro Tag, ob die Transaktionen bereits ausbezahlt sind. <code>settlement_state</code>: <strong>SETTLED</strong> = ausbezahlt, <strong>NO_RECORD</strong> = für diese Transaktion existiert noch gar kein Settlement-Record — bisher der beobachtete Normalfall für eine Transaktion, die noch auf ihre Auszahlung wartet. <strong>UPCOMING</strong> (noch ausstehend) und <strong>PARTIAL</strong> (teilweise ausbezahlt, z. B. wenn ein Refund erst in einem späteren Settlement-Lauf abgerechnet wird) sind zusätzlich vorgesehen, falls ein anderer Space oder Acquirer sich anders verhält, wurden bislang aber nicht beobachtet. Die Gebühren stammen hier aus der Banktransaktion (<code>postingamount − valueamount</code>, an Produktivdaten mit durchgehend positivem Vorzeichen bestätigt) und sind für den Kontoabgleich genauer als <code>totalappliedfees</code>.</p>
+    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Diese Auswertung ist <strong>account-</strong>, nicht space-basiert: eine Auszahlung fasst die Transaktionen aller Spaces eines Accounts zu einer Gutschrift zusammen. Gefiltert wird nach Transaktionsdatum, gruppiert nach Valutadatum der Gutschrift — deshalb reichen die Settlements am Ende des Zeitraums typischerweise ein paar Tage darüber hinaus und erscheinen als <strong>Ausstehend</strong>. Transaktionen ganz ohne Settlement-Record stehen als <strong>Offen</strong> am Ende.</p>
+
+    <div class="field">
+      <label class="feld-label" for="settlementAccountInput">Account</label>
+      <input id="settlementAccountInput" type="text" inputmode="numeric" disabled
+             title="Account-ID, in deren Kontext die Query läuft. Standard: der Account aus den Zugangsdaten." />
+    </div>
 
     <label class="check-row">
-      <input type="checkbox" id="settlementByTerminal" />
-      <span>Zusätzlich nach Terminal aufschlüsseln</span>
+      <input type="checkbox" id="settlementSuperUserToggle" />
+      <span>Anderen Account abfragen (Super-User)</span>
     </label>
+    <p class="hint" id="settlementAccountHinweis" style="margin-top:6px;">Standard ist der Account aus den Zugangsdaten. Ein abweichender Account funktioniert nur, wenn der hinterlegte API-Benutzer Zugriff darauf hat.</p>
 
-    <p class="hint" style="margin-top:14px;margin-bottom:0;">Stimmt <code>anzahl_settlement_records</code> nicht mit <code>anzahl_transaktionen</code> überein, gibt es Transaktionen mit mehreren Settlement-Records — typischerweise Refunds oder Korrekturen, die in einem späteren Lauf abgerechnet wurden. In einer Prüfung an Produktivdaten kam dieser Fall nicht vor; die Vor-Aggregation bleibt trotzdem als Absicherung bestehen.</p>
+    <hr class="section-divider" />
 
-    <p class="hint" style="margin-top:14px;margin-bottom:0;"><code>tip_total</code>: Trinkgeld-Anteil (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.</p>
+    <label class="check-row">
+      <input type="checkbox" id="settlementDetailToggle" checked />
+      <span>Transaktionsdetail einschliessen</span>
+    </label>
+    <p class="hint" style="margin-top:6px;margin-bottom:0;">Abschnitt 3 listet jede einzelne Transaktion je Settlement. Bei grossen Zeiträumen wird das lang — abschalten macht Bildschirm, PDF und Excel deutlich kürzer, Zusammenfassung und Übersicht bleiben unverändert.</p>
   </div>
 
   <div class="panel" id="sqlPanel">
@@ -1077,6 +1091,19 @@
     </div>
 
     <div id="reportOutput"></div>
+  </div>
+
+  <div class="panel cond-section" id="settlementReportSection">
+    <h2>Settlement-Report</h2>
+    <p class="hint" id="settlementReportStatus" style="margin-bottom:0;"></p>
+
+    <div id="settlementReportActions" class="list-actions hidden" style="margin-top:14px;">
+      <button class="btn" id="settlementCsvBtn" title="Report als CSV herunterladen">CSV</button>
+      <button class="btn" id="settlementXlsxBtn" title="Report als Excel-Datei herunterladen">Excel</button>
+      <button class="btn btn-primary" id="settlementPdfBtn" title="Report als PDF herunterladen">PDF</button>
+    </div>
+
+    <div id="settlementReportOutput" class="report-output"></div>
   </div>
 
 </div>
@@ -1228,12 +1255,22 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   ];
 
   const modeButtons     = document.querySelectorAll('.mode-btn');
+  const spaceSection    = document.getElementById('spaceSection');
   const terminalSection = document.getElementById('terminalSection');
   const exportSection   = document.getElementById('exportSection');
   const cardSection     = document.getElementById('cardSection');
   const cardLast4El     = document.getElementById('cardLast4');
   const settlementSection = document.getElementById('settlementSection');
-  const settlementByTermEl = document.getElementById('settlementByTerminal');
+  const settlementAccountInput    = document.getElementById('settlementAccountInput');
+  const settlementSuperUserToggle = document.getElementById('settlementSuperUserToggle');
+  const settlementDetailToggle    = document.getElementById('settlementDetailToggle');
+  const settlementReportSection   = document.getElementById('settlementReportSection');
+  const settlementReportStatus    = document.getElementById('settlementReportStatus');
+  const settlementReportOutput    = document.getElementById('settlementReportOutput');
+  const settlementReportActions   = document.getElementById('settlementReportActions');
+  const settlementCsvBtn          = document.getElementById('settlementCsvBtn');
+  const settlementXlsxBtn         = document.getElementById('settlementXlsxBtn');
+  const settlementPdfBtn          = document.getElementById('settlementPdfBtn');
   const terminalModeHint= document.getElementById('terminalModeHint');
   const tipUnsettledHint= document.getElementById('tipUnsettledHint');
   const reportSection   = document.getElementById('reportSection');
@@ -1498,7 +1535,6 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     startHH.value = pad(sh); startMM.value = pad(sm); startSS.value = pad(ss);
     endHH.value   = pad(eh); endMM.value   = pad(em); endSS.value   = pad(es);
     cardLast4El.value = state.cardLast4 || '';
-    settlementByTermEl.checked = !!state.settlementByTerminal;
   }
   function syncFromInputs() {
     state.startDate = startDateOnly.value || state.startDate;
@@ -4358,13 +4394,16 @@ ORDER BY settlement_datum, transaction_id;`;
   function setMode(mode) {
     state.mode = mode;
     modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-    const showTerminal = (mode === 'terminal' || mode === 'export' || mode === 'card' || mode === 'settlement');
+    // Settlement ist seit v5.8 account-basiert: weder Space- noch Terminal-Filter.
+    const showTerminal = (mode === 'terminal' || mode === 'export' || mode === 'card');
+    spaceSection.classList.toggle('hidden', mode === 'settlement');
     terminalSection.classList.toggle('active', showTerminal);
     exportSection.classList.toggle('active', mode === 'export');
     cardSection.classList.toggle('active', mode === 'card');
     settlementSection.classList.toggle('active', mode === 'settlement');
     // Terminal-Report ist die Ausgabe von 'terminal': Filter oben, Report unten.
     reportSection.classList.toggle('active', mode === 'terminal');
+    settlementReportSection.classList.toggle('active', mode === 'settlement');
     // tip_total/unsettled_anzahl erscheinen unbedingt nur in brand/terminal;
     // der Settlement-Modus hat seinen eigenen (fest sichtbaren) tip_total-Hinweis.
     tipUnsettledHint.classList.toggle('active', mode === 'brand' || mode === 'terminal');
@@ -4586,12 +4625,6 @@ ORDER BY settlement_datum, transaction_id;`;
   cardLast4El.addEventListener('input', () => {
     cardLast4El.value = cardLast4El.value.replace(/\D/g, '').slice(0, 4);
     state.cardLast4 = cardLast4El.value;
-    saveState();
-    generate();
-  });
-
-  settlementByTermEl.addEventListener('change', () => {
-    state.settlementByTerminal = settlementByTermEl.checked;
     saveState();
     generate();
   });
