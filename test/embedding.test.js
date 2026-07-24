@@ -27,9 +27,18 @@ function blockInhalt(id) {
   return html.slice(from, end);
 }
 
-test('App-HTML hat genau zwei script-Bloecke mit den erwarteten ids', () => {
-  const tags = html.match(/<script[^>]*>/g) || [];
-  assert.deepStrictEqual(tags, ['<script id="vendor-xlsx">', '<script id="app-logic">']);
+test('App-HTML hat genau drei script-Bloecke mit den erwarteten ids', () => {
+  // Nicht /<script[^>]*>/g auf das ganze Dokument: der jsPDF-Bundle baut ueber
+  // seinen "pdfobjectnewwindow"-Ausgabemodus zur Laufzeit selbst HTML zusammen
+  // und enthaelt dafuer die JS-String-Literale '<script src="'+o+'"...>' und
+  // '<script >' (mit escaptem '<\/script>' als Gegenstueck, damit sie den
+  // umschliessenden Vendor-Block nicht vorzeitig beenden). Eine naive Suche
+  // nach jedem "<script ...>" zaehlt diese String-Fragmente faelschlich mit.
+  // Echte Script-Elemente tragen hier alle ein id-Attribut, die Fragmente
+  // nicht - deshalb gezielt danach filtern.
+  const tags = html.match(/<script id="[^"]*">/g) || [];
+  assert.deepStrictEqual(tags,
+    ['<script id="vendor-xlsx">', '<script id="vendor-jspdf">', '<script id="app-logic">']);
 });
 
 test('Vendor-Block ist syntaktisch heiles JavaScript (keine $-Korruption)', () => {
@@ -49,6 +58,21 @@ test('Vendor-Block ist der stilfaehige SheetJS-Fork (xlsx-js-style)', () => {
   // Muss der Style-Fork sein - die reine Community Edition kann keine Zellfarben
   // schreiben, auf die der wallee-XLSX-Export angewiesen ist.
   assert.match(vendor, /xlsx-js-style/, 'Vendor-Block ist nicht der stilfaehige Fork');
+});
+
+test('jsPDF-Vendor-Block ist syntaktisch heiles JavaScript (keine $-Korruption)', () => {
+  const vendor = blockInhalt('vendor-jspdf');
+  assert.ok(vendor.length > 200000, `jsPDF-Block unerwartet klein: ${vendor.length} Zeichen`);
+  assert.doesNotThrow(
+    () => new vm.Script(vendor, { filename: 'vendor-jspdf.js' }),
+    'jsPDF-Block laesst sich nicht kompilieren - vermutlich beim Einbetten beschaedigt',
+  );
+});
+
+test('jsPDF-Vendor-Block bringt autoTable mit', () => {
+  const vendor = blockInhalt('vendor-jspdf');
+  assert.match(vendor, /jsPDF/);
+  assert.match(vendor, /autoTable/, 'Ohne das autoTable-Plugin gibt es keine Tabellen im PDF');
 });
 
 test('App-Block laeuft ohne SheetJS - XLSX wird erst im Event-Pfad gebraucht', () => {
