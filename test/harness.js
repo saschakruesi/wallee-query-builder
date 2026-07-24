@@ -88,6 +88,9 @@ const EXPORTED = [
   // Settlement-Report (v5.8), reine Funktionen
   'parseSettlementCsv',
   'buildSettlementReportModel',
+  'settlementExportBloecke',
+  'buildSettlementReportCsv',
+  'formatZahlCH',
   'csvZuZeilen',
   'parseAmount',
   'AMOUNT_SCALE',

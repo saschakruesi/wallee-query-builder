@@ -2838,6 +2838,128 @@ ORDER BY settlement_datum, transaction_id;`;
     };
   }
 
+  // --- Settlement-Report: Export-Basis -------------------------------------
+  // Eine Blockliste, aus der Bildschirm, CSV, XLSX und PDF gleichermassen
+  // gespeist werden - dieselbe Bauweise wie reportExportBloecke beim
+  // Terminal-Report, damit der XLSX-Schreiber unveraendert wiederverwendbar
+  // bleibt. Betraege stehen hier als ZAHLEN; das Schweizer Aussehen entsteht
+  // erst in der jeweiligen Ausgabe.
+  // Betraege werden ueber das bereits vorhandene unitsZuZahl(units) in eine
+  // Dezimalzahl gebracht (Math.round(units / 1e6) / 100) - KEINE zweite
+  // Umrechnungs-Hilfe anlegen.
+  //
+  // Zum Formatieren einer solchen Zahl gibt es formatZahlCH; formatAmountCH
+  // erwartet dagegen 1e-8-Einheiten. Die beiden bedienen verschiedene
+  // Eingabe-Domaenen, deshalb stehen sie bewusst nebeneinander - eine Zahl
+  // zurueck in Einheiten zu rechnen, nur um formatAmountCH aufrufen zu koennen,
+  // waere genau der Float-Rueckweg, den die Global Constraints ausschliessen.
+  function formatZahlCH(n) {
+    const wert = Number(n) || 0;
+    const negativ = wert < 0;
+    const hundertstel = Math.round(Math.abs(wert) * 100);
+    const ganz = Math.floor(hundertstel / 100);
+    const rest = String(hundertstel % 100).padStart(2, '0');
+    return (negativ && hundertstel !== 0 ? '-' : '') + gruppiere(String(ganz)) + '.' + rest;
+  }
+
+  function datumCH(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+    return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');
+  }
+
+  // Letzter Tag des Berichts: 'end' ist exklusiv, also einen Tag zurueck.
+  function berichtsEndeCH(end) {
+    const tag = String(end || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(tag)) return '';
+    const d = new Date(tag + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 1);
+    return datumCH(d.toISOString().slice(0, 10));
+  }
+
+  function settlementExportBloecke(modell, optionen) {
+    const m = modell || { kpi: {}, connectors: [], connectorTotal: {}, settlements: [],
+      gesamt: {}, ausstehend: {} };
+    const mitDetail = !optionen || optionen.detail !== false;
+    const w = m.kpi && m.kpi.waehrung ? m.kpi.waehrung : '';
+
+    const zus = [
+      ['Anzahl Settlements', m.kpi.anzahlSettlements || 0],
+      ['Anzahl Transaktionen', m.kpi.anzahlTx || 0],
+      ['Brutto Volumen', unitsZuZahl(m.kpi.brutto || 0)],
+      ['Processing Fees', unitsZuZahl(m.kpi.fees || 0)],
+      ['Netto Auszahlung', unitsZuZahl(m.kpi.netto || 0)],
+      ['Ø Netto/Settlement', unitsZuZahl(m.kpi.avgNetto || 0)],
+    ];
+    if (m.kpi.offenAnzahlTx) {
+      zus.push(['Noch nicht abgerechnet (Tx)', m.kpi.offenAnzahlTx]);
+      zus.push(['Noch nicht abgerechnet (Brutto)', unitsZuZahl(m.kpi.offenBrutto || 0)]);
+    }
+
+    const a = m.ausstehend || {};
+    const hinweis = a.anzahlSettlements
+      ? `${a.anzahlSettlements} Settlement(s) mit ${a.anzahlTx} Transaktionen `
+        + `(Brutto ${w} ${formatAmountCH(a.brutto)}, Netto ${w} ${formatAmountCH(a.netto)}) `
+        + `wurden nach dem ${berichtsEndeCH(optionen && optionen.end)} abgerechnet.`
+      : '';
+
+    const bloecke = [
+      {
+        name: 'Zusammenfassung',
+        header: ['Kennzahl', 'Wert'],
+        typen: ['text', 'betrag'],
+        rows: zus,
+      },
+      {
+        name: 'Aufschlüsselung nach Zahlungsmittel',
+        header: ['Zahlungsmittel', 'Anzahl Tx', 'Brutto', 'Fees', 'Netto'],
+        typen: ['text', 'zahl', 'betrag', 'betrag', 'betrag'],
+        rows: m.connectors.map(c => [c.connector, c.anzahlTx,
+          unitsZuZahl(c.brutto), unitsZuZahl(c.fees), unitsZuZahl(c.netto)])
+          .concat([['Total', m.connectorTotal.anzahlTx,
+            unitsZuZahl(m.connectorTotal.brutto), unitsZuZahl(m.connectorTotal.fees),
+            unitsZuZahl(m.connectorTotal.netto)]]),
+      },
+      {
+        name: 'Settlement-Übersicht',
+        header: ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status'],
+        typen: ['text', 'text', 'zahl', 'betrag', 'betrag', 'betrag', 'text'],
+        rows: m.settlements.map(s => [s.nr, datumCH(s.datum), s.anzahlTx,
+          unitsZuZahl(s.brutto), unitsZuZahl(s.fees), unitsZuZahl(s.netto), s.status])
+          .concat([['TOTAL', '', m.gesamt.anzahlTx, unitsZuZahl(m.gesamt.brutto),
+            unitsZuZahl(m.gesamt.fees), unitsZuZahl(m.gesamt.netto), '']]),
+        hinweis,
+      },
+    ];
+
+    if (mitDetail) {
+      m.settlements.forEach(s => {
+        bloecke.push({
+          name: `Settlement ${s.nr}: ${s.datum ? datumCH(s.datum) : 'Offen'}`,
+          header: ['#', 'Transaction ID', 'Connector', 'Brutto', 'Fees', 'Netto'],
+          typen: ['text', 'text', 'text', 'betrag', 'betrag', 'betrag'],
+          rows: s.detail.map(d => [d.nr, d.transactionId, d.connector,
+            unitsZuZahl(d.brutto), unitsZuZahl(d.fees), unitsZuZahl(d.netto)])
+            .concat([[`Subtotal (${s.anzahlTx} Tx)`, '', '',
+              unitsZuZahl(s.brutto), unitsZuZahl(s.fees), unitsZuZahl(s.netto)]]),
+        });
+      });
+    }
+
+    return bloecke;
+  }
+
+  function buildSettlementReportCsv(modell, optionen) {
+    const zeilen = [];
+    settlementExportBloecke(modell, optionen).forEach((block, i) => {
+      if (i > 0) zeilen.push('');
+      zeilen.push(csvFeld(block.name));
+      zeilen.push(block.header.map(csvFeld).join(';'));
+      block.rows.forEach(r => zeilen.push(r.map(csvFeld).join(';')));
+      if (block.hinweis) zeilen.push(csvFeld(block.hinweis));
+    });
+    return CSV_BOM + zeilen.join('\r\n') + '\r\n';
+  }
+
   // Reiner CSV->Zeilen-Parser fuer den logikfreien XLSX/CSV-Download. Anders als
   // parseReportCsv erzwingt er keine Report-Spalten - er gibt die Tabelle 1:1
   // zurueck, wie sie aus wallee kommt.
