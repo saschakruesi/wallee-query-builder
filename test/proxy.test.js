@@ -97,6 +97,48 @@ test('Routing: /terminals wird erkannt und liest space aus dem Query', () => {
   assert.strictEqual(P.findeRoute('GET', '/terminals').space, '', 'ohne space leerer String');
 });
 
+// --- Account pro Abfrage ----------------------------------------------------
+
+test('apiKopfZusatz: Space schlaegt Account (Terminal-Endpunkt kennt Account nicht)', () => {
+  assert.deepStrictEqual(
+    P.apiKopfZusatz({ accountId: '52238' }, { space: '50161', account: '99999' }),
+    { Space: '50161' },
+  );
+});
+
+test('apiKopfZusatz: optionen.account ueberschreibt den konfigurierten Account', () => {
+  assert.deepStrictEqual(
+    P.apiKopfZusatz({ accountId: '52238' }, { account: '99999' }),
+    { Account: '99999' },
+  );
+});
+
+test('apiKopfZusatz: ohne Override gilt der Account aus den Zugangsdaten', () => {
+  assert.deepStrictEqual(P.apiKopfZusatz({ accountId: '52238' }, {}), { Account: '52238' });
+});
+
+test('apiKopfZusatz: ohne alles bleibt der Header weg', () => {
+  assert.deepStrictEqual(P.apiKopfZusatz({ accountId: '' }, {}), {});
+});
+
+test('accountValide nimmt nur Ziffern an', () => {
+  assert.strictEqual(P.accountValide('52238'), true);
+  assert.strictEqual(P.accountValide(''), false);
+  assert.strictEqual(P.accountValide('52238; DROP'), false);
+  assert.strictEqual(P.accountValide('abc'), false);
+});
+
+test('findeRoute liest den Account aus der Query von status und result', () => {
+  assert.deepStrictEqual(
+    P.findeRoute('GET', '/status/abc?account=52238'),
+    { name: 'status', token: 'abc', account: '52238' },
+  );
+  assert.deepStrictEqual(
+    P.findeRoute('GET', '/result/abc'),
+    { name: 'result', token: 'abc', account: '' },
+  );
+});
+
 test('terminalPfad: baut Pfad mit limit/order und optionalem after', () => {
   assert.strictEqual(P.terminalPfad(), '/payment/terminals?limit=100&order=ASC');
   assert.strictEqual(P.terminalPfad({ limit: 50 }), '/payment/terminals?limit=50&order=ASC');
