@@ -2646,6 +2646,59 @@ ORDER BY settlement_datum, transaction_id;`;
     return { rows: daten, headers, error: null };
   }
 
+  // --- Settlement-Report: CSV-Parser ---------------------------------------
+  // Getrennt von parseReportCsv: der Terminal-Report bringt seine eigene
+  // Spaltenlogik mit (unmatched/unsettled-Alias, Outlet-Zuordnung). Gemeinsam
+  // bleiben csvZuZeilen als Zerleger und parseAmount fuer die 1e-8-Einheiten.
+  const SETTLEMENT_PFLICHT = [
+    'settlement_datum', 'settlement_state', 'transaction_id', 'connector',
+    'waehrung', 'brutto_gross', 'settlement_gross', 'processing_fees', 'netamount',
+  ];
+
+  function parseSettlementCsv(text) {
+    const zeilen = csvZuZeilen(text);
+    if (!zeilen.length) {
+      return { rows: [], headers: [], error: new Error('Das Ergebnis ist leer – keine Kopfzeile gefunden.') };
+    }
+    const headers = zeilen[0].map(h => String(h || '').trim().toLowerCase());
+    const fehlend = SETTLEMENT_PFLICHT.filter(s => headers.indexOf(s) === -1);
+    if (fehlend.length) {
+      return {
+        rows: [], headers,
+        error: new Error('Im Ergebnis fehlen Pflichtspalten: ' + fehlend.join(', ')),
+      };
+    }
+    const idx = {};
+    headers.forEach((h, i) => { idx[h] = i; });
+    const txt = (z, name) => String(z[idx[name]] == null ? '' : z[idx[name]]).trim();
+    const betrag = (z, name) => parseAmount(idx[name] === undefined ? '' : z[idx[name]]);
+
+    const rows = [];
+    for (let i = 1; i < zeilen.length; i++) {
+      const z = zeilen[i];
+      // Die Analytics-CSV endet mit einer Leerzeile; die faellt hier weg.
+      if (!z || z.length === 1 && String(z[0] || '').trim() === '') continue;
+      const anzahl = parseInt(txt(z, 'settlement_records'), 10);
+      rows.push({
+        settlementDatum:    txt(z, 'settlement_datum'),
+        settlementState:    txt(z, 'settlement_state') || 'NO_RECORD',
+        transactionId:      txt(z, 'transaction_id'),
+        merchantReference:  txt(z, 'merchant_reference'),
+        spaceId:            txt(z, 'space_id'),
+        waehrung:           txt(z, 'waehrung'),
+        connector:          txt(z, 'connector') || 'UNKNOWN',
+        salesChannel:       txt(z, 'sales_channel'),
+        terminalIdentifier: txt(z, 'terminal_identifier'),
+        bruttoTx:           betrag(z, 'brutto_gross'),
+        brutto:             betrag(z, 'settlement_gross'),
+        fees:               betrag(z, 'processing_fees'),
+        netto:              betrag(z, 'netamount'),
+        records:            Number.isFinite(anzahl) ? anzahl : 0,
+      });
+    }
+    return { rows, headers, error: null };
+  }
+
   // Reiner CSV->Zeilen-Parser fuer den logikfreien XLSX/CSV-Download. Anders als
   // parseReportCsv erzwingt er keine Report-Spalten - er gibt die Tabelle 1:1
   // zurueck, wie sie aus wallee kommt.
