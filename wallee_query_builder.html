@@ -3514,7 +3514,7 @@ ORDER BY settlement_datum, transaction_id;`;
       status: status || 'SUCCESS',
       // Leer heisst: der konfigurierte Account galt. Ein alter Eintrag ohne das
       // Feld verhaelt sich damit automatisch richtig.
-      account: s && s.settlementSuperUser ? String(s.settlementAccountId || '').trim() : '',
+      account: s.settlementSuperUser ? String(s.settlementAccountId || '').trim() : '',
     };
   }
 
@@ -3611,7 +3611,12 @@ ORDER BY settlement_datum, transaction_id;`;
 
     try {
       zeigeFortschritt('Query wird übermittelt …');
-      const submit = await proxyJson('/submit', 'POST', { sql, account });
+      // Leer heisst: der im Proxy konfigurierte Account gilt - das Feld bleibt
+      // dann ganz weg, damit sich am ausgehenden Request nichts aendert
+      // (gleiches Muster wie mitAccount() bei Status/Result).
+      const submitBody = { sql };
+      if (account) submitBody.account = account;
+      const submit = await proxyJson('/submit', 'POST', submitBody);
       if (submit.status >= 400 || !submit.daten) {
         zeigeFortschritt(fehlerText(submit, 'Die Query konnte nicht übermittelt werden.'), 'fehler');
         return;

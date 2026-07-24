@@ -628,3 +628,98 @@ test('mitAccount haengt den Account nur an, wenn einer gilt', () => {
   assert.strictEqual(mitAccount('http://x/status/t', '99999'), 'http://x/status/t?account=99999');
   assert.strictEqual(mitAccount('http://x/status/t?a=1', '99999'), 'http://x/status/t?a=1&account=99999');
 });
+
+// Fix nach Review: Submit baute den Body bisher immer mit account (auch leer)
+// - im Gegensatz zu mitAccount(), das die URL bei leerem Account unangetastet
+// laesst. Regel: leer heisst "im Proxy konfigurierten Account nehmen", das
+// Feld darf dann gar nicht erst im JSON stehen.
+test('Submit laesst das Feld account weg, wenn kein Account gilt (Normalfall)', async () => {
+  const gesehen = [];
+  const fetchStub = async (url, opts) => {
+    if (/\/submit$/.test(url)) {
+      gesehen.push(JSON.parse(opts.body));
+      return { status: 200, json: async () => ({ portalQueryToken: 'TOKA' }) };
+    }
+    if (/\/status\//.test(url)) return { status: 200, json: async () => ({ status: 'SUCCESS' }) };
+    if (/\/result\//.test(url)) return { status: 200, text: async () => 'a,b\n1,2', json: async () => null };
+    return { status: 200, json: async () => ({ ok: true }) };
+  };
+  const x = loadBuilders({ fetch: fetchStub });
+  const st = x.getState();
+  st.proxyUrl = 'http://localhost:8787';
+  st.mode = 'brand';
+  st.settlementSuperUser = false;
+  x.apiPollConfig.retryStandardSek = 0;
+  await x.submitUndReport('SELECT 1');
+  assert.strictEqual(gesehen.length, 1);
+  assert.ok(!('account' in gesehen[0]), 'ohne aktiven Super-User-Flip darf kein account-Feld im Body stehen');
+});
+
+test('Submit schickt account, wenn der Super-User-Flip aktiv und eine ID eingetragen ist', async () => {
+  const gesehen = [];
+  const fetchStub = async (url, opts) => {
+    if (/\/submit$/.test(url)) {
+      gesehen.push(JSON.parse(opts.body));
+      return { status: 200, json: async () => ({ portalQueryToken: 'TOKB' }) };
+    }
+    if (/\/status\//.test(url)) return { status: 200, json: async () => ({ status: 'SUCCESS' }) };
+    if (/\/result\//.test(url)) return { status: 200, text: async () => 'a,b\n1,2', json: async () => null };
+    return { status: 200, json: async () => ({ ok: true }) };
+  };
+  const x = loadBuilders({ fetch: fetchStub });
+  const st = x.getState();
+  st.proxyUrl = 'http://localhost:8787';
+  st.mode = 'brand';
+  st.settlementSuperUser = true;
+  st.settlementAccountId = '99999';
+  x.apiPollConfig.retryStandardSek = 0;
+  await x.submitUndReport('SELECT 1');
+  assert.strictEqual(gesehen.length, 1);
+  assert.strictEqual(gesehen[0].account, '99999', 'bei aktivem Flip mit eingetragener ID muss der Account mitgeschickt werden');
+});
+
+// --- Settlement-Zweig im Submit-Pfad (Fix nach Review Task 10) -------------
+// Analog zum Terminal-Zweig oben (Test "Submit fuehrt SQL aus und uebernimmt
+// das Ergebnis in den Report"), aber fuer state.mode === 'settlement': dort
+// holt submitUndReport nach SUCCESS den Ergebnistext und uebergibt ihn an
+// uebergibSettlementCsv statt an den Terminal-Report.
+
+const SETTLEMENT_KOPF = 'settlement_datum,settlement_state,transaction_id,merchant_reference,'
+  + 'space_id,waehrung,connector,sales_channel,terminal_identifier,'
+  + 'brutto_gross,settlement_gross,processing_fees,netamount,settlement_records';
+const SETTLEMENT_CSV = [SETTLEMENT_KOPF,
+  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+].join('\n') + '\n';
+
+test('Submit im settlement-Modus uebernimmt das Ergebnis in den Settlement-Report', async () => {
+  const seed = { wallee_query_builder_v6: JSON.stringify({ apiMode: true, mode: 'settlement' }) };
+  const router = apiRouter({ statusFolge: ['PROCESSING', 'SUCCESS'], csv: SETTLEMENT_CSV });
+  const { el } = await starteApiModus(router, seed);
+  el('sqlOutput').textContent = 'SELECT 1';
+
+  el('submitBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /Settlement-Report erstellt/i);
+  // Der Settlement-Report baut sein Markup ueber innerHTML (kein appendChild
+  // wie beim Terminal-Report) - der DOM-Stub parst das nicht in Kindknoten,
+  // deshalb hier gegen innerHTML pruefen statt gegen children/textContent
+  // (siehe test/settlement-render.test.js fuer dasselbe Muster).
+  assert.notStrictEqual(el('settlementReportOutput').innerHTML, '', 'Settlement-Report muss gefuellt sein');
+  assert.match(el('settlementReportOutput').innerHTML, /9\.90/, 'Netto aus der Fixture');
+});
+
+test('Submit im settlement-Modus meldet einen Fehler bei fehlenden Pflichtspalten, Report bleibt leer', async () => {
+  const seed = { wallee_query_builder_v6: JSON.stringify({ apiMode: true, mode: 'settlement' }) };
+  const kaputtesCsv = 'settlement_datum,transaction_id\n2026-01-05,1\n';
+  const router = apiRouter({ statusFolge: ['PROCESSING', 'SUCCESS'], csv: kaputtesCsv });
+  const { el } = await starteApiModus(router, seed);
+  el('sqlOutput').textContent = 'SELECT 1';
+
+  el('submitBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /kein Report bilden/i);
+  assert.ok(el('submitFortschritt').classList.contains('fehler'));
+  assert.strictEqual(el('settlementReportOutput').innerHTML, '', 'bei fehlenden Pflichtspalten kein Report');
+});
