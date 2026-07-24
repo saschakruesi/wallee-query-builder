@@ -2988,6 +2988,69 @@ ORDER BY settlement_datum, transaction_id;`;
     return CSV_BOM + zeilen.join('\r\n') + '\r\n';
   }
 
+  // --- Settlement-Report: PDF-Layout ---------------------------------------
+  // Reine Beschreibung des PDF-Aufbaus: Titel, Kopfzeilen, Tabellen mit
+  // fertigen Strings und Spaltenausrichtung. Erst exportSettlementPdf() weiter
+  // unten fuettert damit jsPDF. Dieselbe Trennung wie zwischen
+  // settlementExportBloecke (rein) und dem XLSX-Schreiber - so bleibt das
+  // Layout ohne den Vendor-Block testbar.
+  // zellTyp(block, r, c) gibt es bereits (siehe oben, direkt vor
+  // settlementExportBloecke) - hier nicht erneut definieren.
+
+  function zellWert(wert, typ) {
+    // Die Bloecke tragen bereits Dezimalzahlen (unitsZuZahl), deshalb
+    // formatZahlCH - nicht formatAmountCH, das 1e-8-Einheiten erwartet.
+    if (typ === 'betrag' && typeof wert === 'number') return formatZahlCH(wert);
+    if (typ === 'zahl' && typeof wert === 'number') return formatIntCH(wert);
+    return String(wert == null ? '' : wert);
+  }
+
+  function pdfTabelle(block, titel, seitenumbruchDavor) {
+    return {
+      titel,
+      header: block.header.slice(),
+      // zellTyp statt block.typen[i]: der Block "Zusammenfassung" mischt in
+      // seiner Wert-Spalte Zaehler und Betraege ueber zellTypen (zeilenweise),
+      // ein stures typen[i] wuerde "Anzahl Settlements" faelschlich als
+      // "2.00" statt "2" ausgeben.
+      rows: block.rows.map((r, ri) => r.map((wert, i) => zellWert(wert, zellTyp(block, ri, i)))),
+      // Die Ausrichtung bleibt spaltenweise aus block.typen abgeleitet - die
+      // Wert-Spalte ist in jedem Fall rechtsbuendig, das ist unabhaengig vom
+      // gemischten Zelltyp korrekt.
+      ausrichtung: block.typen.map(t => (t === 'text' ? 'left' : 'right')),
+      hinweis: block.hinweis || '',
+      seitenumbruchDavor: !!seitenumbruchDavor,
+    };
+  }
+
+  function settlementPdfBloecke(modell, optionen) {
+    const opt = optionen || {};
+    const bloecke = settlementExportBloecke(modell, opt);
+    const vonCH = datumCH(String(opt.start || '').slice(0, 10));
+    const bisCH = berichtsEndeCH(opt.end);
+
+    const kopfzeilen = [];
+    if (vonCH && bisCH) kopfzeilen.push(`Zeitraum: ${vonCH} – ${bisCH}`);
+    if (opt.account) kopfzeilen.push(`Account: ${opt.account}`);
+
+    const tabellen = [
+      pdfTabelle(bloecke[0], '1. Zusammenfassung', false),
+      pdfTabelle(bloecke[1], 'Aufschlüsselung nach Zahlungsmittel', false),
+      // Abschnitt 2 und 3 beginnen jeweils auf einer frischen Seite, damit der
+      // Report so gegliedert wirkt wie die Vorlage.
+      pdfTabelle(bloecke[2], '2. Settlement-Übersicht', true),
+    ];
+    bloecke.slice(3).forEach((b, i) => {
+      tabellen.push(pdfTabelle(
+        b,
+        i === 0 ? '3. Transaktionsdetail pro Settlement' : b.name,
+        i === 0,
+      ));
+    });
+
+    return { titel: 'SETTLEMENT-REPORT', kopfzeilen, tabellen };
+  }
+
   // Reiner CSV->Zeilen-Parser fuer den logikfreien XLSX/CSV-Download. Anders als
   // parseReportCsv erzwingt er keine Report-Spalten - er gibt die Tabelle 1:1
   // zurueck, wie sie aus wallee kommt.

@@ -181,3 +181,83 @@ test('berichtsEndeCH: Jahresgrenze', () => {
   const { berichtsEndeCH } = loadBuilders();
   assert.strictEqual(berichtsEndeCH('2026-01-01 00:00:00'), '31.12.2025');
 });
+
+// --- PDF-Layout (Task 6) ---------------------------------------------------
+
+const PDF_OPT = {
+  detail: true,
+  start: '2026-01-01 00:00:00',
+  end: '2026-02-01 00:00:00',
+  account: '52238',
+};
+
+test('PDF: Titel und Kopfzeilen nennen Zeitraum und Account', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), PDF_OPT);
+  assert.strictEqual(p.titel, 'SETTLEMENT-REPORT');
+  assert.deepStrictEqual(plain(p.kopfzeilen), [
+    'Zeitraum: 01.01.2026 – 31.01.2026',
+    'Account: 52238',
+  ]);
+});
+
+test('PDF: Betraege sind fertig formatierte Strings in CH-Schreibweise', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
+  const uebersicht = p.tabellen.find(t => t.titel === '2. Settlement-Übersicht');
+  assert.deepStrictEqual(plain(uebersicht.rows[0]),
+    ['1', '05.01.2026', '2', "30.00", '0.30', '29.70', 'Settled']);
+});
+
+test('PDF: Zahlenspalten sind rechtsbuendig, Textspalten links', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
+  const uebersicht = p.tabellen.find(t => t.titel === '2. Settlement-Übersicht');
+  assert.deepStrictEqual(plain(uebersicht.ausrichtung),
+    ['left', 'left', 'right', 'right', 'right', 'right', 'left']);
+});
+
+test('PDF: Abschnitt 3 beginnt auf einer neuen Seite, Folgesettlements nicht', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), PDF_OPT);
+  const titel = p.tabellen.map(t => t.titel);
+  assert.deepStrictEqual(plain(titel), [
+    '1. Zusammenfassung',
+    'Aufschlüsselung nach Zahlungsmittel',
+    '2. Settlement-Übersicht',
+    '3. Transaktionsdetail pro Settlement',
+    'Settlement 2: 03.02.2026',
+  ]);
+  const umbrueche = p.tabellen.map(t => t.seitenumbruchDavor);
+  assert.deepStrictEqual(plain(umbrueche), [false, false, true, true, false]);
+});
+
+test('PDF: ohne detail fehlen die Detailtabellen ganz', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
+  assert.deepStrictEqual(plain(p.tabellen.map(t => t.titel)), [
+    '1. Zusammenfassung',
+    'Aufschlüsselung nach Zahlungsmittel',
+    '2. Settlement-Übersicht',
+  ]);
+});
+
+test('PDF: der Hinweis auf ausstehende Settlements haengt an der Uebersicht', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
+  const uebersicht = p.tabellen.find(t => t.titel === '2. Settlement-Übersicht');
+  assert.match(String(uebersicht.hinweis), /1 Settlement\(s\) mit 1 Transaktionen/);
+});
+
+test('PDF: Zusammenfassung respektiert zeilenweise Typen (Zaehler vs. Betrag)', () => {
+  // Ohne zellTyp in pdfTabelle wuerde die Wert-Spalte pauschal ueber
+  // block.typen[1] ('betrag') formatiert - "Anzahl Settlements" kaeme dann
+  // faelschlich als "2.00" statt "2" heraus.
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
+  const zus = p.tabellen.find(t => t.titel === '1. Zusammenfassung');
+  const anzahlSettlements = zus.rows.find(r => r[0] === 'Anzahl Settlements');
+  const bruttoVolumen = zus.rows.find(r => r[0] === 'Brutto Volumen');
+  assert.strictEqual(anzahlSettlements[1], '2');
+  assert.strictEqual(bruttoVolumen[1], '60.00');
+});

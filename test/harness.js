@@ -91,6 +91,7 @@ const EXPORTED = [
   'settlementExportBloecke',
   'buildSettlementReportCsv',
   'zellTyp',
+  'settlementPdfBloecke',
   'berichtsEndeCH',
   'formatZahlCH',
   'csvZuZeilen',
