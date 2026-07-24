@@ -3087,6 +3087,97 @@ ORDER BY settlement_datum, transaction_id;`;
     return { titel: 'SETTLEMENT-REPORT', kopfzeilen, tabellen };
   }
 
+  // --- Settlement-Report: Ansicht ------------------------------------------
+  let settlementModell = null;
+  let settlementZeitraum = { start: '', end: '', account: '' };
+
+  function settlementZeigeStatus(text, art) {
+    settlementReportStatus.textContent = text;
+    settlementReportStatus.dataset.art = art || '';
+  }
+
+  function settlementTabelleHtml(block) {
+    const kopf = block.header.map(h => `<th>${escapeHtml(h)}</th>`).join('');
+    const zeilen = block.rows.map((r, ri) => '<tr>' + r.map((wert, i) => {
+      const typ = zellTyp(block, ri, i);
+      const txt = zellWert(wert, typ);
+      const klasse = typ === 'text' ? '' : ' class="num"';
+      return `<td${klasse}>${escapeHtml(txt)}</td>`;
+    }).join('') + '</tr>').join('');
+    const hinweis = block.hinweis
+      ? `<p class="hint">${escapeHtml(block.hinweis)}</p>` : '';
+    return `<h3>${escapeHtml(block.name)}</h3>`
+      + `<table class="report-table"><thead><tr>${kopf}</tr></thead><tbody>${zeilen}</tbody></table>`
+      + hinweis;
+  }
+
+  function renderSettlementReport() {
+    if (!settlementModell) {
+      settlementReportOutput.innerHTML = '';
+      settlementReportActions.classList.add('hidden');
+      return;
+    }
+    const opt = {
+      detail: !!state.settlementDetail,
+      start: settlementZeitraum.start,
+      end: settlementZeitraum.end,
+    };
+    const bloecke = settlementExportBloecke(settlementModell, opt);
+
+    // Die ersten drei Bloecke stehen offen, die Detailbloecke stecken je in
+    // einem <details> - sonst erschlaegt Abschnitt 3 die Uebersicht.
+    const oben = bloecke.slice(0, 3).map(settlementTabelleHtml).join('');
+    const detail = bloecke.slice(3).map(b =>
+      `<details><summary>${escapeHtml(b.name)}</summary>${settlementTabelleHtml(b)}</details>`
+    ).join('');
+
+    settlementReportOutput.innerHTML = oben + detail;
+    settlementReportActions.classList.remove('hidden');
+  }
+
+  function ingestSettlementCsv(text) {
+    const res = parseSettlementCsv(text);
+    if (res.error) {
+      settlementModell = null;
+      settlementReportOutput.innerHTML = '';
+      settlementReportActions.classList.add('hidden');
+      settlementZeigeStatus(res.error.message, 'fehler');
+      return false;
+    }
+
+    // Zeitraum genau so zusammensetzen wie generate() es fuer die Query tut -
+    // state haelt Datum und Uhrzeit getrennt.
+    settlementZeitraum = {
+      start: `${state.startDate} ${state.startTime}`,
+      end: `${state.endDate} ${state.endTime}`,
+      account: aktiverAccount(),
+    };
+    settlementModell = buildSettlementReportModel(res.rows, { end: settlementZeitraum.end });
+
+    const s = settlementModell.kpi;
+    settlementZeigeStatus(
+      `${formatIntCH(res.rows.length)} Transaktionen · ${formatIntCH(s.anzahlSettlements)} Settlements · `
+      + `Netto ${s.waehrung} ${formatAmountCH(s.netto)}`,
+      'erfolg');
+
+    renderSettlementReport();
+    return true;
+  }
+
+  // Wie uebergibReportCsv beim Terminal-Report: der Report ist die Ausgabe des
+  // Modus, kein eigener Tab - setMode frischt die Ansicht auf.
+  function uebergibSettlementCsv(csv) {
+    const ok = ingestSettlementCsv(csv);
+    if (ok) setMode('settlement');
+    return ok;
+  }
+
+  // Leerer settlementAccountId heisst: der Account aus den Zugangsdaten gilt.
+  // Der Proxy setzt ihn dann selbst - die App muss ihn gar nicht kennen.
+  function aktiverAccount() {
+    return state.settlementSuperUser ? String(state.settlementAccountId || '').trim() : '';
+  }
+
   // Reiner CSV->Zeilen-Parser fuer den logikfreien XLSX/CSV-Download. Anders als
   // parseReportCsv erzwingt er keine Report-Spalten - er gibt die Tabelle 1:1
   // zurueck, wie sie aus wallee kommt.
