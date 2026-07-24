@@ -2671,7 +2671,10 @@ ORDER BY settlement_datum, transaction_id;`;
     const idx = {};
     headers.forEach((h, i) => { idx[h] = i; });
     const txt = (z, name) => String(z[idx[name]] == null ? '' : z[idx[name]]).trim();
-    const betrag = (z, name) => parseAmount(idx[name] === undefined ? '' : z[idx[name]]);
+    // betrag() wird ausschliesslich fuer Spalten aus SETTLEMENT_PFLICHT aufgerufen,
+    // deren Index nach dem Pflichtspalten-Check oben garantiert definiert ist -
+    // der idx[name] === undefined-Zweig war unerreichbar (Review Task 3, Befund 3).
+    const betrag = (z, name) => parseAmount(z[idx[name]]);
 
     const rows = [];
     for (let i = 1; i < zeilen.length; i++) {
