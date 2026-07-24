@@ -118,8 +118,8 @@ const EXPORTED = [
   'mergeSyncTerminals',
   'syncButtonZustand',
   'spaceLabelBauen',
-  'terminalMatchtFilter',
-  'gefilterteIndices',
+  'terminalGehoertZuSpace',
+  'setzeAuswahlFuerSpace',
   // Verlauf (Task 5), reine Funktionen
   'HISTORY_KEY',
   'HISTORY_MAX',

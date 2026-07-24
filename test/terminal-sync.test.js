@@ -13,8 +13,8 @@ test('mergeSyncTerminals: neue Terminals werden ausgewaehlt angehaengt', () => {
   assert.strictEqual(r.neuCount, 2);
   assert.strictEqual(r.aktualisiertCount, 0);
   assert.deepStrictEqual(plain(r.liste), [
-    { id: '100', label: 'Kasse 1', selected: true, space: '' },
-    { id: '200', label: '200', selected: true, space: '' },
+    { id: '100', label: 'Kasse 1', selected: true, space: '', spaceId: '' },
+    { id: '200', label: '200', selected: true, space: '', spaceId: '' },
   ], 'leerer Name faellt auf den identifier als Label zurueck');
 });
 
@@ -46,14 +46,14 @@ test('mergeSyncTerminals: Duplikate in neu werden per identifier entschaerft, le
     { identifier: '', name: 'leer' },
   ]);
   assert.strictEqual(r.neuCount, 1);
-  assert.deepStrictEqual(plain(r.liste), [{ id: '5', label: 'erst', selected: true, space: '' }]);
+  assert.deepStrictEqual(plain(r.liste), [{ id: '5', label: 'erst', selected: true, space: '', spaceId: '' }]);
 });
 
 test('mergeSyncTerminals: space wird gesetzt und bei bestehenden aktualisiert', () => {
   // neu: space landet am neuen Eintrag
   const r1 = X.mergeSyncTerminals([], [{ identifier: '9', name: 'T9', space: '83954 · Zürich' }]);
   assert.deepStrictEqual(plain(r1.liste), [
-    { id: '9', label: 'T9', selected: true, space: '83954 · Zürich' },
+    { id: '9', label: 'T9', selected: true, space: '83954 · Zürich', spaceId: '' },
   ]);
   // bestehend ohne space -> bekommt space, zaehlt als aktualisiert
   const r2 = X.mergeSyncTerminals([{ id: '9', label: 'T9', selected: false }],

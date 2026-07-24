@@ -74,8 +74,10 @@ test('Self-Update: die erwarteten Element-IDs sind im Markup', () => {
   });
 });
 
-test('Terminal-Filter: die erwarteten Element-IDs sind im Markup', () => {
-  ['terminalFilter', 'terminalVisibleCount'].forEach(id => {
-    assert.match(markup, new RegExp(`id="${id}"`), `ID ${id} fehlt im Markup`);
-  });
+test('Terminal-Filter wurde entfernt - Auswahl laeuft ueber den Space-Klick oben', () => {
+  // Der Filter unter der Terminal-Liste ist bewusst wieder ausgebaut: die
+  // Terminals einer Space werden ueber das Anklicken der Space oben an-/abgewaehlt.
+  assert.doesNotMatch(markup, /id="terminalFilter"/, 'Filterfeld haette entfernt werden muessen');
+  assert.doesNotMatch(markup, /id="terminalVisibleCount"/, 'Sichtbar-Zaehler haette entfernt werden muessen');
+  assert.match(markup, /id="terminalList"/, 'Terminal-Liste bleibt');
 });
