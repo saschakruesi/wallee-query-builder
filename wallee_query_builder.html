@@ -3172,12 +3172,38 @@ ORDER BY settlement_datum, transaction_id;`;
     ziel.netto += netto;
   }
 
+  // Letzter Tag, den der Bericht abdeckt. Der Zeitraum-Picker der App liefert
+  // 'YYYY-MM-DD 23:59:59' (Tagesende, inklusive). Eine Uhrzeit 00:00:00 wird
+  // dagegen als exklusive Obergrenze gedeutet - dann ist der Vortag der letzte
+  // abgedeckte Tag. Beides muss dieselbe Antwort geben, sonst ist die
+  // Status-Einstufung einen Tag daneben. Sowohl die Status-Einstufung weiter
+  // unten als auch berichtsEndeCH (Anzeige/PDF-Kopf) laufen ausschliesslich
+  // ueber diese eine Funktion, damit die Logik nicht an mehreren Stellen
+  // unabhaengig voneinander steht.
+  function berichtsEndeTag(end) {
+    const mitZeit = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(String(end || ''));
+    if (!mitZeit) {
+      // Kein Zeitanteil erkennbar - ein reines Datum gilt als der letzte
+      // abgedeckte Tag selbst (inklusive), analog zu 23:59:59.
+      const nurDatum = /^(\d{4}-\d{2}-\d{2})/.exec(String(end || ''));
+      return nurDatum ? nurDatum[1] : '';
+    }
+    const [, tag, hh, mm, ss] = mitZeit;
+    // Nur exakt Mitternacht ist die exklusive Obergrenze (Folgetag) - jede
+    // andere Uhrzeit, insbesondere 23:59:59, ist der letzte abgedeckte Tag.
+    if (hh === '00' && mm === '00' && ss === '00') {
+      const d = new Date(tag + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10);
+    }
+    return tag;
+  }
+
   function buildSettlementReportModel(rows, optionen) {
     const zeilen = Array.isArray(rows) ? rows : [];
-    // end ist die exklusive Obergrenze des Zeitraums. Ein Valutadatum ab
-    // diesem Tag liegt ausserhalb des Berichts - die Abrechnung ist erfolgt,
-    // faellt aber in die naechste Periode.
-    const endeTag = String((optionen && optionen.end) || '').slice(0, 10);
+    // berichtsEndeTag() liefert den letzten Tag, den der Bericht abdeckt - ein
+    // Valutadatum danach liegt ausserhalb des Berichts und gilt als Ausstehend.
+    const endeTag = berichtsEndeTag(optionen && optionen.end);
 
     const gruppen = new Map();   // datum -> Gruppe
     const offen = { nr: 0, datum: '', status: SETTLEMENT_STATUS.offen, ...leereSettlementSumme(), detail: [] };
@@ -3232,7 +3258,7 @@ ORDER BY settlement_datum, transaction_id;`;
 
     const settlements = [...gruppen.values()].sort((a, b) => a.datum < b.datum ? -1 : a.datum > b.datum ? 1 : 0);
     settlements.forEach(g => {
-      if (endeTag && g.datum >= endeTag) g.status = SETTLEMENT_STATUS.ausstehend;
+      if (endeTag && g.datum > endeTag) g.status = SETTLEMENT_STATUS.ausstehend;
     });
     if (offen.anzahlTx > 0) settlements.push(offen);
 
@@ -3312,13 +3338,12 @@ ORDER BY settlement_datum, transaction_id;`;
     return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');
   }
 
-  // Letzter Tag des Berichts: 'end' ist exklusiv, also einen Tag zurueck.
+  // Letzter Tag des Berichts, schweizerisch formatiert. Laeuft ausschliesslich
+  // ueber berichtsEndeTag() - kein eigener Tag-Abzug hier, sonst koennte diese
+  // Anzeige von der Status-Einstufung oben abweichen.
   function berichtsEndeCH(end) {
-    const tag = String(end || '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(tag)) return '';
-    const d = new Date(tag + 'T00:00:00Z');
-    d.setUTCDate(d.getUTCDate() - 1);
-    return datumCH(d.toISOString().slice(0, 10));
+    const tag = berichtsEndeTag(end);
+    return tag ? datumCH(tag) : '';
   }
 
   // Der Spaltentyp gilt normalerweise fuer die ganze Spalte. Der Block

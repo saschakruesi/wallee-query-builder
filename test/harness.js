@@ -98,6 +98,7 @@ const EXPORTED = [
   'uebergibSettlementCsv',
   'aktiverAccount',
   'berichtsEndeCH',
+  'berichtsEndeTag',
   'formatZahlCH',
   'csvZuZeilen',
   'parseAmount',

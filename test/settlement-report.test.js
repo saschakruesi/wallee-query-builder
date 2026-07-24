@@ -188,6 +188,45 @@ test('Settlement nach dem Berichtsende gilt als Ausstehend und wird separat ausg
   assert.strictEqual(m.ausstehend.netto, 1980000000);
 });
 
+// Befund 1 (Schluss-Review, Merge-Blocker): die App liefert 'end' nie als
+// exklusive Mitternacht, sondern immer als 'YYYY-MM-DD 23:59:59'
+// (state.endTime steht ueberall auf '23:59:59') - der letzte Tag des
+// Berichtszeitraums selbst, nicht der Tag danach. Mit der frueheren
+// Slice-auf-10-Zeichen-Logik waere '2026-06-30' als endeTag behandelt und ein
+// Settlement genau an diesem letzten Tag faelschlich als Ausstehend
+// eingestuft worden - reproduziert mit genau diesen realistischen Werten.
+test('Settlement am letzten Tag des Zeitraums ist Settled, am Folgetag Ausstehend (echte App-Form, Befund 1)', () => {
+  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
+  const res = parseSettlementCsv(csv(
+    '2026-06-30,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-07-01,SETTLED,2,,50161,CHF,Visa,Ecommerce,,20.00000000,20.00000000,0.20000000,19.80000000,1',
+  ));
+  assert.strictEqual(res.error, null);
+  const m = buildSettlementReportModel(res.rows, { end: '2026-06-30 23:59:59' });
+  assert.deepStrictEqual(plain(m.settlements.map(s => [s.datum, s.status])), [
+    ['2026-06-30', 'Settled'],
+    ['2026-07-01', 'Ausstehend'],
+  ]);
+});
+
+test('berichtsEndeCH mit der echten App-Form (23:59:59) nennt den letzten Tag selbst (Befund 1)', () => {
+  const { berichtsEndeCH } = loadBuilders();
+  assert.strictEqual(berichtsEndeCH('2026-06-30 23:59:59'), '30.06.2026');
+});
+
+test('berichtsEndeCH: die alte exklusive Form (00:00:00 Folgetag) liefert denselben letzten Tag (Befund 1)', () => {
+  const { berichtsEndeCH } = loadBuilders();
+  assert.strictEqual(berichtsEndeCH('2026-07-01 00:00:00'), '30.06.2026');
+});
+
+test('berichtsEndeTag: 23:59:59 ist der letzte Tag selbst, 00:00:00 ist der Folgetag exklusiv (Befund 1)', () => {
+  const { berichtsEndeTag } = loadBuilders();
+  assert.strictEqual(berichtsEndeTag('2026-06-30 23:59:59'), '2026-06-30');
+  assert.strictEqual(berichtsEndeTag('2026-07-01 00:00:00'), '2026-06-30');
+  assert.strictEqual(berichtsEndeTag(''), '');
+  assert.strictEqual(berichtsEndeTag(undefined), '');
+});
+
 test('NO_RECORD bildet die Zeile "Offen" am Ende, ohne Datum und ohne Netto', () => {
   const m = modellAus(
     '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
