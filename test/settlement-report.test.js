@@ -223,6 +223,27 @@ test('Connector-Aufschluesselung summiert je Zahlungsmittel, absteigend nach Bru
   assert.strictEqual(m.connectorTotal.brutto, 10500000000);
 });
 
+// Befund 1 (Review Task 4): die Connector-Aufschluesselung steht im Report
+// direkt unter den KPI-Kennzahlen - ihre Total-Zeile muss deshalb zu genau
+// diesen Kennzahlen passen. Zwei Zeilen desselben Connectors, eine abgerechnet
+// (SETTLED) und eine offen (NO_RECORD): der Connector darf nur die
+// abgerechnete Zeile zaehlen, sonst widerspricht connectorTotal den KPIs zwei
+// Zeilen darueber.
+test('Connector-Aufschluesselung zaehlt NO_RECORD-Zeilen nicht mit (Befund 1, Review Task 4)', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    ',NO_RECORD,2,,50161,CHF,Visa,Ecommerce,,88.50000000,,,,0',
+  );
+  assert.deepStrictEqual(
+    plain(m.connectors.map(c => [c.connector, c.anzahlTx, c.brutto])),
+    [['Visa', 1, 1000000000]],
+  );
+  assert.strictEqual(m.connectorTotal.anzahlTx, 1);
+  assert.strictEqual(m.connectorTotal.brutto, m.kpi.brutto);
+  assert.strictEqual(m.connectorTotal.fees, m.kpi.fees);
+  assert.strictEqual(m.connectorTotal.netto, m.kpi.netto);
+});
+
 test('Detail je Settlement ist nach Transaktions-ID sortiert und durchnummeriert', () => {
   const m = modellAus(
     '2026-01-05,SETTLED,300,,50161,CHF,Visa,Ecommerce,,3.00000000,3.00000000,0.03000000,2.97000000,1',
@@ -251,4 +272,80 @@ test('Leeres Ergebnis ergibt ein leeres, aber vollstaendiges Modell', () => {
   assert.strictEqual(m.kpi.anzahlTx, 0);
   assert.strictEqual(m.kpi.avgNetto, 0);
   assert.strictEqual(m.ausstehend.anzahlSettlements, 0);
+});
+
+// Befund 2 (Review Task 4): gesamt ist die Spaltensumme der
+// Settlement-Uebersicht, welche die "Offen"-Zeile mitlistet (Brutto
+// vorhanden, Fees/Netto 0). Das ist bewusst so - kein Bug, der repariert
+// werden sollte: die Spaltensumme muss aufgehen, die fachliche Identitaet
+// Brutto - Fees = Netto gilt naturgemaess nur fuer Zeilen mit Banktransaktion.
+test('gesamt ist die Spaltensumme aller Settlement-Zeilen inkl. Offen (Befund 2, Review Task 4)', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-01-06,SETTLED,2,,50161,CHF,Visa,Ecommerce,,30.00000000,30.00000000,0.30000000,29.70000000,1',
+    ',NO_RECORD,3,,50161,CHF,Visa,Ecommerce,,88.50000000,,,,0',
+  );
+  const spaltensumme = m.settlements.reduce((a, s) => {
+    a.anzahlTx += s.anzahlTx; a.brutto += s.brutto; a.fees += s.fees; a.netto += s.netto;
+    return a;
+  }, { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 });
+  assert.strictEqual(m.gesamt.anzahlTx, spaltensumme.anzahlTx);
+  assert.strictEqual(m.gesamt.brutto, spaltensumme.brutto);
+  assert.strictEqual(m.gesamt.fees, spaltensumme.fees);
+  assert.strictEqual(m.gesamt.netto, spaltensumme.netto);
+  // Ausdruecklich erwartet, NICHT reparieren: die Offen-Zeile hat Brutto ohne
+  // Fees/Netto, daher geht die Identitaet in der Summe bewusst nicht auf.
+  assert.notStrictEqual(m.gesamt.brutto - m.gesamt.fees, m.gesamt.netto);
+});
+
+// Befund 3 (Review Task 4): Tie-Breaker der Connector-Sortierung. Bei
+// gleichem Brutto entscheidet die alphabetische Reihenfolge des
+// Connector-Namens (localeCompare, 'de').
+test('Connectoren mit gleichem Brutto werden alphabetisch sortiert (Befund 3, Review Task 4)', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-01-05,SETTLED,2,,50161,CHF,Mastercard,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-01-05,SETTLED,3,,50161,CHF,TWINT,Physical Terminal,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+  );
+  assert.deepStrictEqual(
+    plain(m.connectors.map(c => c.connector)),
+    ['Mastercard', 'TWINT', 'Visa'],
+  );
+});
+
+// Befund 3 (Review Task 4): fehlt end oder ist es leer, darf der
+// lexikografische Vergleich g.datum >= endeTag nicht greifen (ein leerer
+// String waere sonst kleinstmoeglich und wuerde jedes Datum >= '' erfuellen -
+// alles wuerde zu Ausstehend). Der Guard "if (endeTag && ...)" faengt genau
+// das ab: ohne end bleiben alle Gruppen Settled.
+test('Ohne end bleiben alle Gruppen Settled statt faelschlich Ausstehend (Befund 3, Review Task 4)', () => {
+  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
+  const res = parseSettlementCsv(csv(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-02-10,SETTLED,2,,50161,CHF,Visa,Ecommerce,,20.00000000,20.00000000,0.20000000,19.80000000,1',
+  ));
+  assert.strictEqual(res.error, null);
+
+  const ohneEnde = buildSettlementReportModel(res.rows, {});
+  assert.deepStrictEqual(plain(ohneEnde.settlements.map(s => s.status)), ['Settled', 'Settled']);
+
+  const leeresEnde = buildSettlementReportModel(res.rows, { end: '' });
+  assert.deepStrictEqual(plain(leeresEnde.settlements.map(s => s.status)), ['Settled', 'Settled']);
+});
+
+// Befund 3 (Review Task 4): ein Modell mit allen drei Status gleichzeitig.
+// kpi.anzahlSettlements zaehlt beide datierten Status (Settled UND
+// Ausstehend) zusammen, Offen jedoch nicht - Offen hat kein Settlement-Datum
+// und ist damit begrifflich kein Settlement.
+test('kpi.anzahlSettlements zaehlt Settled und Ausstehend zusammen, aber nicht Offen (Befund 3, Review Task 4)', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-02-03,SETTLED,2,,50161,CHF,Visa,Ecommerce,,20.00000000,20.00000000,0.20000000,19.80000000,1',
+    ',NO_RECORD,3,,50161,CHF,Visa,Ecommerce,,88.50000000,,,,0',
+  );
+  assert.deepStrictEqual(
+    plain(m.settlements.map(s => s.status)),
+    ['Settled', 'Ausstehend', 'Offen'],
+  );
+  assert.strictEqual(m.kpi.anzahlSettlements, 2);
 });

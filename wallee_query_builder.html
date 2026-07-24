@@ -2737,6 +2737,11 @@ ORDER BY settlement_datum, transaction_id;`;
     const gruppen = new Map();   // datum -> Gruppe
     const offen = { nr: 0, datum: '', status: SETTLEMENT_STATUS.offen, ...leereSettlementSumme(), detail: [] };
     const connectorMap = new Map();
+    // gesamt ist bewusst die Spaltensumme der Settlement-Uebersicht (inkl. der
+    // "Offen"-Zeile: Brutto vorhanden, Fees/Netto 0) - kein Pendant zu den
+    // KPIs. Die Identitaet Brutto - Fees = Netto gilt hier deshalb NICHT,
+    // sobald "Offen"-Zeilen vorkommen. Das ist kein Bug: die Uebersicht muss
+    // spaltenweise aufgehen, nicht die fachliche Kennzahl abbilden.
     const gesamt = leereSettlementSumme();
     let waehrung = '';
 
@@ -2752,16 +2757,22 @@ ORDER BY settlement_datum, transaction_id;`;
 
       addiereSettlement(gesamt, brutto, fees, netto);
 
-      const c = connectorMap.get(r.connector) || { connector: r.connector, ...leereSettlementSumme() };
-      addiereSettlement(c, brutto, fees, netto);
-      connectorMap.set(r.connector, c);
-
       if (!hatRecord) {
         addiereSettlement(offen, brutto, fees, netto);
         offen.detail.push({ nr: 0, transactionId: r.transactionId, connector: r.connector,
           brutto, fees, netto });
         return;
       }
+
+      // Die Connector-Aufschluesselung steht im Report direkt unter den
+      // KPI-Kennzahlen (Brutto/Fees/Netto) - ihre Total-Zeile muss deshalb zu
+      // genau diesen Kennzahlen passen. Die Aggregation laeuft daher bewusst
+      // erst hier, nach dem hatRecord-Guard: NO_RECORD-Zeilen (ohne Fees/Netto)
+      // duerfen nicht mitgezaehlt werden, sonst widerspricht connectorTotal
+      // den KPIs zwei Zeilen darueber.
+      const c = connectorMap.get(r.connector) || { connector: r.connector, ...leereSettlementSumme() };
+      addiereSettlement(c, brutto, fees, netto);
+      connectorMap.set(r.connector, c);
 
       let g = gruppen.get(r.settlementDatum);
       if (!g) {
