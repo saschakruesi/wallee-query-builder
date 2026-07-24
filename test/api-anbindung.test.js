@@ -723,3 +723,47 @@ test('Submit im settlement-Modus meldet einen Fehler bei fehlenden Pflichtspalte
   assert.ok(el('submitFortschritt').classList.contains('fehler'));
   assert.strictEqual(el('settlementReportOutput').innerHTML, '', 'bei fehlenden Pflichtspalten kein Report');
 });
+
+// --- Settlement-Zweig im Token-Abruf-Pfad (Schluss-Review, Befund 3) -------
+// tokenAbrufen rief bisher unbedingt holeErgebnisInReport auf, das ueber
+// uebergibReportCsv immer in den Terminal-Report lief. Das Token-Feld ist
+// aber in jedem API-Modus sichtbar, auch im Settlement-Modus - wer dort einen
+// Settlement-Token abrief, bekam "Pflichtspalten fehlen". tokenAbrufen muss
+// wie submitUndReport nach state.mode verzweigen.
+
+test('Token-Abruf im Settlement-Modus befuellt den Settlement-Report (Befund 3)', async () => {
+  const seed = { wallee_query_builder_v6: JSON.stringify({ apiMode: true, mode: 'settlement' }) };
+  const { el } = await starteApiModus(async (url) => {
+    if (String(url).endsWith('/health')) return jsonAntwort(200, { ok: true, zugangsdaten: true });
+    if (String(url).includes('/result/')) return textAntwort(200, SETTLEMENT_CSV);
+    return jsonAntwort(404, {});
+  }, seed);
+
+  el('tokenInput').value = 'tok-settlement-1';
+  el('tokenAbrufBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /Settlement-Report erstellt/i);
+  assert.notStrictEqual(el('settlementReportOutput').innerHTML, '', 'Settlement-Report muss gefuellt sein');
+  assert.match(el('settlementReportOutput').innerHTML, /9\.90/, 'Netto aus der Fixture');
+});
+
+// Regressionstest: im terminal-Modus (Default von starteApiModus) bleibt das
+// bisherige Verhalten unveraendert - der bestehende Test "Token-Abruf laedt
+// das Ergebnis direkt in den Report (nur /result)" oben deckt das bereits ab;
+// dieser Test belegt es zusaetzlich explizit fuer den Regressionsfall.
+test('Token-Abruf im terminal-Modus laedt weiterhin den Terminal-Report (Regression, Befund 3)', async () => {
+  const { el } = await starteApiModus(async (url) => {
+    if (String(url).endsWith('/health')) return jsonAntwort(200, { ok: true, zugangsdaten: true });
+    if (String(url).includes('/result/')) return textAntwort(200, CSV);
+    return jsonAntwort(404, {});
+  });
+
+  el('tokenInput').value = 'tok-terminal-1';
+  el('tokenAbrufBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /Report erstellt/i);
+  assert.ok(el('reportOutput').textContent.includes('62’756.16'), 'Terminal-Report gefuellt');
+  assert.strictEqual(el('settlementReportOutput').innerHTML, '', 'kein Settlement-Report im terminal-Modus');
+});

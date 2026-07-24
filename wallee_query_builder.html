@@ -4367,7 +4367,22 @@ ORDER BY settlement_datum, transaction_id;`;
     try {
       const bereit = meldeProxyZustand(await pruefeProxy(state.proxyUrl));
       if (!bereit) { settingsOeffnen(); return; }
-      await holeErgebnisInReport(token, aktiverAccount());
+      const account = aktiverAccount();
+      // Gleiches Muster wie submitUndReport (siehe dort): das Token-Feld ist
+      // in jedem API-Modus sichtbar, auch im Settlement-Modus. Ohne diese
+      // Verzweigung liefe der Abruf immer ueber den Terminal-Report-Pfad und
+      // wuerde im Settlement-Modus mit "Pflichtspalten fehlen" scheitern.
+      if (state.mode === 'settlement') {
+        const r = await holeErgebnisText(token, account);
+        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
+        const ok = uebergibSettlementCsv(r.text);
+        zeigeFortschritt(ok
+          ? 'Ergebnis geladen – Settlement-Report erstellt.'
+          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
+          ok ? 'erfolg' : 'fehler');
+      } else {
+        await holeErgebnisInReport(token, account);
+      }
     } catch (e) {
       zeigeFortschritt('Der Abruf ist fehlgeschlagen. Läuft der Proxy noch?', 'fehler');
     } finally {
