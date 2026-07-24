@@ -3384,6 +3384,13 @@ ORDER BY settlement_datum, transaction_id;`;
     return normalisiereProxyUrl(url) + pfad;
   }
 
+  // Haengt den Account an, sofern einer gilt. Ohne ihn nimmt der Proxy den
+  // konfigurierten - deshalb bleibt der Parameter im Normalfall ganz weg.
+  function mitAccount(url, account) {
+    const a = String(account || '').trim();
+    return a ? url + (url.indexOf('?') === -1 ? '?' : '&') + 'account=' + encodeURIComponent(a) : url;
+  }
+
   // Wertet die Antwort von GET /health aus. Erreichbar heisst noch nicht
   // einsatzbereit: ohne hinterlegte Zugangsdaten kann der Proxy zwar antworten,
   // aber keine Query ausfuehren.
@@ -3505,6 +3512,9 @@ ORDER BY settlement_datum, transaction_id;`;
       timeframeSummary: (s.startDate || '') + ' → ' + (s.endDate || ''),
       filterSummary,
       status: status || 'SUCCESS',
+      // Leer heisst: der konfigurierte Account galt. Ein alter Eintrag ohne das
+      // Feld verhaelt sich damit automatisch richtig.
+      account: s && s.settlementSuperUser ? String(s.settlementAccountId || '').trim() : '',
     };
   }
 
@@ -3595,10 +3605,13 @@ ORDER BY settlement_datum, transaction_id;`;
     if (apiLauf) return;                       // schon ein Lauf aktiv
     apiLauf = { token: '', abgebrochen: false };
     submitBtn.disabled = true;
+    // Einmal pro Lauf ermitteln und ueber Submit, Status und Result hinweg
+    // gleich halten - sonst liefen die drei Aufrufe im falschen Kontext.
+    const account = aktiverAccount();
 
     try {
       zeigeFortschritt('Query wird übermittelt …');
-      const submit = await proxyJson('/submit', 'POST', { sql });
+      const submit = await proxyJson('/submit', 'POST', { sql, account });
       if (submit.status >= 400 || !submit.daten) {
         zeigeFortschritt(fehlerText(submit, 'Die Query konnte nicht übermittelt werden.'), 'fehler');
         return;
@@ -3626,7 +3639,7 @@ ORDER BY settlement_datum, transaction_id;`;
             + token, 'fehler');
           return;
         }
-        const s = await proxyJson('/status/' + encodeURIComponent(token), 'GET');
+        const s = await proxyJson(mitAccount('/status/' + encodeURIComponent(token), account), 'GET');
         // Direkt nach dem Submit (v. a. der erste einer Sitzung) ist der Token bei
         // wallee gelegentlich noch nicht propagiert -> 404 (oder 502/503). Ein paar
         // Mal tolerieren und erneut pollen, statt sofort abzubrechen - das war die
@@ -3657,15 +3670,24 @@ ORDER BY settlement_datum, transaction_id;`;
         return;
       }
 
-      // Erfolg: immer in den Verlauf. Nur der Terminal-Report speist das Ergebnis
-      // direkt in die Gruppierung; alle anderen Modi laden es on demand aus dem
-      // Verlauf (spart einen Result-Abruf, der bei wallee als Download zaehlt).
+      // Erfolg: immer in den Verlauf. Nur der Terminal- und der Settlement-
+      // Report speisen das Ergebnis direkt in ihre Auswertung; alle anderen
+      // Modi laden es on demand aus dem Verlauf (spart einen Result-Abruf,
+      // der bei wallee als Download zaehlt).
       historySpeichern(historyEinfuegen(historyLaden(),
         historyEintragBauen(state.mode, token, state, new Date().toISOString(), 'SUCCESS')));
       renderHistory();
 
       if (state.mode === 'terminal') {
-        await holeErgebnisInReport(token);
+        await holeErgebnisInReport(token, account);
+      } else if (state.mode === 'settlement') {
+        const r = await holeErgebnisText(token, account);
+        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
+        const ok = uebergibSettlementCsv(r.text);
+        zeigeFortschritt(ok
+          ? 'Ergebnis geladen – Settlement-Report erstellt.'
+          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
+          ok ? 'erfolg' : 'fehler');
       } else {
         zeigeFortschritt('Fertig — Ergebnis unten im Verlauf als CSV oder Excel herunterladen.', 'erfolg');
       }
@@ -3700,9 +3722,9 @@ ORDER BY settlement_datum, transaction_id;`;
   // Holt das Ergebnis eines Query-Tokens und uebergibt es dem Report. Von der
   // Submit-Kette (nach SUCCESS) und vom Token-Abruf gemeinsam genutzt. Wirft
   // nicht; meldet ueber die Fortschrittsanzeige und gibt Erfolg als boolean.
-  async function holeErgebnisInReport(token) {
+  async function holeErgebnisInReport(token, account) {
     zeigeFortschritt('Ergebnis wird geladen …');
-    const antwort = await proxyGet('/result/' + encodeURIComponent(token));
+    const antwort = await proxyGet(mitAccount('/result/' + encodeURIComponent(token), account));
     const text = await antwort.text();
 
     if (antwort.status === 202) {
@@ -3727,10 +3749,10 @@ ORDER BY settlement_datum, transaction_id;`;
 
   // Holt reinen Ergebnistext (CSV) ueber den Token, ohne ihn in den Report zu
   // speisen. Basis fuer den Roh-Download aus dem Verlauf.
-  async function holeErgebnisText(token) {
+  async function holeErgebnisText(token, account) {
     let antwort;
     try {
-      antwort = await proxyGet('/result/' + encodeURIComponent(token));
+      antwort = await proxyGet(mitAccount('/result/' + encodeURIComponent(token), account));
     } catch (e) {
       return { ok: false, status: 0, text: '', fehler: 'Proxy nicht erreichbar.' };
     }
@@ -3757,14 +3779,14 @@ ORDER BY settlement_datum, transaction_id;`;
   // Gemeinsamer Pfad der drei Verlauf-Downloads: Ergebnis ueber den Token holen,
   // bei Fehler melden und abbrechen, sonst den Text an den jeweiligen Verwerter
   // geben. So steht die Fehlerbehandlung nur an einer Stelle.
-  async function mitErgebnisText(token, verwende) {
-    const r = await holeErgebnisText(token);
+  async function mitErgebnisText(token, account, verwende) {
+    const r = await holeErgebnisText(token, account);
     if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
     verwende(r.text);
   }
 
-  function historyDownloadCsv(token, mode) {
-    return mitErgebnisText(token, text =>
+  function historyDownloadCsv(token, mode, account) {
+    return mitErgebnisText(token, account, text =>
       downloadDatei(text, ergebnisDateiname(mode, 'csv'), 'text/csv'));
   }
 
@@ -3772,8 +3794,8 @@ ORDER BY settlement_datum, transaction_id;`;
   // Terminal-Report ueber exportReportXlsx), aber typisiert und in wallee-Optik
   // - Betraege als echte Zahlen mit Waehrungsformat, Zaehler als Ganzzahlen,
   // eingefaerbte Kopfzeile. Siehe styledSheetAusZeilen.
-  function historyDownloadXlsx(token, mode) {
-    return mitErgebnisText(token, text => {
+  function historyDownloadXlsx(token, mode, account) {
+    return mitErgebnisText(token, account, text => {
       const zeilen = csvZuZeilen(text);
       try {
         const wb = XLSX.utils.book_new();
@@ -3805,15 +3827,16 @@ ORDER BY settlement_datum, transaction_id;`;
       const zeit = isNaN(dt.getTime()) ? (e.submittedAt || '')
         : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
       const zsf = escapeHtml([e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · '));
-      // Im Terminal-Report deckt der Report-Export unten (mit Titel/Branding, XLSX/
-      // CSV/PDF) das Excel ab, und der Report erscheint nach dem Submit ohnehin -
-      // deshalb dort in der Verlaufszeile nur der Roh-CSV-Download. In den uebrigen
-      // Modi zusaetzlich der logikfreie Excel-Download.
-      const xlsxBtn = e.mode === 'terminal' ? ''
-        : `<button class="btn" data-act="xlsx" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">Excel</button>`;
+      // Im Terminal- und im Settlement-Report deckt der Report-Export unten (mit
+      // Titel/Branding, XLSX/CSV/PDF) das Excel ab, und der Report erscheint nach
+      // dem Submit ohnehin - deshalb dort in der Verlaufszeile nur der Roh-CSV-
+      // Download. In den uebrigen Modi zusaetzlich der logikfreie Excel-Download.
+      const acc = escapeHtml(e.account || '');
+      const xlsxBtn = (e.mode === 'terminal' || e.mode === 'settlement') ? ''
+        : `<button class="btn" data-act="xlsx" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}" data-account="${acc}">Excel</button>`;
       tr.innerHTML =
         `<td>${escapeHtml(zeit)}</td><td>${escapeHtml(modusLabel(e.mode))}</td><td>${zsf}</td><td>${escapeHtml(e.status || '')}</td>` +
-        `<td><button class="btn" data-act="csv" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}">CSV</button>${xlsxBtn}</td>`;
+        `<td><button class="btn" data-act="csv" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}" data-account="${acc}">CSV</button>${xlsxBtn}</td>`;
       queryHistoryBody.appendChild(tr);
     });
   }
@@ -3833,7 +3856,7 @@ ORDER BY settlement_datum, transaction_id;`;
     try {
       const bereit = meldeProxyZustand(await pruefeProxy(state.proxyUrl));
       if (!bereit) { settingsOeffnen(); return; }
-      await holeErgebnisInReport(token);
+      await holeErgebnisInReport(token, aktiverAccount());
     } catch (e) {
       zeigeFortschritt('Der Abruf ist fehlgeschlagen. Läuft der Proxy noch?', 'fehler');
     } finally {
@@ -4530,6 +4553,50 @@ ORDER BY settlement_datum, transaction_id;`;
     reader.readAsText(file, 'utf-8');
   }
 
+  // --- Event bindings: Settlement-Report -----------------------------------
+  settlementSuperUserToggle.addEventListener('change', () => {
+    state.settlementSuperUser = settlementSuperUserToggle.checked;
+    if (!state.settlementSuperUser) state.settlementAccountId = '';
+    saveState();
+    aktualisiereSettlementAccount();
+    generate();
+  });
+
+  settlementAccountInput.addEventListener('input', () => {
+    state.settlementAccountId = settlementAccountInput.value.replace(/\D/g, '');
+    saveState();
+  });
+
+  settlementDetailToggle.addEventListener('change', () => {
+    state.settlementDetail = settlementDetailToggle.checked;
+    saveState();
+    renderSettlementReport();
+  });
+
+  // Der gesperrte Normalfall zeigt den Account aus den Zugangsdaten. Im
+  // Kopieren-Modus gibt es keinen Proxy und damit keinen Wert - dann bleibt das
+  // Feld leer, denn der Account steckt dort ohnehin im Kontext des Portals.
+  async function aktualisiereSettlementAccount() {
+    settlementSuperUserToggle.checked = !!state.settlementSuperUser;
+    settlementDetailToggle.checked = !!state.settlementDetail;
+    if (state.settlementSuperUser) {
+      settlementAccountInput.disabled = false;
+      settlementAccountInput.value = state.settlementAccountId || '';
+      settlementAccountInput.placeholder = 'Account-ID';
+      return;
+    }
+    settlementAccountInput.disabled = true;
+    settlementAccountInput.value = '';
+    settlementAccountInput.placeholder = 'wird aus den Zugangsdaten übernommen';
+    if (!state.apiMode) return;
+    try {
+      // leseCredentials() liefert { status, daten } (proxyJson-Wrapper) - nicht
+      // direkt das Zugangsdaten-Objekt, siehe ladeCredentialsInDialog() oben.
+      const { status, daten } = await leseCredentials();
+      if (status === 200 && daten && daten.accountId) settlementAccountInput.value = String(daten.accountId);
+    } catch (e) { /* Kopieren-Modus oder Proxy nicht erreichbar - Feld bleibt leer */ }
+  }
+
   // --- Event bindings: Einstellungs-Dialog ---------------------------------
   function settingsOeffnen() {
     settingsOverlay.classList.remove('hidden');
@@ -4583,6 +4650,7 @@ ORDER BY settlement_datum, transaction_id;`;
       pruefeProxy(state.proxyUrl).then(z => { meldeProxyZustand(z); aktualisiereSyncButton(); });
     }
     aktualisiereSyncButton();
+    aktualisiereSettlementAccount();
   });
 
   proxyUrlInput.addEventListener('input', () => {
@@ -4655,8 +4723,8 @@ ORDER BY settlement_datum, transaction_id;`;
     const btn = e.target.closest('button[data-act]');
     if (!btn) return;
     const token = btn.dataset.token;
-    if (btn.dataset.act === 'csv') historyDownloadCsv(token, btn.dataset.mode);
-    else if (btn.dataset.act === 'xlsx') historyDownloadXlsx(token, btn.dataset.mode);
+    if (btn.dataset.act === 'csv') historyDownloadCsv(token, btn.dataset.mode, btn.dataset.account);
+    else if (btn.dataset.act === 'xlsx') historyDownloadXlsx(token, btn.dataset.mode, btn.dataset.account);
   });
 
   reportXlsxBtn.addEventListener('click', () => {
@@ -5026,6 +5094,7 @@ ORDER BY settlement_datum, transaction_id;`;
   renderTerminals();
   renderColumns();
   renderUserPresets();
+  aktualisiereSettlementAccount();
   // Ausgangszustand des Dialogs bewusst im Code setzen und nicht nur ueber die
   // Klasse im Markup: faellt die dort mal weg, stuende der Dialog beim Laden offen.
   settingsZustandZu();

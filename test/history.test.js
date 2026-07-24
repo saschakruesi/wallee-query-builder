@@ -70,3 +70,25 @@ test('historySpeichern/historyLaden Round-Trip bei funktionierendem Storage', ()
   // wurde unter HISTORY_KEY abgelegt
   assert.ok(x._localStorage.getItem(x.HISTORY_KEY));
 });
+
+// --- Account im Verlaufseintrag (Task 10) -----------------------------------
+
+test('Verlaufseintrag merkt sich den Account der Abfrage', () => {
+  const { historyEintragBauen } = loadBuilders();
+  const st = {
+    spaces: [], start: '2026-01-01 00:00:00', end: '2026-02-01 00:00:00',
+    terminals: [], settlementSuperUser: true, settlementAccountId: '99999',
+  };
+  const e = historyEintragBauen('settlement', 'tok-1', st, '2026-07-24T10:00:00Z', 'SUCCESS');
+  assert.strictEqual(e.account, '99999');
+});
+
+test('Verlaufseintrag ohne Super-User traegt einen leeren Account', () => {
+  const { historyEintragBauen } = loadBuilders();
+  const st = {
+    spaces: [], start: '2026-01-01 00:00:00', end: '2026-02-01 00:00:00',
+    terminals: [], settlementSuperUser: false, settlementAccountId: '99999',
+  };
+  const e = historyEintragBauen('brand', 'tok-2', st, '2026-07-24T10:00:00Z', 'SUCCESS');
+  assert.strictEqual(e.account, '');
+});

@@ -119,6 +119,7 @@ const EXPORTED = [
   // API-Anbindung (Task 11), reine Helfer
   'normalisiereProxyUrl',
   'proxyEndpunkt',
+  'mitAccount',
   'deuteHealth',
   'leseQueryToken',
   'leseQueryStatus',

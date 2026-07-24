@@ -601,3 +601,30 @@ test('submitUndReport toleriert transiente 404 beim Status-Poll und laeuft dann 
   assert.strictEqual(hist[0] && hist[0].token, 'TT', 'trotz transienter 404 muss der Lauf erfolgreich sein');
   assert.ok(statusCalls >= 3, 'die 404 muessen erneut gepollt worden sein, nicht sofort abbrechen');
 });
+
+// --- Account durchreichen (Task 10) -----------------------------------------
+
+test('aktiverAccount liefert den Super-User-Account nur bei aktivem Flip', () => {
+  const api = loadBuilders();
+  const st = api.getState();
+
+  st.settlementSuperUser = true;
+  st.settlementAccountId = '99999';
+  assert.strictEqual(api.aktiverAccount(), '99999');
+
+  // Flip aus: leer heisst fuer den Proxy "konfigurierten Account nehmen".
+  st.settlementSuperUser = false;
+  assert.strictEqual(api.aktiverAccount(), '');
+
+  // Flip an, aber kein Wert eingetragen - ebenfalls leer, kein "undefined".
+  st.settlementSuperUser = true;
+  st.settlementAccountId = '';
+  assert.strictEqual(api.aktiverAccount(), '');
+});
+
+test('mitAccount haengt den Account nur an, wenn einer gilt', () => {
+  const { mitAccount } = loadBuilders();
+  assert.strictEqual(mitAccount('http://x/status/t', ''), 'http://x/status/t');
+  assert.strictEqual(mitAccount('http://x/status/t', '99999'), 'http://x/status/t?account=99999');
+  assert.strictEqual(mitAccount('http://x/status/t?a=1', '99999'), 'http://x/status/t?a=1&account=99999');
+});
