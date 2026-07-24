@@ -2876,9 +2876,21 @@ ORDER BY settlement_datum, transaction_id;`;
     return datumCH(d.toISOString().slice(0, 10));
   }
 
+  // Der Spaltentyp gilt normalerweise fuer die ganze Spalte. Der Block
+  // "Zusammenfassung" mischt in seiner Wert-Spalte aber Zaehler und Betraege -
+  // dafuer traegt er zusaetzlich zellTypen (gleiche Form wie rows), das hier
+  // Vorrang hat. Bloecke ohne zellTypen (auch die des Terminal-Reports)
+  // verhalten sich unveraendert.
+  function zellTyp(block, r, c) {
+    const je = block.zellTypen;
+    if (je && je[r] && je[r][c]) return je[r][c];
+    return block.typen[c];
+  }
+
   function settlementExportBloecke(modell, optionen) {
-    const m = modell || { kpi: {}, connectors: [], connectorTotal: {}, settlements: [],
-      gesamt: {}, ausstehend: {} };
+    const m = modell || { kpi: {}, connectors: [],
+      connectorTotal: { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 }, settlements: [],
+      gesamt: { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 }, ausstehend: {} };
     const mitDetail = !optionen || optionen.detail !== false;
     const w = m.kpi && m.kpi.waehrung ? m.kpi.waehrung : '';
 
@@ -2890,16 +2902,31 @@ ORDER BY settlement_datum, transaction_id;`;
       ['Netto Auszahlung', unitsZuZahl(m.kpi.netto || 0)],
       ['Ø Netto/Settlement', unitsZuZahl(m.kpi.avgNetto || 0)],
     ];
+    // Zeilenweise Zelltypen zur Wert-Spalte von "zus": Zaehler bleiben 'zahl',
+    // Geldbetraege 'betrag' - sonst wuerden Zaehler spaeter als "2.00" gerendert.
+    const zusTypen = [
+      ['text', 'zahl'],
+      ['text', 'zahl'],
+      ['text', 'betrag'],
+      ['text', 'betrag'],
+      ['text', 'betrag'],
+      ['text', 'betrag'],
+    ];
     if (m.kpi.offenAnzahlTx) {
       zus.push(['Noch nicht abgerechnet (Tx)', m.kpi.offenAnzahlTx]);
+      zusTypen.push(['text', 'zahl']);
       zus.push(['Noch nicht abgerechnet (Brutto)', unitsZuZahl(m.kpi.offenBrutto || 0)]);
+      zusTypen.push(['text', 'betrag']);
     }
 
     const a = m.ausstehend || {};
+    const berichtsEnde = berichtsEndeCH(optionen && optionen.end);
     const hinweis = a.anzahlSettlements
       ? `${a.anzahlSettlements} Settlement(s) mit ${a.anzahlTx} Transaktionen `
         + `(Brutto ${w} ${formatAmountCH(a.brutto)}, Netto ${w} ${formatAmountCH(a.netto)}) `
-        + `wurden nach dem ${berichtsEndeCH(optionen && optionen.end)} abgerechnet.`
+        + (berichtsEnde
+          ? `wurden nach dem ${berichtsEnde} abgerechnet.`
+          : 'wurden erst nach dem Berichtszeitraum abgerechnet.')
       : '';
 
     const bloecke = [
@@ -2907,6 +2934,7 @@ ORDER BY settlement_datum, transaction_id;`;
         name: 'Zusammenfassung',
         header: ['Kennzahl', 'Wert'],
         typen: ['text', 'betrag'],
+        zellTypen: zusTypen,
         rows: zus,
       },
       {

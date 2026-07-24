@@ -104,10 +104,80 @@ test('Zusammenfassung weist offene Transaktionen als eigene Kennzahl aus', () =>
 
 test('CSV: Bloecke untereinander, Semikolon, BOM', () => {
   const { buildSettlementReportCsv } = loadBuilders();
-  const csv = buildSettlementReportCsv(modell(...ZEILEN), { detail: false });
+  const csv = buildSettlementReportCsv(modell(...ZEILEN), { detail: false, end: '2026-02-01 00:00:00' });
   assert.ok(csv.charCodeAt(0) === 0xFEFF, 'BOM fehlt - Excel liest sonst Latin-1');
   const zeilen = csv.replace(/^﻿/, '').split('\r\n');
   assert.strictEqual(zeilen[0], 'Zusammenfassung');
   assert.ok(zeilen.includes('Settlement-Übersicht'));
   assert.ok(zeilen.includes('1;05.01.2026;2;30;0.3;29.7;Settled'));
+});
+
+test('CSV: mit detail:true landen auch die Settlement-Detailbloecke im CSV', () => {
+  const { buildSettlementReportCsv } = loadBuilders();
+  const csv = buildSettlementReportCsv(modell(...ZEILEN),
+    { detail: true, end: '2026-02-01 00:00:00' });
+  const zeilen = csv.replace(/^﻿/, '').split('\r\n');
+  assert.ok(zeilen.includes('Settlement 1: 05.01.2026'));
+  assert.ok(zeilen.includes('Settlement 2: 03.02.2026'));
+  assert.ok(zeilen.includes('#;Transaction ID;Connector;Brutto;Fees;Netto'));
+  assert.ok(zeilen.includes('1;100;Visa;10;0.1;9.9'));
+  assert.ok(zeilen.includes('Subtotal (2 Tx);;;30;0.3;29.7'));
+});
+
+test('Hinweis: fehlt optionen.end, bleibt der Satz sauber (kein doppeltes Leerzeichen, kein haengendes "nach dem")', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
+  const hinweis = String(b[2].hinweis);
+  assert.ok(hinweis.length > 0, 'Hinweis sollte hier gesetzt sein (es gibt ausstehende Settlements)');
+  assert.ok(!/ {2,}/.test(hinweis), `Hinweis enthaelt ein doppeltes Leerzeichen: "${hinweis}"`);
+  assert.ok(!/nach dem\s*\.$/.test(hinweis), `Hinweis endet mit haengendem "nach dem": "${hinweis}"`);
+  assert.match(hinweis, /Berichtszeitraum abgerechnet\.$/);
+});
+
+test('zellTyp: Zusammenfassung liefert je Zeile den richtigen Typ, sonst faellt sie auf typen[c] zurueck', () => {
+  const { settlementExportBloecke, zellTyp } = loadBuilders();
+  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
+  const zus = b[0];
+  // Zaehler-Zeilen
+  assert.strictEqual(zellTyp(zus, 0, 1), 'zahl'); // Anzahl Settlements
+  assert.strictEqual(zellTyp(zus, 1, 1), 'zahl'); // Anzahl Transaktionen
+  // Betrags-Zeilen
+  assert.strictEqual(zellTyp(zus, 2, 1), 'betrag'); // Brutto Volumen
+  assert.strictEqual(zellTyp(zus, 3, 1), 'betrag'); // Processing Fees
+  assert.strictEqual(zellTyp(zus, 4, 1), 'betrag'); // Netto Auszahlung
+  assert.strictEqual(zellTyp(zus, 5, 1), 'betrag'); // Oe Netto/Settlement
+  // Erste Spalte durchgehend Text
+  assert.strictEqual(zellTyp(zus, 0, 0), 'text');
+
+  // Ein Block ohne zellTypen faellt auf typen[c] zurueck (Verhalten unveraendert)
+  const uebersicht = b[2];
+  assert.strictEqual(uebersicht.zellTypen, undefined);
+  for (let c = 0; c < uebersicht.typen.length; c++) {
+    assert.strictEqual(zellTyp(uebersicht, 0, c), uebersicht.typen[c]);
+  }
+});
+
+test('Fallback: settlementExportBloecke(null, ...) liefert keine NaN-Werte', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(null, { detail: false });
+  b.forEach(block => {
+    block.rows.forEach(row => {
+      row.forEach(zelle => {
+        assert.ok(!(typeof zelle === 'number' && Number.isNaN(zelle)),
+          `NaN in Block "${block.name}": ${JSON.stringify(row)}`);
+      });
+    });
+  });
+});
+
+test('formatZahlCH: negativer Betrag (Refund) stimmt mit formatAmountCH ueberein', () => {
+  const { formatZahlCH, formatAmountCH } = loadBuilders();
+  // -530000000 in 1e-8-Einheiten entspricht -5.30 CHF.
+  assert.strictEqual(formatZahlCH(-5.3), formatAmountCH(-530000000));
+  assert.strictEqual(formatZahlCH(-5.3), '-5.30');
+});
+
+test('berichtsEndeCH: Jahresgrenze', () => {
+  const { berichtsEndeCH } = loadBuilders();
+  assert.strictEqual(berichtsEndeCH('2026-01-01 00:00:00'), '31.12.2025');
 });

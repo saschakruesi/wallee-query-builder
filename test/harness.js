@@ -90,6 +90,8 @@ const EXPORTED = [
   'buildSettlementReportModel',
   'settlementExportBloecke',
   'buildSettlementReportCsv',
+  'zellTyp',
+  'berichtsEndeCH',
   'formatZahlCH',
   'csvZuZeilen',
   'parseAmount',
