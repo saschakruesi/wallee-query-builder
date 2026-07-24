@@ -92,3 +92,34 @@ test('Verlaufseintrag ohne Super-User traegt einen leeren Account', () => {
   const e = historyEintragBauen('brand', 'tok-2', st, '2026-07-24T10:00:00Z', 'SUCCESS');
   assert.strictEqual(e.account, '');
 });
+
+// --- Zusammenfassung im Settlement-Modus ist account-basiert, nicht Space/Terminal (Fix) --
+
+test('Settlement-Eintrag mit abweichendem Account zeigt den Account, keine Space-/Terminalangabe', () => {
+  const { historyEintragBauen } = loadBuilders();
+  const st = {
+    ...ST, settlementSuperUser: true, settlementAccountId: '99999',
+  };
+  const e = historyEintragBauen('settlement', 'tok-settle-1', st, '2026-07-24T10:00:00Z', 'SUCCESS');
+  assert.strictEqual(e.account, '99999');
+  assert.match(e.spacesSummary, /99999/);
+  assert.doesNotMatch(e.spacesSummary, /123/);        // keine Space-ID aus st.spaces
+  assert.doesNotMatch(e.spacesSummary, /Terminal/);
+  assert.strictEqual(e.filterSummary, '');             // kein Terminal-Filter im Settlement-Modus
+});
+
+test('Settlement-Eintrag ohne abweichenden Account zeigt die Normalfall-Formulierung', () => {
+  const { historyEintragBauen } = loadBuilders();
+  const st = { ...ST, settlementSuperUser: false, settlementAccountId: '' };
+  const e = historyEintragBauen('settlement', 'tok-settle-2', st, '2026-07-24T10:00:00Z', 'SUCCESS');
+  assert.strictEqual(e.account, '');
+  assert.strictEqual(e.spacesSummary, 'hinterlegter Account');
+  assert.strictEqual(e.filterSummary, '');
+});
+
+test('Regression: Terminal-Modus zeigt weiterhin Space- und Terminalangabe wie bisher', () => {
+  const { historyEintragBauen } = loadBuilders();
+  const e = historyEintragBauen('terminal', 'tok-term-1', ST, '2026-07-08T10:00:00.000Z', 'SUCCESS');
+  assert.match(e.spacesSummary, /123/);
+  assert.strictEqual(e.filterSummary, '2 Terminal(s)');
+});

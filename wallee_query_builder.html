@@ -3939,23 +3939,33 @@ ORDER BY settlement_datum, transaction_id;`;
   function historyEintragBauen(mode, token, st, jetztIso, status) {
     const s = st || {};
     const term = (s.terminals || []).filter(t => t.selected).length;
+    // Leer heisst: der konfigurierte Account galt. Ein alter Eintrag ohne das
+    // Feld verhaelt sich damit automatisch richtig.
+    const accountWert = s.settlementSuperUser ? String(s.settlementAccountId || '').trim() : '';
+    let spacesSummary;
     let filterSummary = '';
-    if (mode === 'card') filterSummary = s.cardLast4 ? 'Karte …' + s.cardLast4 : '';
-    else if (mode === 'terminal' || mode === 'export' || mode === 'settlement') {
-      filterSummary = term ? term + ' Terminal(s)' : 'alle Terminals';
+    if (mode === 'settlement') {
+      // Settlement ist account-basiert (seit v5.8) - Space und Terminal filtern
+      // dort gar nichts, die Zusammenfassung soll das nicht vorgaukeln. Statt
+      // dessen zeigt sie den Account, der tatsaechlich galt.
+      spacesSummary = accountWert ? ('Account ' + accountWert) : 'hinterlegter Account';
+    } else {
+      spacesSummary = zsfSpaces(s.spaces);
+      if (mode === 'card') filterSummary = s.cardLast4 ? 'Karte …' + s.cardLast4 : '';
+      else if (mode === 'terminal' || mode === 'export') {
+        filterSummary = term ? term + ' Terminal(s)' : 'alle Terminals';
+      }
     }
     return {
       id: String(token),
       mode,
       token: String(token),
       submittedAt: jetztIso,
-      spacesSummary: zsfSpaces(s.spaces),
+      spacesSummary,
       timeframeSummary: (s.startDate || '') + ' → ' + (s.endDate || ''),
       filterSummary,
       status: status || 'SUCCESS',
-      // Leer heisst: der konfigurierte Account galt. Ein alter Eintrag ohne das
-      // Feld verhaelt sich damit automatisch richtig.
-      account: s.settlementSuperUser ? String(s.settlementAccountId || '').trim() : '',
+      account: accountWert,
     };
   }
 
