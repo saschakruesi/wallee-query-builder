@@ -14,24 +14,57 @@ test('spaceLabelBauen kombiniert id und name', () => {
   assert.strictEqual(X.spaceLabelBauen('  83954  ', '  Zürich  '), '83954 · Zürich', 'trimmt');
 });
 
-test('terminalMatchtFilter sucht in id, label und space', () => {
-  const t = { id: '33024744', label: 'Kasse 1', space: '83954 · Zürich' };
-  assert.ok(X.terminalMatchtFilter(t, ''), 'leerer Filter matcht alles');
-  assert.ok(X.terminalMatchtFilter(t, '   '), 'whitespace matcht alles');
-  assert.ok(X.terminalMatchtFilter(t, '3302'), 'Treffer in id');
-  assert.ok(X.terminalMatchtFilter(t, 'kasse'), 'case-insensitiv in label');
-  assert.ok(X.terminalMatchtFilter(t, 'zürich'), 'Treffer in space');
-  assert.ok(!X.terminalMatchtFilter(t, 'berlin'), 'kein Treffer');
-  assert.ok(!X.terminalMatchtFilter({ id: '1' }, 'x'), 'fehlende Felder werfen nicht');
+test('terminalGehoertZuSpace matcht ueber spaceId', () => {
+  const t = { id: '111', space: '83954 · Zürich', spaceId: '83954' };
+  assert.ok(X.terminalGehoertZuSpace(t, '83954'));
+  assert.ok(X.terminalGehoertZuSpace(t, 83954), 'Zahl als Space-ID wird toleriert');
+  assert.ok(!X.terminalGehoertZuSpace(t, '73192'), 'andere Space matcht nicht');
 });
 
-test('gefilterteIndices liefert die Original-Indizes der Treffer', () => {
-  const list = [
-    { id: '100', label: 'A', space: 'S1' },
-    { id: '200', label: 'B', space: 'S2' },
-    { id: '300', label: 'A2', space: 'S1' },
+test('terminalGehoertZuSpace faellt auf den ID-Teil des Anzeige-Tags zurueck', () => {
+  // Terminals, die vor der Einfuehrung von spaceId synchronisiert wurden, haben
+  // nur den Anzeige-String - die sollen trotzdem zugeordnet werden.
+  const alt = { id: '222', space: '83954 · Zürich' };
+  assert.ok(X.terminalGehoertZuSpace(alt, '83954'), 'ID aus dem Tag-Kopf');
+  assert.ok(!X.terminalGehoertZuSpace(alt, '8395'), 'kein Teiltreffer');
+
+  const nurId = { id: '333', space: '73192' };
+  assert.ok(X.terminalGehoertZuSpace(nurId, '73192'));
+});
+
+test('terminalGehoertZuSpace ist robust gegen fehlende Felder', () => {
+  assert.ok(!X.terminalGehoertZuSpace({ id: '1' }, '83954'), 'ohne space/spaceId kein Treffer');
+  assert.ok(!X.terminalGehoertZuSpace(null, '83954'), 'null wirft nicht');
+  assert.ok(!X.terminalGehoertZuSpace({ space: '83954' }, ''), 'leere Space-ID matcht nie');
+  assert.ok(!X.terminalGehoertZuSpace({ space: '83954' }, null));
+});
+
+test('setzeAuswahlFuerSpace waehlt nur die Terminals der Space an', () => {
+  const terminals = [
+    { id: 'A', space: '83954 · Zürich', spaceId: '83954', selected: false },
+    { id: 'B', space: '73192 · Bern',   spaceId: '73192', selected: false },
+    { id: 'C', selected: false },                       // ohne Space - bleibt
   ];
-  assert.deepStrictEqual(plain(X.gefilterteIndices(list, 'S1')), [0, 2]);
-  assert.deepStrictEqual(plain(X.gefilterteIndices(list, '')), [0, 1, 2]);
-  assert.deepStrictEqual(plain(X.gefilterteIndices(list, 'zzz')), []);
+  const r = X.setzeAuswahlFuerSpace(terminals, '83954', true);
+  assert.strictEqual(r.geaendert, 1);
+  assert.deepStrictEqual(plain(r.liste).map(t => t.selected), [true, false, false],
+    'nur die Zürich-Terminals werden angehakt, andere und tag-lose bleiben');
+});
+
+test('setzeAuswahlFuerSpace waehlt beim Abwaehlen nur die eigenen ab', () => {
+  const terminals = [
+    { id: 'A', spaceId: '83954', selected: true },
+    { id: 'B', spaceId: '73192', selected: true },
+  ];
+  const r = X.setzeAuswahlFuerSpace(terminals, '83954', false);
+  assert.strictEqual(r.geaendert, 1);
+  assert.deepStrictEqual(plain(r.liste).map(t => t.selected), [false, true],
+    'die andere Space bleibt ausgewaehlt');
+});
+
+test('setzeAuswahlFuerSpace zaehlt nur echte Aenderungen', () => {
+  const terminals = [{ id: 'A', spaceId: '83954', selected: true }];
+  const r = X.setzeAuswahlFuerSpace(terminals, '83954', true);
+  assert.strictEqual(r.geaendert, 0, 'schon ausgewaehlt - keine Aenderung');
+  assert.strictEqual(plain(r.liste)[0].selected, true);
 });
