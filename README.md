@@ -1,5 +1,7 @@
 # Wallee Analytics Query Builder
 
+**Aktuelle Version: v5.8.0**
+
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies
 — Doppelklick genügt, läuft offline.
@@ -10,8 +12,8 @@ Zwei Betriebsmodi:
   unter **Account > Analytics > Submit Query** ausführen; das Ergebnis kommt dort als CSV.
 - **API-Modus** (opt-in): Query direkt aus der App absetzen — über einen kleinen lokalen
   Proxy (siehe unten). Das Ergebnis landet im modus-eigenen **Abfrage-Verlauf** (CSV/Excel
-  per Klick abrufbar) und, im Modus Terminal-Report, zusätzlich sofort in der
-  Gruppen-Auswertung.
+  per Klick abrufbar) und, in den Modi Terminal-Report und Settlement-Report, zusätzlich
+  sofort als aufbereiteter Report (Gruppen-Auswertung bzw. Settlement-Übersicht).
 
 ## Nutzung — drei Wege
 
@@ -77,7 +79,7 @@ Gerät. Zugangsdaten für den API-Modus liegen ausschliesslich beim Proxy, nie i
 | **Terminal-Report** | wie Brand-Auswertung, zusätzlich pro Terminal mit Pflichtfilter — im API-Modus wird das Ergebnis der eigenen Query automatisch zu Outlet- und Brand-Gruppen ausgewertet (siehe unten) |
 | **Transaktions-Export** | eine Zeile pro Transaktion, Spalten frei wählbar — u. a. `tip_amount` (Trinkgeld) und `gross_excl_tip` (Brutto ohne Trinkgeld) |
 | **Kartensuche** | Transaktionen zu den letzten vier Kartenziffern (für Streitfälle) |
-| **Settlement / Auszahlung** | pro Tag: was ist ausbezahlt, was steht aus, welche Gebühren fielen an, inkl. `tip_total` |
+| **Settlement-Report** | **account-basiert** (nicht space-basiert): was ist bereits ausbezahlt, was steht noch aus, was ist ganz ohne Settlement-Record — im API-Modus wird das Ergebnis der eigenen Query automatisch zum Settlement-Report (siehe unten) |
 
 ## Abfrage-Verlauf
 
@@ -85,10 +87,10 @@ Jeder erfolgreiche Submit im API-Modus landet im **Abfrage-Verlauf** — pro Mod
 maximal 50 Einträge. Gespeichert werden nur Token und Anzeige-Metadaten (Spaces, Zeitraum,
 Filter, Zeitstempel), **nie** die SQL und **nie** das Ergebnis selbst; das wird bei Bedarf
 über den Token neu vom Proxy geholt. Aus der Tabelle heraus lässt sich pro Zeile das rohe
-CSV oder eine Excel-Datei herunterladen. Im Modus Terminal-Report bietet die Verlaufszeile
-bewusst nur den Roh-CSV-Download — Excel (mit gebrandetem Titel), PDF und die Report-Ansicht
-laufen dort über das Report-Panel selbst. Jeder erneute Abruf über den Token zählt bei wallee
-als Download.
+CSV oder eine Excel-Datei herunterladen. In den Modi Terminal-Report und Settlement-Report
+bietet die Verlaufszeile bewusst nur den Roh-CSV-Download — Excel (mit gebrandetem Titel),
+PDF und die Report-Ansicht laufen dort über das jeweilige Report-Panel selbst. Jeder erneute
+Abruf über den Token zählt bei wallee als Download.
 
 ## Terminal-Report
 
@@ -111,6 +113,32 @@ zusammengeführt.
 
 Der Zähler wird unter beiden Spaltennamen akzeptiert: `unsettled_anzahl` (aus dem
 Terminal-Report dieses Generators) und `unmatched_anzahl`.
+
+## Settlement-Report
+
+Der Modus *Settlement-Report* ist **account-**, nicht space-basiert: eine Auszahlung fasst
+die Transaktionen aller Spaces eines Accounts zu einer Gutschrift zusammen. Gefiltert wird
+nach Transaktionsdatum, gruppiert nach dem Valutadatum der Gutschrift — deshalb reichen die
+Settlements am Ende des Berichtszeitraums typischerweise ein paar Tage darüber hinaus und
+erscheinen als **Ausstehend**. Transaktionen ganz ohne Settlement-Record stehen als **Offen**
+am Ende. Zusätzlich zeigt der Report eine Aufschlüsselung nach Zahlungsmittel.
+
+- **Konto:** vorbelegt aus den hinterlegten Zugangsdaten und gesperrt; mit dem Flip
+  „Anderen Account abfragen (Super-User)" lässt sich ein abweichender Account eintragen —
+  funktioniert nur, wenn der hinterlegte API-Benutzer auch dort Zugriff hat.
+- **Vier Ausgaben aus einer Quelle:** Bildschirm, CSV, Excel und PDF, wie beim
+  Terminal-Report gebrandet und aus denselben Export-Blöcken gespeist. Eine Checkbox
+  „Transaktionsdetail einschliessen" blendet die Detailliste bei grossen Zeiträumen aus —
+  Zusammenfassung und Übersicht bleiben davon unberührt.
+- **Wichtig für die Zahlen:** Brutto, Fees und Netto stammen in jeder Settlement-Zeile
+  durchgängig aus der Banktransaktion (nicht aus der Transaktion selbst), damit
+  `Brutto − Fees = Netto` in jeder Zeile und jeder Summe exakt aufgeht. Nur die Zeile
+  *Offen* zeigt stattdessen den Transaktionsbetrag als Brutto, weil dort mangels
+  Settlement-Record keine Banktransaktion existiert. Zahlen aus diesem Report können daher
+  von älteren, handgemachten Auswertungen abweichen, die Transaktions- und
+  Banktransaktions-Beträge gemischt haben.
+- **Eingabe:** ausschliesslich über den API-Modus, wie beim Terminal-Report — kein
+  CSV-Upload für die Report-Daten selbst.
 
 ## API-Modus und lokaler Proxy
 
@@ -174,9 +202,10 @@ JWT-Bearer-Token (HS256), das der Proxy lokal aus User-ID + Authentication Key e
    Status-Punkt im Einstellungs-Dialog zeigt den zuletzt bekannten Proxy-Zustand.
 3. Query mit **„Query ausführen"** absetzen. Die App pollt den Status und schreibt bei
    Erfolg einen Eintrag in den Abfrage-Verlauf; im Modus Terminal-Report wird das
-   Ergebnis-CSV zusätzlich sofort in die Gruppen-Auswertung übernommen. Alternativ lässt
-   sich unter „Vorhandenen queryToken abrufen" das Ergebnis einer bereits im Portal
-   gelaufenen Query holen.
+   Ergebnis-CSV zusätzlich sofort in die Gruppen-Auswertung übernommen, im Modus
+   Settlement-Report entsprechend in den Settlement-Report. Alternativ lässt sich unter
+   „Vorhandenen queryToken abrufen" das Ergebnis einer bereits im Portal gelaufenen Query
+   holen.
 
 Der Proxy bindet nur an `127.0.0.1`, lässt als Herkunft nur die eigene App zu (per `file://`
 geöffnet **oder** same-origin vom Proxy unter `http://127.0.0.1:8787` ausgeliefert) und
@@ -222,6 +251,10 @@ Diese Ergebnisse stammen aus einem Space über einen Zeitraum — „bisher beob
 „gibt es nicht". Mit `sql/settlement_verifikation.sql` lässt sich das bei Bedarf (anderer
 Space, anderer Acquirer, Schema-Änderung) erneut nachprüfen.
 
+Im **Settlement-Report** (siehe oben) wird daraus pro Zeile einer von drei Status: *Settled*
+(Valutadatum liegt im Berichtszeitraum), *Ausstehend* (Valutadatum liegt danach) oder *Offen*
+(`NO_RECORD`, also gar kein Settlement-Record vorhanden).
+
 ## Hinweis zu Apple Pay, Google Pay und tokenisierten Karten
 
 Die letzten vier Ziffern im Wallet sind **nicht** die der physischen Karte —
@@ -236,12 +269,14 @@ Kartennummer noch Autorisierungscode.
   aus der Banktransaktion.
 - Eine Query läuft in **einem** Account. Mehrere Spaces gehen nur innerhalb
   desselben Accounts; Spaces fremder Accounts erzeugen einen Permission Error.
-- Die Zuordnung der Auszahlungsreferenz ist zeitbasiert-heuristisch —
-  es gibt keinen direkten Fremdschlüssel von der Banktransaktion zur Auszahlung. Die
+- Die Zuordnung der Auszahlungsreferenz im **Transaktions-Export** ist zeitbasiert-heuristisch
+  — es gibt keinen direkten Fremdschlüssel von der Banktransaktion zur Auszahlung. Die
   zugrunde liegende Tabelle (`currentaccountwithdrawal`) enthält ohne Einschränkung die
   Auszahlungen der gesamten Plattform, nicht nur die des eigenen Accounts; der Generator
   schränkt sie deshalb zwingend über `spacereference.accountid` ein. Die Spalte ist trotz
-  dieser Korrektur weiterhin die teuerste im Export und standardmässig aus.
+  dieser Korrektur weiterhin die teuerste im Export und standardmässig aus. Der
+  Settlement-Report braucht diese Referenz nicht — er ist ohnehin bereits auf einen
+  einzelnen Account eingeschränkt.
 - Dass Trinkgeld bereits im Bruttobetrag enthalten ist (siehe Abschnitt „Trinkgeld"),
   ist an echten Daten geprüft und bestätigt — es darf trotzdem nicht zusätzlich zum
   Bruttobetrag addiert werden, sonst wird der Umsatz doppelt gezählt.
@@ -256,12 +291,15 @@ node --test "test/*.test.js"
 
 Das Harness (`test/harness.js`) extrahiert den App-Logik-Block aus der HTML-Datei, stubbt
 DOM und `localStorage` und prüft die reinen Funktionen. Abgedeckt sind die SQL-Builder
-(`test/queries.test.js`), der Report-Kern und sein Render-/Export-Pfad
-(`test/report*.test.js`), die Betriebsmodi und die API-Anbindung
+(`test/queries.test.js`), der Terminal-Report-Kern und sein Render-/Export-Pfad
+(`test/report*.test.js`), der Settlement-Report-Kern und sein Render-/Export-Pfad
+(`test/settlement-report.test.js`, `test/settlement-export.test.js`,
+`test/settlement-render.test.js`), die Betriebsmodi und die API-Anbindung
 (`test/betriebsmodus.test.js`, `test/api-anbindung.test.js`) sowie der Proxy
-(`test/proxy.test.js`, u. a. die JWT-Signatur gegen den RFC-7515-Testvektor und die
-ausgehende Anfrage an wallee). Der XLSX-Export wird end-to-end geprüft
-(`test/report-xlsx.test.js`): Datei schreiben, wieder einlesen, Zahlen gegen die Sollwerte.
+(`test/proxy.test.js`, u. a. die JWT-Signatur gegen den RFC-7515-Testvektor, die
+ausgehende Anfrage an wallee und die Account-Header-Logik). Der XLSX-Export wird
+end-to-end geprüft (`test/report-xlsx.test.js`): Datei schreiben, wieder einlesen, Zahlen
+gegen die Sollwerte.
 
 ## Referenzen
 
