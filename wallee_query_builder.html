@@ -1353,7 +1353,12 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     terminals: [],
     exportColumns: defaultColumns(),
     cardLast4: '',
-    settlementByTerminal: false,
+    // Settlement ist account-, nicht space-basiert. Leer heisst: der Account aus
+    // den Zugangsdaten gilt. Ein abweichender Account ist bewusst hinter dem
+    // Super-User-Flip versteckt - im Normalfall soll niemand daran drehen.
+    settlementAccountId: '',
+    settlementSuperUser: false,
+    settlementDetail: true,
     userPresets: [],
     // Betriebsmodus (v4). Default ist bewusst der Kopieren-Modus: er braucht
     // keine Installation und ist damit das, was ohne Zutun funktioniert.
@@ -1380,6 +1385,13 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       if (raw) {
         const parsed = JSON.parse(raw);
         state = { ...state, ...parsed };
+        // Additive Felder: ein State aus v5.7 kennt sie nicht und wuerde sonst
+        // undefined statt des Defaults tragen. Kein STORAGE_KEY-Bump noetig -
+        // das entfallene settlementByTerminal wird schlicht ignoriert.
+        if (typeof state.settlementAccountId !== 'string') state.settlementAccountId = '';
+        state.settlementSuperUser = !!state.settlementSuperUser;
+        if (typeof state.settlementDetail !== 'boolean') state.settlementDetail = true;
+        delete state.settlementByTerminal;
         // Migration: altes Einzelfeld spaceId -> spaces[]
         if ((!state.spaces || !state.spaces.length) && parsed.spaceId) {
           state.spaces = [{ id: String(parsed.spaceId), label: '', selected: true }];

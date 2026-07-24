@@ -362,7 +362,11 @@ test('Beide Schluessel leer: Defaults greifen, keine Exception', () => {
   assert.ok(Array.isArray(state.spaces));
   assert.strictEqual(state.spaces.length, 0);
   assert.strictEqual(state.cardLast4, '');
-  assert.strictEqual(state.settlementByTerminal, false);
+  // settlementByTerminal ist entfallen - Settlement ist seit Task 1/2
+  // account-, nicht space-/terminal-basiert (siehe betriebsmodus.test.js).
+  assert.strictEqual(state.settlementAccountId, '');
+  assert.strictEqual(state.settlementSuperUser, false);
+  assert.strictEqual(state.settlementDetail, true);
 });
 
 test('Migration persistiert das Ergebnis sofort unter dem neuen Schluessel, der alte bleibt unangetastet', () => {
