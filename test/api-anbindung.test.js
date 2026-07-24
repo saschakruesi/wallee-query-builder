@@ -601,3 +601,169 @@ test('submitUndReport toleriert transiente 404 beim Status-Poll und laeuft dann 
   assert.strictEqual(hist[0] && hist[0].token, 'TT', 'trotz transienter 404 muss der Lauf erfolgreich sein');
   assert.ok(statusCalls >= 3, 'die 404 muessen erneut gepollt worden sein, nicht sofort abbrechen');
 });
+
+// --- Account durchreichen (Task 10) -----------------------------------------
+
+test('aktiverAccount liefert den Super-User-Account nur bei aktivem Flip', () => {
+  const api = loadBuilders();
+  const st = api.getState();
+
+  st.settlementSuperUser = true;
+  st.settlementAccountId = '99999';
+  assert.strictEqual(api.aktiverAccount(), '99999');
+
+  // Flip aus: leer heisst fuer den Proxy "konfigurierten Account nehmen".
+  st.settlementSuperUser = false;
+  assert.strictEqual(api.aktiverAccount(), '');
+
+  // Flip an, aber kein Wert eingetragen - ebenfalls leer, kein "undefined".
+  st.settlementSuperUser = true;
+  st.settlementAccountId = '';
+  assert.strictEqual(api.aktiverAccount(), '');
+});
+
+test('mitAccount haengt den Account nur an, wenn einer gilt', () => {
+  const { mitAccount } = loadBuilders();
+  assert.strictEqual(mitAccount('http://x/status/t', ''), 'http://x/status/t');
+  assert.strictEqual(mitAccount('http://x/status/t', '99999'), 'http://x/status/t?account=99999');
+  assert.strictEqual(mitAccount('http://x/status/t?a=1', '99999'), 'http://x/status/t?a=1&account=99999');
+});
+
+// Fix nach Review: Submit baute den Body bisher immer mit account (auch leer)
+// - im Gegensatz zu mitAccount(), das die URL bei leerem Account unangetastet
+// laesst. Regel: leer heisst "im Proxy konfigurierten Account nehmen", das
+// Feld darf dann gar nicht erst im JSON stehen.
+test('Submit laesst das Feld account weg, wenn kein Account gilt (Normalfall)', async () => {
+  const gesehen = [];
+  const fetchStub = async (url, opts) => {
+    if (/\/submit$/.test(url)) {
+      gesehen.push(JSON.parse(opts.body));
+      return { status: 200, json: async () => ({ portalQueryToken: 'TOKA' }) };
+    }
+    if (/\/status\//.test(url)) return { status: 200, json: async () => ({ status: 'SUCCESS' }) };
+    if (/\/result\//.test(url)) return { status: 200, text: async () => 'a,b\n1,2', json: async () => null };
+    return { status: 200, json: async () => ({ ok: true }) };
+  };
+  const x = loadBuilders({ fetch: fetchStub });
+  const st = x.getState();
+  st.proxyUrl = 'http://localhost:8787';
+  st.mode = 'brand';
+  st.settlementSuperUser = false;
+  x.apiPollConfig.retryStandardSek = 0;
+  await x.submitUndReport('SELECT 1');
+  assert.strictEqual(gesehen.length, 1);
+  assert.ok(!('account' in gesehen[0]), 'ohne aktiven Super-User-Flip darf kein account-Feld im Body stehen');
+});
+
+test('Submit schickt account, wenn der Super-User-Flip aktiv und eine ID eingetragen ist', async () => {
+  const gesehen = [];
+  const fetchStub = async (url, opts) => {
+    if (/\/submit$/.test(url)) {
+      gesehen.push(JSON.parse(opts.body));
+      return { status: 200, json: async () => ({ portalQueryToken: 'TOKB' }) };
+    }
+    if (/\/status\//.test(url)) return { status: 200, json: async () => ({ status: 'SUCCESS' }) };
+    if (/\/result\//.test(url)) return { status: 200, text: async () => 'a,b\n1,2', json: async () => null };
+    return { status: 200, json: async () => ({ ok: true }) };
+  };
+  const x = loadBuilders({ fetch: fetchStub });
+  const st = x.getState();
+  st.proxyUrl = 'http://localhost:8787';
+  st.mode = 'brand';
+  st.settlementSuperUser = true;
+  st.settlementAccountId = '99999';
+  x.apiPollConfig.retryStandardSek = 0;
+  await x.submitUndReport('SELECT 1');
+  assert.strictEqual(gesehen.length, 1);
+  assert.strictEqual(gesehen[0].account, '99999', 'bei aktivem Flip mit eingetragener ID muss der Account mitgeschickt werden');
+});
+
+// --- Settlement-Zweig im Submit-Pfad (Fix nach Review Task 10) -------------
+// Analog zum Terminal-Zweig oben (Test "Submit fuehrt SQL aus und uebernimmt
+// das Ergebnis in den Report"), aber fuer state.mode === 'settlement': dort
+// holt submitUndReport nach SUCCESS den Ergebnistext und uebergibt ihn an
+// uebergibSettlementCsv statt an den Terminal-Report.
+
+const SETTLEMENT_KOPF = 'settlement_datum,settlement_state,transaction_id,merchant_reference,'
+  + 'space_id,waehrung,connector,sales_channel,terminal_identifier,'
+  + 'brutto_gross,settlement_gross,processing_fees,netamount,settlement_records';
+const SETTLEMENT_CSV = [SETTLEMENT_KOPF,
+  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+].join('\n') + '\n';
+
+test('Submit im settlement-Modus uebernimmt das Ergebnis in den Settlement-Report', async () => {
+  const seed = { wallee_query_builder_v6: JSON.stringify({ apiMode: true, mode: 'settlement' }) };
+  const router = apiRouter({ statusFolge: ['PROCESSING', 'SUCCESS'], csv: SETTLEMENT_CSV });
+  const { el } = await starteApiModus(router, seed);
+  el('sqlOutput').textContent = 'SELECT 1';
+
+  el('submitBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /Settlement-Report erstellt/i);
+  // Der Settlement-Report baut sein Markup ueber innerHTML (kein appendChild
+  // wie beim Terminal-Report) - der DOM-Stub parst das nicht in Kindknoten,
+  // deshalb hier gegen innerHTML pruefen statt gegen children/textContent
+  // (siehe test/settlement-render.test.js fuer dasselbe Muster).
+  assert.notStrictEqual(el('settlementReportOutput').innerHTML, '', 'Settlement-Report muss gefuellt sein');
+  assert.match(el('settlementReportOutput').innerHTML, /9\.90/, 'Netto aus der Fixture');
+});
+
+test('Submit im settlement-Modus meldet einen Fehler bei fehlenden Pflichtspalten, Report bleibt leer', async () => {
+  const seed = { wallee_query_builder_v6: JSON.stringify({ apiMode: true, mode: 'settlement' }) };
+  const kaputtesCsv = 'settlement_datum,transaction_id\n2026-01-05,1\n';
+  const router = apiRouter({ statusFolge: ['PROCESSING', 'SUCCESS'], csv: kaputtesCsv });
+  const { el } = await starteApiModus(router, seed);
+  el('sqlOutput').textContent = 'SELECT 1';
+
+  el('submitBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /kein Report bilden/i);
+  assert.ok(el('submitFortschritt').classList.contains('fehler'));
+  assert.strictEqual(el('settlementReportOutput').innerHTML, '', 'bei fehlenden Pflichtspalten kein Report');
+});
+
+// --- Settlement-Zweig im Token-Abruf-Pfad (Schluss-Review, Befund 3) -------
+// tokenAbrufen rief bisher unbedingt holeErgebnisInReport auf, das ueber
+// uebergibReportCsv immer in den Terminal-Report lief. Das Token-Feld ist
+// aber in jedem API-Modus sichtbar, auch im Settlement-Modus - wer dort einen
+// Settlement-Token abrief, bekam "Pflichtspalten fehlen". tokenAbrufen muss
+// wie submitUndReport nach state.mode verzweigen.
+
+test('Token-Abruf im Settlement-Modus befuellt den Settlement-Report (Befund 3)', async () => {
+  const seed = { wallee_query_builder_v6: JSON.stringify({ apiMode: true, mode: 'settlement' }) };
+  const { el } = await starteApiModus(async (url) => {
+    if (String(url).endsWith('/health')) return jsonAntwort(200, { ok: true, zugangsdaten: true });
+    if (String(url).includes('/result/')) return textAntwort(200, SETTLEMENT_CSV);
+    return jsonAntwort(404, {});
+  }, seed);
+
+  el('tokenInput').value = 'tok-settlement-1';
+  el('tokenAbrufBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /Settlement-Report erstellt/i);
+  assert.notStrictEqual(el('settlementReportOutput').innerHTML, '', 'Settlement-Report muss gefuellt sein');
+  assert.match(el('settlementReportOutput').innerHTML, /9\.90/, 'Netto aus der Fixture');
+});
+
+// Regressionstest: im terminal-Modus (Default von starteApiModus) bleibt das
+// bisherige Verhalten unveraendert - der bestehende Test "Token-Abruf laedt
+// das Ergebnis direkt in den Report (nur /result)" oben deckt das bereits ab;
+// dieser Test belegt es zusaetzlich explizit fuer den Regressionsfall.
+test('Token-Abruf im terminal-Modus laedt weiterhin den Terminal-Report (Regression, Befund 3)', async () => {
+  const { el } = await starteApiModus(async (url) => {
+    if (String(url).endsWith('/health')) return jsonAntwort(200, { ok: true, zugangsdaten: true });
+    if (String(url).includes('/result/')) return textAntwort(200, CSV);
+    return jsonAntwort(404, {});
+  });
+
+  el('tokenInput').value = 'tok-terminal-1';
+  el('tokenAbrufBtn').dispatch('click');
+  await langeRuhe();
+
+  assert.match(el('submitFortschrittText').textContent, /Report erstellt/i);
+  assert.ok(el('reportOutput').textContent.includes('62’756.16'), 'Terminal-Report gefuellt');
+  assert.strictEqual(el('settlementReportOutput').innerHTML, '', 'kein Settlement-Report im terminal-Modus');
+});

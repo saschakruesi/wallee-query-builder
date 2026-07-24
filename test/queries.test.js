@@ -288,92 +288,11 @@ test('Kartensuche mit Terminal-Filter', () => {
   assert.match(sql, /pt\.identifier IN \('T-1', 'T-2'\)/);
 });
 
-test('Settlement-Query aggregiert pro Transaktion vor und joint per LEFT JOIN', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.match(sql, /settle_tx AS \(/);
-  assert.match(sql, /GROUP BY psr\.transaction_id/);
-  // Der Join auf transaction erfolgt gegen das aggregierte CTE, nicht direkt,
-  // und ist ein LEFT JOIN, damit Transaktionen ohne Settlement-Record sichtbar
-  // bleiben (Korrektur 2):
-  assert.match(sql, /LEFT JOIN settle_tx s ON s\.transaction_id = t\.id/);
-  assert.doesNotMatch(sql, /JOIN payfacsettlementrecord psr\s+ON psr\.transaction_id = t\.id/);
-});
-
-test('Settlement-Query gruppiert tagesweise und nach bt.state', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.match(sql, /date\(t\.completedon\)\s+AS tag/);
-  assert.match(sql, /AS settlement_state/);
-  assert.doesNotMatch(sql, /date_format/);
-});
-
-test('Settlement-Query liefert die Diagnose-Spalte', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.match(sql, /AS anzahl_transaktionen/);
-  assert.match(sql, /AS anzahl_settlement_records/);
-});
-
-test('Settlement-Query kennt die echten Settlement-Betraege', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.match(sql, /sum\(bt\.valueamount\)/);
-  assert.match(sql, /sum\(bt\.postingamount - bt\.valueamount\)/);
-  assert.match(sql, /sum\(bt\.postingamount\)/);
-});
-
-test('Settlement-Query filtert bt.state nicht in der WHERE-Klausel (UPCOMING bleibt sichtbar)', () => {
-  // bt.state darf in der Aggregat-Logik (CASE/count_if) vorkommen, aber die
-  // WHERE-Klausel des CTE darf keine Zeilen anhand von bt.state ausschliessen.
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  const cteMatch = sql.match(/settle_tx AS \(([\s\S]*?)\n\)\n/);
-  assert.ok(cteMatch, 'settle_tx-CTE nicht gefunden');
-  const whereMatch = cteMatch[1].match(/WHERE[\s\S]*?(?=\n\s*GROUP BY)/);
-  assert.ok(whereMatch, 'WHERE-Klausel im CTE nicht gefunden');
-  assert.doesNotMatch(whereMatch[0], /bt\.state/);
-});
-
-test('Settlement-Query: settlement_state ist PARTIAL bei gemischtem Zustand, unabhaengig von valuedate', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.doesNotMatch(sql, /max_by\(bt\.state/);
-  assert.match(sql, /'PARTIAL'/);
-  assert.match(sql, /count_if\(bt\.state = 'SETTLED'\)\s*>\s*0/);
-  assert.match(sql, /count_if\(bt\.state <> 'SETTLED'\)\s*>\s*0/);
-});
-
-test('Settlement-Query: Transaktionen ohne Settlement-Record bleiben sichtbar (NO_RECORD)', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.match(sql, /'NO_RECORD'/);
-  assert.match(sql, /COALESCE\(s\.settlement_state, 'NO_RECORD'\)/);
-});
-
-test('Settlement-Query: COALESCE-Ausdruck fuer settlement_state ist in SELECT und GROUP BY identisch', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  const occurrences = sql.match(/COALESCE\(s\.settlement_state, 'NO_RECORD'\)/g);
-  assert.ok(occurrences && occurrences.length >= 2, 'COALESCE-Ausdruck muss in SELECT und GROUP BY vorkommen');
-  const groupBy = sql.match(/GROUP BY[\s\S]*?(?=\nORDER BY)/)[0];
-  assert.match(groupBy, /COALESCE\(s\.settlement_state, 'NO_RECORD'\)/);
-});
-
-test('Settlement-Query: anzahl_settlement_records zeigt 0 statt NULL ohne Records', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.match(sql, /COALESCE\(SUM\(s\.settlement_records\), 0\)\s+AS anzahl_settlement_records/);
-});
-
-test('Settlement-Query: blosser Terminal-Filter ohne byTerminal aggregiert weiterhin (Korrektur 3)', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: ['T-1', 'T-2'], byTerminal: false });
-  assert.doesNotMatch(sql, /AS terminal_identifier/);
-  assert.doesNotMatch(sql, /,\n\s*pt\.identifier\s*\n/);
-  // Der Join muss trotzdem da sein, weil die WHERE-Klausel pt.identifier braucht:
-  assert.match(sql, /LEFT JOIN paymentterminal pt/);
-  assert.match(sql, /pt\.identifier IN \('T-1', 'T-2'\)/);
-});
-
-test('Settlement-Query optional nach Terminal aufgeschluesselt', () => {
-  const off = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.doesNotMatch(off, /AS terminal_identifier/);
-  const on = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: true });
-  assert.match(on, /AS terminal_identifier/);
-  assert.match(on, /paymentterminal pt/);
-  assert.match(on, /,\n\s*pt\.identifier/);
-});
+// Die alten Settlement-Tests dieses Blocks (space-/terminalIds-/byTerminal-
+// basiert) sind mit dem Umbau auf eine account-basierte Query entfallen -
+// spaceIds, terminalIds und byTerminal gibt es in buildSettlementQuery nicht
+// mehr (siehe die neuen Settlement-Tests weiter unten in dieser Datei sowie
+// CLAUDE.md). Sie pruefen bewusst entferntes Verhalten, keine Regression.
 
 // --- State-Migration (v4 -> v5) --------------------------------------------
 // loadState() laeuft beim Init des Scripts genau einmal. Um verschiedene
@@ -443,7 +362,11 @@ test('Beide Schluessel leer: Defaults greifen, keine Exception', () => {
   assert.ok(Array.isArray(state.spaces));
   assert.strictEqual(state.spaces.length, 0);
   assert.strictEqual(state.cardLast4, '');
-  assert.strictEqual(state.settlementByTerminal, false);
+  // settlementByTerminal ist entfallen - Settlement ist seit Task 1/2
+  // account-, nicht space-/terminal-basiert (siehe betriebsmodus.test.js).
+  assert.strictEqual(state.settlementAccountId, '');
+  assert.strictEqual(state.settlementSuperUser, false);
+  assert.strictEqual(state.settlementDetail, true);
 });
 
 test('Migration persistiert das Ergebnis sofort unter dem neuen Schluessel, der alte bleibt unangetastet', () => {
@@ -465,4 +388,65 @@ test('v5-Schluessel vorhanden: keine Migration, alter Schluessel wird ignoriert'
   const state = b.getState();
   assert.strictEqual(state.mode, 'card');
   assert.strictEqual(state.cardLast4, '1111');
+});
+
+test('Settlement-Query ist account-basiert: kein Space- und kein Terminal-Filter', () => {
+  const { buildSettlementQuery } = loadBuilders();
+  const sql = buildSettlementQuery({
+    start: '2026-01-01 00:00:00',
+    end: '2026-02-01 00:00:00',
+  });
+  // t.spaceid als linksseitiger Vergleich gegen einen Literalwert/Liste waere
+  // ein Filter (wie zuvor spaceInClause). pcc.spaceid = t.spaceid /
+  // pt.spaceid = t.spaceid sind dagegen Join-Schluessel (paymentconnector-
+  // configuration/paymentterminal sind nur pro Space eindeutig - dasselbe
+  // Muster wie in buildBrandQuery/buildTerminalQuery/buildExportQuery) und
+  // bleiben bewusst erlaubt. Negative Lookbehind schliesst "pt.spaceid"/
+  // "pcc.spaceid" aus, deren "t.spaceid"-Endung sonst faelschlich träfe.
+  assert.doesNotMatch(sql, /(?<![a-z_])t\.spaceid\s*(=|IN)/i, 'Settlement darf nicht mehr nach Space filtern');
+  assert.doesNotMatch(sql, /pt\.identifier\s*(=|IN)\s*'/i, 'Settlement darf nicht mehr nach Terminal filtern');
+  assert.doesNotMatch(sql, /currentaccountwithdrawal/i, 'Withdrawal-Join gehoert nicht mehr in die Query');
+});
+
+test('Settlement-Query haelt nicht abgerechnete Transaktionen ueber LEFT JOIN fest', () => {
+  const { buildSettlementQuery } = loadBuilders();
+  const sql = buildSettlementQuery({
+    start: '2026-01-01 00:00:00',
+    end: '2026-02-01 00:00:00',
+  });
+  assert.match(sql, /LEFT JOIN settle_tx s ON s\.transaction_id = t\.id/);
+  assert.match(sql, /COALESCE\(s\.settlement_state, 'NO_RECORD'\)\s+AS settlement_state/);
+});
+
+test('Settlement-Query filtert auf completedon und gruppiert ueber valuedate', () => {
+  const { buildSettlementQuery } = loadBuilders();
+  const sql = buildSettlementQuery({
+    start: '2026-01-01 00:00:00',
+    end: '2026-02-01 00:00:00',
+  });
+  assert.match(sql, /t\.completedon >= TIMESTAMP '2026-01-01 00:00:00'/);
+  assert.match(sql, /t\.completedon <  TIMESTAMP '2026-02-01 00:00:00'/);
+  assert.match(sql, /t\.state IN \('FULFILL', 'COMPLETED'\)/);
+  assert.match(sql, /date\(s\.valuedate\)\s+AS settlement_datum/);
+});
+
+test('Settlement-Query liefert eine Zeile pro Transaktion, kein GROUP BY im Hauptteil', () => {
+  const { buildSettlementQuery } = loadBuilders();
+  const sql = buildSettlementQuery({
+    start: '2026-01-01 00:00:00',
+    end: '2026-02-01 00:00:00',
+  });
+  // Das einzige GROUP BY gehoert ins settle_tx-CTE (Vor-Aggregation pro Transaktion).
+  assert.strictEqual((sql.match(/GROUP BY/g) || []).length, 1);
+  assert.match(sql, /GROUP BY psr\.transaction_id/);
+  assert.match(sql, /t\.id\s+AS transaction_id/);
+});
+
+test('Settlement-Query nimmt den Connector-Namen aus paymentconnector', () => {
+  const { buildSettlementQuery } = loadBuilders();
+  const sql = buildSettlementQuery({
+    start: '2026-01-01 00:00:00',
+    end: '2026-02-01 00:00:00',
+  });
+  assert.match(sql, /COALESCE\(pc\.name\['en-US'\], pcc\.name, 'UNKNOWN'\)\s+AS connector/);
 });

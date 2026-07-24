@@ -163,7 +163,7 @@ export function pruefeZugangsdaten(werte) {
 // Die App und der Proxy tragen dieselbe Version; pro Release gebumpt (auch der
 // <h1>-Badge in der HTML). Der Updater laedt ausschliesslich vom fest
 // verdrahteten GitHub-Repo ueber HTTPS - Owner/Repo kommen NIE aus Eingaben.
-export const APP_VERSION = '5.7.0';
+export const APP_VERSION = '5.8.0';
 export const UPDATE_REPO = { owner: 'saschakruesi', repo: 'wallee-query-builder' };
 export const UPDATE_DATEIEN = ['wallee_query_builder.html', 'wallee-proxy.mjs'];
 
@@ -320,14 +320,25 @@ export function findeRoute(methode, pfad) {
   if (m === 'POST' && p === '/credentials') return { name: 'credentials-speichern' };
   if (m === 'POST' && p === '/submit') return { name: 'submit' };
 
+  // Query aus dem vollen Pfad lesen, nicht aus p (das ist schon abgeschnitten) -
+  // genau wie bei der Route "terminals" weiter unten.
+  const query = String(pfad || '').split('?')[1] || '';
+  const account = (new URLSearchParams(query).get('account') || '').trim();
+
   let treffer = /^\/status\/(.+)$/.exec(p);
-  if (m === 'GET' && treffer) return { name: 'status', token: decodeURIComponent(treffer[1]) };
+  if (m === 'GET' && treffer) {
+    return { name: 'status', token: decodeURIComponent(treffer[1]), account };
+  }
 
   treffer = /^\/result\/(.+)$/.exec(p);
-  if (m === 'GET' && treffer) return { name: 'result', token: decodeURIComponent(treffer[1]) };
+  if (m === 'GET' && treffer) {
+    return { name: 'result', token: decodeURIComponent(treffer[1]), account };
+  }
 
   treffer = /^\/query\/(.+)$/.exec(p);
-  if (m === 'DELETE' && treffer) return { name: 'cancel', token: decodeURIComponent(treffer[1]) };
+  if (m === 'DELETE' && treffer) {
+    return { name: 'cancel', token: decodeURIComponent(treffer[1]), account };
+  }
 
   if (m === 'GET' && p === '/terminals') {
     const query = String(pfad || '').split('?')[1] || '';
@@ -341,6 +352,26 @@ export function findeRoute(methode, pfad) {
 }
 
 // --- Aufrufe an die wallee-API --------------------------------------------
+
+// Nur Ziffern: die Account-ID geht in einen HTTP-Header, und alles andere waere
+// entweder ein Tippfehler oder ein Einschleusungsversuch.
+export function accountValide(wert) {
+  return /^\d+$/.test(String(wert == null ? '' : wert).trim());
+}
+
+// Welcher Kontext-Header geht an wallee? Analytics-Endpunkte verlangen
+// "Account", der Terminal-Endpunkt stattdessen "Space" und kennt Account nicht.
+// optionen.account erlaubt es, pro Abfrage einen anderen Account anzusprechen -
+// der Settlement-Report ist account-basiert, und ein Super-User kann damit
+// fremde Accounts auswerten, ohne die Zugangsdaten umzustellen.
+export function apiKopfZusatz(zugangsdaten, optionen = {}) {
+  const space = String(optionen.space == null ? '' : optionen.space).trim();
+  if (space) return { Space: space };
+  const override = String(optionen.account == null ? '' : optionen.account).trim();
+  if (override) return { Account: override };
+  const konfiguriert = String((zugangsdaten && zugangsdaten.accountId) || '').trim();
+  return konfiguriert ? { Account: konfiguriert } : {};
+}
 
 async function rufeApi(methode, pfad, koerper, optionen = {}) {
   if (!zugangsdaten) {
@@ -364,14 +395,11 @@ async function rufeApi(methode, pfad, koerper, optionen = {}) {
   // Analytics-Endpunkte verlangen die Account-ID als Header "Account" (im SDK:
   // AnalyticsQueriesService, headerParameters['Account']; ohne ihn antwortet
   // wallee mit 400 account_invalid); der Terminal-Endpunkt verlangt stattdessen
-  // "Space: <id>" und kennt Account nicht. Ist optionen.space gesetzt, wird
-  // Space gesendet und Account weggelassen. Keiner der Header ist Teil der
-  // JWT-Signatur, deshalb genuegt es, ihn zusaetzlich zu setzen.
-  if (optionen.space !== undefined && optionen.space !== null && optionen.space !== '') {
-    kopf.Space = String(optionen.space);
-  } else if (zugangsdaten.accountId) {
-    kopf.Account = String(zugangsdaten.accountId);
-  }
+  // "Space: <id>" und kennt Account nicht. optionen.account erlaubt zusaetzlich
+  // einen Account pro Abfrage zu ueberschreiben (siehe apiKopfZusatz). Keiner
+  // der Header ist Teil der JWT-Signatur, deshalb genuegt es, ihn zusaetzlich
+  // zu setzen.
+  Object.assign(kopf, apiKopfZusatz(zugangsdaten, optionen));
   if (koerper !== undefined) kopf['Content-Type'] = 'application/json';
 
   const antwort = await fetch(API_BASE + API_PATH + pfad, {
@@ -587,10 +615,20 @@ export async function behandleAnfrage(req, res) {
 
       case 'submit': {
         const roh = await leseKoerper(req);
-        let sql;
-        try { sql = JSON.parse(roh).sql; } catch (e) { sql = undefined; }
+        let sql; let account;
+        try {
+          const j = JSON.parse(roh);
+          sql = j.sql;
+          account = j.account;
+        } catch (e) { sql = undefined; }
         if (!sql || !String(sql).trim()) {
           sendeJson(res, 400, { ok: false, fehler: 'Feld "sql" fehlt.' }, origin);
+          return;
+        }
+        // Leer heisst "konfigurierten Account nehmen"; gesetzt muss er numerisch sein.
+        if (account !== undefined && account !== null && String(account).trim() !== ''
+            && !accountValide(account)) {
+          sendeJson(res, 400, { ok: false, fehler: 'Ungültige Account-ID.' }, origin);
           return;
         }
         // Der Request-Body traegt das Feld "sql" (analytics_query_execution_request
@@ -605,7 +643,8 @@ export async function behandleAnfrage(req, res) {
         // inkl. Query).
         const externalId = crypto.randomUUID();
         const submitPfad = `${API_PFADE.submit}?queryExternalId=${encodeURIComponent(externalId)}`;
-        const antwort = await rufeApi('POST', submitPfad, { sql: String(sql) });
+        const antwort = await rufeApi('POST', submitPfad, { sql: String(sql) },
+          { account: account === undefined || account === null ? '' : String(account).trim() });
         reicheWalleeDurch(res, antwort, origin, 'submit');
         return;
       }
@@ -614,7 +653,12 @@ export async function behandleAnfrage(req, res) {
         // Long-Polling laut Doku: 200 = Endzustand erreicht (Body traegt
         // status: SUCCESS/FAILED/CANCELLED), 202 = laeuft noch, mit Retry-After.
         // Die App entscheidet ueber den HTTP-Code, deshalb bleibt er erhalten.
-        const antwort = await rufeApi('GET', API_PFADE.status(route.token));
+        if (route.account && !accountValide(route.account)) {
+          sendeJson(res, 400, { ok: false, fehler: 'Ungültige Account-ID.' }, origin);
+          return;
+        }
+        const antwort = await rufeApi('GET', API_PFADE.status(route.token), undefined,
+          { account: route.account });
         if (antwort.status === 202) {
           // Retry-After steht im Header; der Browser koennte ihn wegen CORS
           // nicht lesen, also ins JSON-Body legen.
@@ -634,8 +678,12 @@ export async function behandleAnfrage(req, res) {
         // Die URL kommt als text/plain, deshalb muss Accept text/plain zulassen
         // (sonst 406). Jede URL-Erzeugung zaehlt bei wallee als Download, daher
         // ruft die App das nur bei Status SUCCESS auf.
+        if (route.account && !accountValide(route.account)) {
+          sendeJson(res, 400, { ok: false, fehler: 'Ungültige Account-ID.' }, origin);
+          return;
+        }
         const antwort = await rufeApi('GET', API_PFADE.result(route.token), undefined,
-          { accept: 'text/plain, application/json' });
+          { accept: 'text/plain, application/json', account: route.account });
 
         // 204 = Query lief durch, lieferte aber keine Zeilen. Leeres CSV zurueck.
         if (antwort.status === 204) {
@@ -675,8 +723,16 @@ export async function behandleAnfrage(req, res) {
       }
 
       case 'cancel': {
-        // Das SDK bricht per DELETE ab, nicht per POST.
-        const antwort = await rufeApi('DELETE', API_PFADE.cancel(route.token));
+        // Das SDK bricht per DELETE ab, nicht per POST. Account wie bei
+        // status/result validieren und durchreichen - sonst bricht ein
+        // Abbruch im konfigurierten statt im tatsaechlich verwendeten Account
+        // ab (relevant bei aktivem Super-User-Flip).
+        if (route.account && !accountValide(route.account)) {
+          sendeJson(res, 400, { ok: false, fehler: 'Ungültige Account-ID.' }, origin);
+          return;
+        }
+        const antwort = await rufeApi('DELETE', API_PFADE.cancel(route.token), undefined,
+          { account: route.account });
         reicheWalleeDurch(res, antwort, origin, 'cancel');
         return;
       }

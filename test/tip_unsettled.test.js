@@ -152,21 +152,13 @@ test('Terminal-Query: COUNT(*) und SUM(t.completedamount) unveraendert', () => {
 });
 
 // --- Settlement: tip_total ---------------------------------------------------
-
-test('Settlement-Query: tip_total vorhanden, Vor-Aggregation von settle_tx unversehrt', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  assert.match(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)\s+AS tip_total/);
-  assert.match(sql, /settle_tx AS \(/);
-  assert.match(sql, /GROUP BY psr\.transaction_id/);
-  assert.match(sql, /LEFT JOIN settle_tx s ON s\.transaction_id = t\.id/);
-  assertTipPreAggregated(sql);
-});
-
-test('Settlement-Query: genau ein Tip-CTE', () => {
-  const sql = B.buildSettlementQuery({ ...RANGE, terminalIds: [], byTerminal: false });
-  const tipCteCount = (sql.match(/tip AS \(/g) || []).length;
-  assert.strictEqual(tipCteCount, 1, 'genau ein tip-CTE erwartet');
-});
+//
+// Die beiden frueheren Tests dieses Abschnitts ("tip_total vorhanden" /
+// "genau ein Tip-CTE") pruefen bewusst entferntes Verhalten: die
+// account-basierte, transaktionsweise buildSettlementQuery (siehe
+// wallee_query_builder.html, CLAUDE.md) aggregiert nicht mehr und fuehrt
+// deshalb kein tip-CTE/tip_total mehr. Trinkgeld bleibt ueber die
+// Report-Aufbereitung des CSV-Exports abdeckbar, nicht ueber diese Query.
 
 // --- Kartensuche: kein Trinkgeld ---------------------------------------------
 
@@ -233,7 +225,11 @@ test('settleExistsCte: DISTINCT/GROUP BY auf transaction_id, eingegrenzt ueber t
 
 // --- 0 Spaces: Guard-Klausel bleibt in allen betroffenen Modi ---------------
 
-test('0 Spaces: -1-Guard-Klausel in brand, terminal, export, settlement, kein Crash', () => {
+test('0 Spaces: -1-Guard-Klausel in brand, terminal, export, kein Crash', () => {
+  // Settlement gehoert seit dem Umbau auf eine account-basierte Query nicht
+  // mehr zu den betroffenen Modi: buildSettlementQuery kennt gar kein
+  // spaceIds-Argument mehr, es gibt also keinen Space-Filter, der eine
+  // -1-Guard-Klausel bräuchte (siehe CLAUDE.md).
   const zero = { ...RANGE, spaceIds: [] };
   assert.doesNotThrow(() => {
     const brandSql = B.buildBrandQuery(zero);
@@ -244,9 +240,6 @@ test('0 Spaces: -1-Guard-Klausel in brand, terminal, export, settlement, kein Cr
 
     const exportSql = B.buildExportQuery({ ...zero, terminalIds: [], cols: ALL_ON() });
     assert.match(exportSql, /t\.spaceid = -1/);
-
-    const settlementSql = B.buildSettlementQuery({ ...zero, terminalIds: [], byTerminal: false });
-    assert.match(settlementSql, /t\.spaceid = -1/);
   });
 });
 

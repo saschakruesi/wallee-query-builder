@@ -197,3 +197,30 @@ test('Einstellungen sind unabhaengig vom aktiven Modus erreichbar', () => {
     assert.ok(sichtbar(el('settingsOverlay')), `Dialog nicht erreichbar im Modus ${modus}`);
   });
 });
+
+test('Settlement-State: neue Felder mit Defaults, kein STORAGE_KEY-Bump noetig', () => {
+  const { getState, STORAGE_KEY } = loadBuilders();
+  const st = getState();
+  assert.strictEqual(st.settlementAccountId, '');
+  assert.strictEqual(st.settlementSuperUser, false);
+  assert.strictEqual(st.settlementDetail, true);
+  assert.strictEqual(STORAGE_KEY, 'wallee_query_builder_v6', 'Die Aenderung ist additiv - kein Bump');
+});
+
+test('Settlement-State: alter State ohne die neuen Felder bekommt die Defaults', () => {
+  const alt = JSON.stringify({
+    mode: 'settlement',
+    settlementByTerminal: true,
+    spaces: [{ id: '123', label: '', selected: true }],
+  });
+  const { getState } = loadBuilders({
+    seedLocalStorage: { wallee_query_builder_v6: alt },
+  });
+  const st = getState();
+  assert.strictEqual(st.mode, 'settlement');
+  assert.strictEqual(st.settlementAccountId, '');
+  assert.strictEqual(st.settlementSuperUser, false);
+  assert.strictEqual(st.settlementDetail, true);
+  assert.ok(!('settlementByTerminal' in st),
+    'Das veraltete Feld muss beim Laden aus dem State verschwinden');
+});

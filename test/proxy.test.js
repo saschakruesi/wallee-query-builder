@@ -97,6 +97,63 @@ test('Routing: /terminals wird erkannt und liest space aus dem Query', () => {
   assert.strictEqual(P.findeRoute('GET', '/terminals').space, '', 'ohne space leerer String');
 });
 
+// --- Account pro Abfrage ----------------------------------------------------
+
+test('apiKopfZusatz: Space schlaegt Account (Terminal-Endpunkt kennt Account nicht)', () => {
+  assert.deepStrictEqual(
+    P.apiKopfZusatz({ accountId: '52238' }, { space: '50161', account: '99999' }),
+    { Space: '50161' },
+  );
+});
+
+test('apiKopfZusatz: optionen.account ueberschreibt den konfigurierten Account', () => {
+  assert.deepStrictEqual(
+    P.apiKopfZusatz({ accountId: '52238' }, { account: '99999' }),
+    { Account: '99999' },
+  );
+});
+
+test('apiKopfZusatz: ohne Override gilt der Account aus den Zugangsdaten', () => {
+  assert.deepStrictEqual(P.apiKopfZusatz({ accountId: '52238' }, {}), { Account: '52238' });
+});
+
+test('apiKopfZusatz: ohne alles bleibt der Header weg', () => {
+  assert.deepStrictEqual(P.apiKopfZusatz({ accountId: '' }, {}), {});
+});
+
+test('accountValide nimmt nur Ziffern an', () => {
+  assert.strictEqual(P.accountValide('52238'), true);
+  assert.strictEqual(P.accountValide(''), false);
+  assert.strictEqual(P.accountValide('52238; DROP'), false);
+  assert.strictEqual(P.accountValide('abc'), false);
+});
+
+test('findeRoute liest den Account aus der Query von status und result', () => {
+  assert.deepStrictEqual(
+    P.findeRoute('GET', '/status/abc?account=52238'),
+    { name: 'status', token: 'abc', account: '52238' },
+  );
+  assert.deepStrictEqual(
+    P.findeRoute('GET', '/result/abc'),
+    { name: 'result', token: 'abc', account: '' },
+  );
+});
+
+// Befund 4 (Schluss-Review): DELETE /query/:token ging bisher ohne Account
+// raus - der Proxy nahm dann den konfigurierten, was bei aktivem
+// Super-User-Flip im falschen Account-Kontext abbricht. findeRoute muss den
+// Account fuer "cancel" genauso lesen wie schon fuer status/result.
+test('findeRoute liest den Account auch aus der Query von cancel (Befund 4)', () => {
+  assert.deepStrictEqual(
+    P.findeRoute('DELETE', '/query/abc?account=52238'),
+    { name: 'cancel', token: 'abc', account: '52238' },
+  );
+  assert.deepStrictEqual(
+    P.findeRoute('DELETE', '/query/abc'),
+    { name: 'cancel', token: 'abc', account: '' },
+  );
+});
+
 test('terminalPfad: baut Pfad mit limit/order und optionalem after', () => {
   assert.strictEqual(P.terminalPfad(), '/payment/terminals?limit=100&order=ASC');
   assert.strictEqual(P.terminalPfad({ limit: 50 }), '/payment/terminals?limit=50&order=ASC');
@@ -554,6 +611,148 @@ test('Proxy /terminals: fehlender space ergibt 400', async () => {
   const res = await warteAufAntwort(paar.res);
   assert.strictEqual(res._status, 400);
   assert.match(JSON.parse(res._body).fehler, /space/i);
+});
+
+// --- Account pro Abfrage: Handler-Verdrahtung -----------------------------
+// Die reinen Funktionen (apiKopfZusatz, accountValide, findeRoute) sind weiter
+// oben schon getestet - hier zusaetzlich end-to-end, dass die 400-Ablehnung
+// tatsaechlich in den drei Handlern (submit/status/result) verdrahtet ist.
+// Nach dem Vorbild von "Proxy /terminals: fehlender space ergibt 400" oben:
+// behandleAnfrage direkt aufrufen, Statuscode und JSON-Koerper pruefen.
+
+test('Proxy /submit: nicht-numerischer Account ergibt 400', async () => {
+  const paar = fakeReqRes({
+    method: 'POST', url: '/submit', origin: 'null',
+    body: JSON.stringify({ sql: 'SELECT 1', account: 'abc' }),
+  });
+  await P.behandleAnfrage(paar.req, paar.res);
+  const res = await warteAufAntwort(paar.res);
+  assert.strictEqual(res._status, 400);
+  assert.strictEqual(JSON.parse(res._body).fehler, 'Ungültige Account-ID.');
+});
+
+test('Proxy /status: nicht-numerischer Account in der Query ergibt 400', async () => {
+  const paar = fakeReqRes({ method: 'GET', url: '/status/tok-1?account=xyz', origin: 'null' });
+  await P.behandleAnfrage(paar.req, paar.res);
+  const res = await warteAufAntwort(paar.res);
+  assert.strictEqual(res._status, 400);
+  assert.strictEqual(JSON.parse(res._body).fehler, 'Ungültige Account-ID.');
+});
+
+test('Proxy /result: nicht-numerischer Account in der Query ergibt 400', async () => {
+  const paar = fakeReqRes({ method: 'GET', url: '/result/tok-1?account=xyz', origin: 'null' });
+  await P.behandleAnfrage(paar.req, paar.res);
+  const res = await warteAufAntwort(paar.res);
+  assert.strictEqual(res._status, 400);
+  assert.strictEqual(JSON.parse(res._body).fehler, 'Ungültige Account-ID.');
+});
+
+// Befund 4 (Schluss-Review): dasselbe muss jetzt auch fuer DELETE /query/:token
+// (Route "cancel") gelten - vorher lief der Account dort gar nicht mit.
+test('Proxy DELETE /query: nicht-numerischer Account in der Query ergibt 400 (Befund 4)', async () => {
+  const paar = fakeReqRes({ method: 'DELETE', url: '/query/tok-1?account=xyz', origin: 'null' });
+  await P.behandleAnfrage(paar.req, paar.res);
+  const res = await warteAufAntwort(paar.res);
+  assert.strictEqual(res._status, 400);
+  assert.strictEqual(JSON.parse(res._body).fehler, 'Ungültige Account-ID.');
+});
+
+// Gegenfall, mindestens so wichtig wie die drei 400-Tests oben: ein fehlender
+// Account darf NICHT abgelehnt werden, sondern bedeutet "konfigurierten
+// Account nehmen". Die Handler rufen danach tatsaechlich wallee - also fetch
+// stubben (Muster wie beim bestehenden Test "Proxy /submit: ausgehende
+// Anfrage an wallee stimmt" oben) und zusaetzlich pruefen, dass der Aufruf
+// ueberhaupt bis zu diesem Punkt durchkommt (gesehen ist gesetzt), statt
+// vorher mit 400 abgewiesen zu werden.
+
+test('Proxy /submit: fehlendes Feld account ist gueltig (kein 400)', async () => {
+  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-proxy-')), 'config.json');
+  await P.speichereZugangsdaten(
+    { userId: '12345', secret: 'c2VjcmV0LXdlcnQtZnVlci1kZW4tdGVzdC1sYW5nLWdlbnVn', accountId: '1' }, cfg);
+  P.ladeZugangsdaten(cfg);
+
+  const original = globalThis.fetch;
+  let gesehen = null;
+  globalThis.fetch = async (url, opts) => {
+    gesehen = { url, opts };
+    return {
+      status: 200,
+      text: async () => '{"portalQueryToken":"tok-1","status":"PROCESSING"}',
+      headers: new Map(),
+    };
+  };
+
+  let res;
+  try {
+    const paar = fakeReqRes({
+      method: 'POST', url: '/submit', origin: 'null',
+      body: JSON.stringify({ sql: 'SELECT 1' }),
+    });
+    await P.behandleAnfrage(paar.req, paar.res);
+    res = await warteAufAntwort(paar.res);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  assert.ok(gesehen, 'ohne Account-Feld muss der Aufruf bis zu wallee durchlaufen statt vorher mit 400 zu enden');
+  assert.strictEqual(res._status, 200, 'kein 400 - ein fehlendes Feld account bleibt gueltig');
+});
+
+test('Proxy /status: fehlender Account in der Query ist gueltig (kein 400)', async () => {
+  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-proxy-')), 'config.json');
+  await P.speichereZugangsdaten(
+    { userId: '12345', secret: 'c2VjcmV0LXdlcnQtZnVlci1kZW4tdGVzdC1sYW5nLWdlbnVn', accountId: '1' }, cfg);
+  P.ladeZugangsdaten(cfg);
+
+  const original = globalThis.fetch;
+  let gesehen = null;
+  globalThis.fetch = async (url, opts) => {
+    gesehen = { url, opts };
+    return { status: 200, text: async () => '{"status":"SUCCESS"}', headers: new Map() };
+  };
+
+  let res;
+  try {
+    const paar = fakeReqRes({ method: 'GET', url: '/status/tok-1', origin: 'null' });
+    await P.behandleAnfrage(paar.req, paar.res);
+    res = await warteAufAntwort(paar.res);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  assert.ok(gesehen, 'ohne Account-Query muss der Aufruf bis zu wallee durchlaufen statt vorher mit 400 zu enden');
+  assert.strictEqual(res._status, 200, 'kein 400 - eine fehlende Account-Query bleibt gueltig');
+});
+
+// Befund 4 (Schluss-Review): der Account aus der Query muss beim Abbrechen
+// tatsaechlich im Account-Header an wallee ankommen - nicht nur nicht mit 400
+// abgelehnt werden. Nach dem Vorbild der Header-Pruefung bei /submit.
+test('Proxy DELETE /query: Account aus der Query landet im Account-Header an wallee (Befund 4)', async () => {
+  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-proxy-')), 'config.json');
+  await P.speichereZugangsdaten(
+    { userId: '12345', secret: 'c2VjcmV0LXdlcnQtZnVlci1kZW4tdGVzdC1sYW5nLWdlbnVn', accountId: '1' }, cfg);
+  P.ladeZugangsdaten(cfg);
+
+  const original = globalThis.fetch;
+  let gesehen = null;
+  globalThis.fetch = async (url, opts) => {
+    gesehen = { url, opts };
+    return { status: 200, text: async () => '{"ok":true}', headers: new Map() };
+  };
+
+  let res;
+  try {
+    const paar = fakeReqRes({ method: 'DELETE', url: '/query/tok-1?account=52238', origin: 'null' });
+    await P.behandleAnfrage(paar.req, paar.res);
+    res = await warteAufAntwort(paar.res);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  assert.ok(gesehen, 'der Aufruf muss bis zu wallee durchlaufen');
+  assert.strictEqual(gesehen.opts.headers.Account, '52238',
+    'der Account aus der Query muss den konfigurierten (1) ueberschreiben');
+  assert.strictEqual(res._status, 200);
 });
 
 // --- Selbst-Herkunft der Setup-Seite --------------------------------------

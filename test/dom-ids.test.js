@@ -81,3 +81,13 @@ test('Terminal-Filter wurde entfernt - Auswahl laeuft ueber den Space-Klick oben
   assert.doesNotMatch(markup, /id="terminalVisibleCount"/, 'Sichtbar-Zaehler haette entfernt werden muessen');
   assert.match(markup, /id="terminalList"/, 'Terminal-Liste bleibt');
 });
+
+test('Settlement-Modus: neue IDs vorhanden, settlementByTerminal entfernt', () => {
+  const vorhanden = vorhandeneIds();
+  ['spaceSection', 'settlementAccountInput', 'settlementSuperUserToggle',
+    'settlementDetailToggle', 'settlementReportSection', 'settlementReportStatus',
+    'settlementReportOutput', 'settlementCsvBtn', 'settlementXlsxBtn', 'settlementPdfBtn',
+  ].forEach(id => assert.ok(vorhanden.has(id), `ID ${id} fehlt im Markup`));
+  assert.ok(!vorhanden.has('settlementByTerminal'),
+    'settlementByTerminal ist ersatzlos entfallen');
+});
