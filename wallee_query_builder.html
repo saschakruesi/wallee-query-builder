@@ -2702,6 +2702,131 @@ ORDER BY settlement_datum, transaction_id;`;
     return { rows, headers, error: null };
   }
 
+  // --- Settlement-Report: Modell -------------------------------------------
+  // Gruppiert wird nach Valutadatum (settlement_datum), gefiltert wurde in der
+  // Query nach Transaktionsdatum. Genau daraus entsteht der Ueberhang am Ende
+  // des Zeitraums: Transaktionen der letzten Tage werden erst danach
+  // abgerechnet und erscheinen als "Ausstehend".
+  const SETTLEMENT_STATUS = { settled: 'Settled', ausstehend: 'Ausstehend', offen: 'Offen' };
+
+  // Eigene Namen statt der generischen "leereSumme"/"addiere": weiter unten im
+  // selben Script-Block definiert das Terminal-Report-Modell Funktionen mit
+  // identischem Namen, aber anderer Signatur (leereKennzahlen/addiere(ziel,
+  // row)). Function-Deklarationen im selben Scope ueberschreiben sich
+  // gegenseitig (die zuletzt deklarierte gewinnt fuer den gesamten Scope,
+  // unabhaengig von der Zeilenposition) - ohne die eigenen Namen wuerde der
+  // Settlement-Code still die falsche addiere()-Implementierung aufrufen und
+  // alle Summen blieben bei 0 (an Ort und Stelle mit Tests nachgewiesen).
+  function leereSettlementSumme() {
+    return { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 };
+  }
+  function addiereSettlement(ziel, brutto, fees, netto) {
+    ziel.anzahlTx += 1;
+    ziel.brutto += brutto;
+    ziel.fees += fees;
+    ziel.netto += netto;
+  }
+
+  function buildSettlementReportModel(rows, optionen) {
+    const zeilen = Array.isArray(rows) ? rows : [];
+    // end ist die exklusive Obergrenze des Zeitraums. Ein Valutadatum ab
+    // diesem Tag liegt ausserhalb des Berichts - die Abrechnung ist erfolgt,
+    // faellt aber in die naechste Periode.
+    const endeTag = String((optionen && optionen.end) || '').slice(0, 10);
+
+    const gruppen = new Map();   // datum -> Gruppe
+    const offen = { nr: 0, datum: '', status: SETTLEMENT_STATUS.offen, ...leereSettlementSumme(), detail: [] };
+    const connectorMap = new Map();
+    const gesamt = leereSettlementSumme();
+    let waehrung = '';
+
+    zeilen.forEach(r => {
+      if (!waehrung && r.waehrung) waehrung = r.waehrung;
+
+      // Ohne Settlement-Record gibt es keine Banktransaktion und damit weder
+      // Fees noch Netto. Als Brutto zaehlt dann der Transaktionsbetrag.
+      const hatRecord = r.settlementState !== 'NO_RECORD' && !!r.settlementDatum;
+      const brutto = hatRecord ? r.brutto : r.bruttoTx;
+      const fees   = hatRecord ? r.fees : 0;
+      const netto  = hatRecord ? r.netto : 0;
+
+      addiereSettlement(gesamt, brutto, fees, netto);
+
+      const c = connectorMap.get(r.connector) || { connector: r.connector, ...leereSettlementSumme() };
+      addiereSettlement(c, brutto, fees, netto);
+      connectorMap.set(r.connector, c);
+
+      if (!hatRecord) {
+        addiereSettlement(offen, brutto, fees, netto);
+        offen.detail.push({ nr: 0, transactionId: r.transactionId, connector: r.connector,
+          brutto, fees, netto });
+        return;
+      }
+
+      let g = gruppen.get(r.settlementDatum);
+      if (!g) {
+        g = { nr: 0, datum: r.settlementDatum, status: SETTLEMENT_STATUS.settled,
+          ...leereSettlementSumme(), detail: [] };
+        gruppen.set(r.settlementDatum, g);
+      }
+      addiereSettlement(g, brutto, fees, netto);
+      g.detail.push({ nr: 0, transactionId: r.transactionId, connector: r.connector,
+        brutto, fees, netto });
+    });
+
+    const settlements = [...gruppen.values()].sort((a, b) => a.datum < b.datum ? -1 : a.datum > b.datum ? 1 : 0);
+    settlements.forEach(g => {
+      if (endeTag && g.datum >= endeTag) g.status = SETTLEMENT_STATUS.ausstehend;
+    });
+    if (offen.anzahlTx > 0) settlements.push(offen);
+
+    settlements.forEach((g, i) => {
+      g.nr = i + 1;
+      g.detail.sort((a, b) => String(a.transactionId).localeCompare(String(b.transactionId), 'en', { numeric: true }));
+      g.detail.forEach((d, j) => { d.nr = j + 1; });
+    });
+
+    const mitDatum = settlements.filter(g => g.status !== SETTLEMENT_STATUS.offen);
+    const bezahlt = mitDatum.reduce((a, g) => {
+      a.anzahlTx += g.anzahlTx; a.brutto += g.brutto; a.fees += g.fees; a.netto += g.netto;
+      return a;
+    }, leereSettlementSumme());
+
+    const ausstehendGruppen = settlements.filter(g => g.status === SETTLEMENT_STATUS.ausstehend);
+    const ausstehend = ausstehendGruppen.reduce((a, g) => {
+      a.anzahlSettlements += 1; a.anzahlTx += g.anzahlTx; a.brutto += g.brutto; a.netto += g.netto;
+      return a;
+    }, { anzahlSettlements: 0, anzahlTx: 0, brutto: 0, netto: 0 });
+
+    const connectors = [...connectorMap.values()].sort((a, b) => b.brutto - a.brutto
+      || String(a.connector).localeCompare(String(b.connector), 'de'));
+    const connectorTotal = connectors.reduce((a, c) => {
+      a.anzahlTx += c.anzahlTx; a.brutto += c.brutto; a.fees += c.fees; a.netto += c.netto;
+      return a;
+    }, leereSettlementSumme());
+
+    return {
+      kpi: {
+        anzahlSettlements: mitDatum.length,
+        anzahlTx: bezahlt.anzahlTx,
+        brutto: bezahlt.brutto,
+        fees: bezahlt.fees,
+        netto: bezahlt.netto,
+        // Ganzzahlig gerundet: die Betraege sind 1e-8-Einheiten, ein Bruchteil
+        // davon waere sinnlos und wuerde die Float-Freiheit wieder aufgeben.
+        avgNetto: mitDatum.length ? Math.round(bezahlt.netto / mitDatum.length) : 0,
+        offenAnzahlTx: offen.anzahlTx,
+        offenBrutto: offen.brutto,
+        waehrung,
+      },
+      connectors,
+      connectorTotal,
+      settlements,
+      gesamt,
+      ausstehend,
+    };
+  }
+
   // Reiner CSV->Zeilen-Parser fuer den logikfreien XLSX/CSV-Download. Anders als
   // parseReportCsv erzwingt er keine Report-Spalten - er gibt die Tabelle 1:1
   // zurueck, wie sie aus wallee kommt.

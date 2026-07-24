@@ -131,3 +131,124 @@ test('parseSettlementCsv ist unabhaengig von der Spaltenreihenfolge im Kopf', ()
     records: 2,
   });
 });
+
+// --- Settlement-Report: Modell ---------------------------------------------
+
+const ENDE = { end: '2026-02-01 00:00:00' };
+
+// Rest-Parameter, nicht ein einzelnes Array: modellAus() wird an jeder
+// Aufrufstelle mit mehreren einzelnen CSV-Zeilen-Strings aufgerufen
+// (modellAus('zeile1', 'zeile2', ...)), nicht mit einem Array. Ein einzelner
+// Parameter ohne "..." wuerde nur die erste Zeile binden und deren einzelne
+// Zeichen ueber csv(...zeilen) als Zeilen spreaden - ein stiller Bug, der
+// beim Schreiben dieser Tests aufgefallen ist (Detail-/Connector-Tests
+// scheiterten mit dutzenden Ein-Zeichen-"Zeilen" statt der echten Eingabe).
+function modellAus(...zeilen) {
+  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
+  const res = parseSettlementCsv(csv(...zeilen));
+  assert.strictEqual(res.error, null);
+  return buildSettlementReportModel(res.rows, ENDE);
+}
+
+test('Modell gruppiert nach Settlement-Datum und summiert je Gruppe', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,TWINT,Physical Terminal,,100.00000000,100.00000000,2.00000000,98.00000000,1',
+    '2026-01-05,SETTLED,2,,50161,CHF,Visa,Ecommerce,,50.00000000,50.00000000,1.00000000,49.00000000,1',
+    '2026-01-07,SETTLED,3,,50161,CHF,Visa,Ecommerce,,20.00000000,20.00000000,0.50000000,19.50000000,1',
+  );
+  assert.strictEqual(m.settlements.length, 2);
+  assert.deepStrictEqual(
+    plain(m.settlements.map(s => [s.nr, s.datum, s.status, s.anzahlTx])),
+    [[1, '2026-01-05', 'Settled', 2], [2, '2026-01-07', 'Settled', 1]],
+  );
+  assert.strictEqual(m.settlements[0].brutto, 15000000000);
+  assert.strictEqual(m.settlements[0].fees, 300000000);
+  assert.strictEqual(m.settlements[0].netto, 14700000000);
+});
+
+test('Brutto minus Fees ergibt in jeder Zeile und in der Summe exakt Netto', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,TWINT,Physical Terminal,,111.11000000,111.11000000,2.13000000,108.98000000,1',
+    '2026-01-06,SETTLED,2,,50161,CHF,Visa,Ecommerce,,7.77000000,7.77000000,0.19000000,7.58000000,1',
+  );
+  m.settlements.forEach(s => assert.strictEqual(s.brutto - s.fees, s.netto));
+  assert.strictEqual(m.gesamt.brutto - m.gesamt.fees, m.gesamt.netto);
+  assert.strictEqual(m.kpi.brutto - m.kpi.fees, m.kpi.netto);
+});
+
+test('Settlement nach dem Berichtsende gilt als Ausstehend und wird separat ausgewiesen', () => {
+  const m = modellAus(
+    '2026-01-31,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-02-03,SETTLED,2,,50161,CHF,Visa,Ecommerce,,20.00000000,20.00000000,0.20000000,19.80000000,1',
+  );
+  assert.deepStrictEqual(plain(m.settlements.map(s => s.status)), ['Settled', 'Ausstehend']);
+  assert.strictEqual(m.ausstehend.anzahlSettlements, 1);
+  assert.strictEqual(m.ausstehend.anzahlTx, 1);
+  assert.strictEqual(m.ausstehend.brutto, 2000000000);
+  assert.strictEqual(m.ausstehend.netto, 1980000000);
+});
+
+test('NO_RECORD bildet die Zeile "Offen" am Ende, ohne Datum und ohne Netto', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    ',NO_RECORD,2,,50161,CHF,Visa,Ecommerce,,88.50000000,,,,0',
+    ',NO_RECORD,3,,50161,CHF,TWINT,Physical Terminal,,11.50000000,,,,0',
+  );
+  const offen = m.settlements[m.settlements.length - 1];
+  assert.strictEqual(offen.status, 'Offen');
+  assert.strictEqual(offen.datum, '');
+  assert.strictEqual(offen.anzahlTx, 2);
+  assert.strictEqual(offen.brutto, 10000000000, 'Offen nutzt brutto_gross der Transaktion');
+  assert.strictEqual(offen.netto, 0);
+  // Offen zaehlt nicht als Settlement und nicht ins ausbezahlte Netto.
+  assert.strictEqual(m.kpi.anzahlSettlements, 1);
+  assert.strictEqual(m.kpi.netto, 990000000);
+  assert.strictEqual(m.kpi.offenAnzahlTx, 2);
+  assert.strictEqual(m.kpi.offenBrutto, 10000000000);
+  // In der Gesamtzeile ist sie dagegen enthalten.
+  assert.strictEqual(m.gesamt.anzahlTx, 3);
+});
+
+test('Connector-Aufschluesselung summiert je Zahlungsmittel, absteigend nach Brutto', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-01-05,SETTLED,2,,50161,CHF,TWINT,Physical Terminal,,90.00000000,90.00000000,0.90000000,89.10000000,1',
+    '2026-01-06,SETTLED,3,,50161,CHF,Visa,Ecommerce,,5.00000000,5.00000000,0.05000000,4.95000000,1',
+  );
+  assert.deepStrictEqual(
+    plain(m.connectors.map(c => [c.connector, c.anzahlTx, c.brutto])),
+    [['TWINT', 1, 9000000000], ['Visa', 2, 1500000000]],
+  );
+  assert.strictEqual(m.connectorTotal.anzahlTx, 3);
+  assert.strictEqual(m.connectorTotal.brutto, 10500000000);
+});
+
+test('Detail je Settlement ist nach Transaktions-ID sortiert und durchnummeriert', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,300,,50161,CHF,Visa,Ecommerce,,3.00000000,3.00000000,0.03000000,2.97000000,1',
+    '2026-01-05,SETTLED,100,,50161,CHF,TWINT,Physical Terminal,,1.00000000,1.00000000,0.01000000,0.99000000,1',
+  );
+  assert.deepStrictEqual(
+    plain(m.settlements[0].detail.map(d => [d.nr, d.transactionId, d.connector])),
+    [[1, '100', 'TWINT'], [2, '300', 'Visa']],
+  );
+});
+
+test('Durchschnitt je Settlement rechnet nur ueber Zeilen mit Datum', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.00000000,10.00000000,1',
+    '2026-01-06,SETTLED,2,,50161,CHF,Visa,Ecommerce,,30.00000000,30.00000000,0.00000000,30.00000000,1',
+    ',NO_RECORD,3,,50161,CHF,Visa,Ecommerce,,99.00000000,,,,0',
+  );
+  assert.strictEqual(m.kpi.avgNetto, 2000000000, '40.00 / 2 Settlements = 20.00');
+});
+
+test('Leeres Ergebnis ergibt ein leeres, aber vollstaendiges Modell', () => {
+  const { buildSettlementReportModel } = loadBuilders();
+  const m = buildSettlementReportModel([], ENDE);
+  assert.deepStrictEqual(plain(m.settlements), []);
+  assert.deepStrictEqual(plain(m.connectors), []);
+  assert.strictEqual(m.kpi.anzahlTx, 0);
+  assert.strictEqual(m.kpi.avgNetto, 0);
+  assert.strictEqual(m.ausstehend.anzahlSettlements, 0);
+});

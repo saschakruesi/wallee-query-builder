@@ -87,6 +87,7 @@ const EXPORTED = [
   'parseReportCsv',
   // Settlement-Report (v5.8), reine Funktionen
   'parseSettlementCsv',
+  'buildSettlementReportModel',
   'csvZuZeilen',
   'parseAmount',
   'AMOUNT_SCALE',
