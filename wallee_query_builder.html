@@ -3215,9 +3215,17 @@ ORDER BY settlement_datum, transaction_id;`;
     // spaltenweise aufgehen, nicht die fachliche Kennzahl abbilden.
     const gesamt = leereSettlementSumme();
     let waehrung = '';
+    // Der Modus umfasst alle Spaces eines Accounts - anders als bei brand/
+    // terminal (die bewusst nach t.currency gruppieren) kann hier mehr als
+    // eine Waehrung vorkommen. waehrungenSet haelt alle vorkommenden fest,
+    // damit ingestSettlementCsv den Report bei mehr als einer Waehrung
+    // verweigern kann, statt Betraege ueber Waehrungen hinweg stillschweigend
+    // zu addieren.
+    const waehrungenSet = new Set();
 
     zeilen.forEach(r => {
       if (!waehrung && r.waehrung) waehrung = r.waehrung;
+      if (r.waehrung) waehrungenSet.add(r.waehrung);
 
       // Ohne Settlement-Record gibt es keine Banktransaktion und damit weder
       // Fees noch Netto. Als Brutto zaehlt dann der Transaktionsbetrag.
@@ -3300,6 +3308,10 @@ ORDER BY settlement_datum, transaction_id;`;
         offenAnzahlTx: offen.anzahlTx,
         offenBrutto: offen.brutto,
         waehrung,
+        // Sortiertes Array aller vorkommenden Waehrungen - bei mehr als einer
+        // muss der Aufrufer (ingestSettlementCsv) den Report verweigern,
+        // statt Betraege verschiedener Waehrungen stillschweigend zu addieren.
+        waehrungen: [...waehrungenSet].sort(),
       },
       connectors,
       connectorTotal,
@@ -3618,7 +3630,25 @@ ORDER BY settlement_datum, transaction_id;`;
       end: `${state.endDate} ${state.endTime}`,
       account: aktiverAccount(),
     };
-    settlementModell = buildSettlementReportModel(res.rows, { end: settlementZeitraum.end });
+    const modell = buildSettlementReportModel(res.rows, { end: settlementZeitraum.end });
+
+    // Der Modus umfasst alle Spaces eines Accounts - anders als bei brand/
+    // terminal (die nach t.currency gruppieren) kann das Ergebnis mehrere
+    // Waehrungen mischen. Statt sie stillschweigend zu addieren (10 CHF +
+    // 100 EUR = "110 CHF"), wird der Report hier verweigert - gleicher
+    // Fehlerpfad wie bei fehlenden Pflichtspalten oben.
+    if (modell.kpi.waehrungen.length > 1) {
+      settlementModell = null;
+      settlementReportOutput.innerHTML = '';
+      settlementReportActions.classList.add('hidden');
+      settlementZeigeStatus(
+        `Mehrere Währungen im Ergebnis (${modell.kpi.waehrungen.join(', ')}) – die Beträge `
+        + 'würden sonst über Währungen hinweg addiert. Bitte den Zeitraum oder die '
+        + 'Space-Auswahl auf eine Währung eingrenzen.',
+        'fehler');
+      return false;
+    }
+    settlementModell = modell;
 
     const s = settlementModell.kpi;
     settlementZeigeStatus(

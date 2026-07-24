@@ -388,3 +388,25 @@ test('kpi.anzahlSettlements zaehlt Settled und Ausstehend zusammen, aber nicht O
   );
   assert.strictEqual(m.kpi.anzahlSettlements, 2);
 });
+
+// --- kpi.waehrungen: Mehrwaehrungs-Erkennung (Schluss-Review, Befund 2) ----
+// Der Modus umfasst inzwischen alle Spaces eines Accounts - anders als bei
+// brand/terminal (die bewusst nach t.currency gruppieren) fehlte hier bislang
+// jede Absicherung: buildSettlementReportModel merkte sich nur die Waehrung
+// der ersten Zeile und addierte den Rest stillschweigend dazu.
+
+test('kpi.waehrungen listet alle vorkommenden Waehrungen sortiert auf (Befund 2)', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-01-05,SETTLED,2,,50161,EUR,Visa,Ecommerce,,100.00000000,100.00000000,1.00000000,99.00000000,1',
+  );
+  assert.deepStrictEqual(plain(m.kpi.waehrungen), ['CHF', 'EUR']);
+});
+
+test('kpi.waehrungen bleibt bei einer einzigen Waehrung ein Ein-Element-Array (Befund 2)', () => {
+  const m = modellAus(
+    '2026-01-05,SETTLED,1,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+    '2026-01-06,SETTLED,2,,50161,CHF,Visa,Ecommerce,,20.00000000,20.00000000,0.20000000,19.80000000,1',
+  );
+  assert.deepStrictEqual(plain(m.kpi.waehrungen), ['CHF']);
+});
