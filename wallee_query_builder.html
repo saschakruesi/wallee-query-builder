@@ -2445,108 +2445,90 @@ ORDER BY t.completedon DESC;`;
   }
 
   // --- SQL Generation: Settlement / Auszahlung ----------------------------
-  function buildSettlementQuery({ spaceIds, start, end, terminalIds, byTerminal }) {
-    // Korrektur 3: Aufschluesselung nach Terminal (Spalte + GROUP BY) und der
-    // reine Terminal-FILTER sind zwei getrennte Belange. Ob pt.identifier in
-    // SELECT/GROUP BY erscheint, entscheidet ausschliesslich byTerminal. Der
-    // JOIN auf paymentterminal wird aber schon frueher gebraucht, sobald die
-    // WHERE-Klausel pt.identifier referenziert (also auch bei blossem Filter).
-    const needJoinTerm = byTerminal || terminalIds.length > 0;
-
-    const where = [
-      spaceInClause(spaceIds, 't.spaceid'),
-      `t.completedon >= TIMESTAMP '${start}'`,
-      `t.completedon <  TIMESTAMP '${end}'`,
-      `t.state IN ('FULFILL', 'COMPLETED')`,
-    ];
-    if (terminalIds.length === 1) {
-      where.push(`pt.identifier = '${escapeSql(terminalIds[0])}'`);
-    } else if (terminalIds.length > 1) {
-      where.push(`pt.identifier IN (${terminalIds.map(id => `'${escapeSql(id)}'`).join(', ')})`);
-    }
-    const whereClause = where.map((w, i) => (i === 0 ? `WHERE ${w}` : `  AND ${w}`)).join('\n');
-
-    const termSelect  = byTerminal ? '\n    pt.identifier                                   AS terminal_identifier,' : '';
-    const termJoin    = needJoinTerm ? `
-LEFT JOIN paymentterminal pt
-       ON pt.id       = t.terminal_id
-      AND pt.spaceid  = t.spaceid` : '';
-    const termGroup   = byTerminal ? ',\n    pt.identifier' : '';
-
-    // Korrektur 2: Transaktionen ohne payfacsettlementrecord fallen sonst still
-    // heraus. COALESCE(..., 'NO_RECORD') muss in SELECT und GROUP BY identisch
-    // stehen, sonst wird die Query ungueltig.
-    const stateExpr = `COALESCE(s.settlement_state, 'NO_RECORD')`;
-
-    return `WITH ${txCte({ spaceIds, start, end })},
+  // Account-basiert: KEIN Space-Filter. Die Query laeuft ohnehin im Kontext
+  // genau eines Accounts (Account-Header am Analytics-Endpunkt) - ohne Filter
+  // umfasst sie damit alle Spaces dieses Accounts, und genau das ist die
+  // fachliche Absicht einer Auszahlungs-Sicht.
+  //
+  // Eine Zeile pro Transaktion: die drei Report-Abschnitte entstehen
+  // clientseitig aus dem CSV (wie beim Terminal-Report), nicht per GROUP BY.
+  //
+  // Kein Join auf currentaccountwithdrawal: die Tabelle enthaelt die
+  // Auszahlungen ALLER Accounts der Plattform (an Produktivdaten belegt, siehe
+  // CLAUDE.md). Der Report gruppiert nach Valutadatum und braucht die
+  // Withdrawal-Referenz nicht - der teuerste Join der alten Vorlage entfaellt.
+  function buildSettlementQuery({ start, end }) {
+    return `WITH tx AS (
+    SELECT
+        t.id,
+        t.spaceid,
+        t.currency,
+        t.completedamount,
+        t.merchantreference,
+        t.paymentconnectorconfiguration_id,
+        t.authorizationsaleschannel,
+        t.terminal_id
+    FROM transaction t
+    WHERE t.completedon >= TIMESTAMP '${start}'
+      AND t.completedon <  TIMESTAMP '${end}'
+      AND t.state IN ('FULFILL', 'COMPLETED')
+),
 settle_tx AS (
-    -- Settlement-Records werden PRO TRANSAKTION vor-aggregiert.
-    -- payfacsettlementrecord ist N:1 zur Transaktion (z. B. Refund in einem
-    -- spaeteren Settlement-Lauf). Ohne diese Vor-Aggregation wuerde der
-    -- anschliessende Join Transaktionen vervielfachen und COUNT(*) sowie
-    -- SUM(t.completedamount) waeren zu hoch.
-    -- Kein Filter auf bt.state: UPCOMING (noch nicht ausbezahlt) soll neben
-    -- SETTLED sichtbar sein.
-    -- settlement_state wird bewusst NICHT per max_by ueber bt.valuedate
-    -- bestimmt: valuedate ist bei noch nicht ausbezahlten Records leer, und
-    -- max_by ignoriert Zeilen mit NULL im Sortierfeld - dadurch wuerde immer
-    -- SETTLED gewinnen und eine offene Auszahlung (z. B. ein Refund aus einem
-    -- spaeteren Settlement-Lauf) unsichtbar bleiben. PARTIAL zeigt stattdessen
-    -- explizit, dass eine Transaktion teilweise ausbezahlt ist.
+    -- Pro Transaktion vor-aggregiert: payfacsettlementrecord ist N:1 zur
+    -- Transaktion (z. B. ein Refund aus einem spaeteren Settlement-Lauf).
+    -- Ohne diese Vor-Aggregation wuerde der anschliessende LEFT JOIN
+    -- Transaktionen vervielfachen und alle Summen waeren zu hoch.
     SELECT
         psr.transaction_id,
-        count(*)                               AS settlement_records,
+        count(*)                                AS settlement_records,
+        min(bt.valuedate)                       AS valuedate,
         CASE
-            WHEN count_if(bt.state = 'SETTLED') > 0
+            WHEN count_if(bt.state =  'SETTLED') > 0
              AND count_if(bt.state <> 'SETTLED') > 0 THEN 'PARTIAL'
             ELSE max(bt.state)
         END                                     AS settlement_state,
-        sum(bt.valueamount)                    AS net_amount,
-        sum(bt.postingamount)                  AS gross_amount,
-        sum(bt.postingamount - bt.valueamount) AS processing_fees
+        sum(bt.valueamount)                     AS net_amount,
+        sum(bt.postingamount)                   AS gross_amount,
+        sum(bt.postingamount - bt.valueamount)  AS processing_fees
     FROM payfacsettlementrecord psr
     JOIN banktransaction bt
       ON bt.id = psr.banktransaction_id
     WHERE psr.transaction_id IN (SELECT id FROM tx)
     GROUP BY psr.transaction_id
-),
-${tipCte({ spaceIds })}
+)
 SELECT
+    date(s.valuedate)                               AS settlement_datum,
+    -- NO_RECORD: fuer diese Transaktion existiert noch gar kein
+    -- Settlement-Record. Der LEFT JOIN haelt sie fest, statt sie still
+    -- herausfallen zu lassen - im Report wird daraus die Zeile "Offen".
+    COALESCE(s.settlement_state, 'NO_RECORD')       AS settlement_state,
+    t.id                                            AS transaction_id,
+    t.merchantreference                             AS merchant_reference,
     t.spaceid                                       AS space_id,
-    date(t.completedon)                             AS tag,
-    -- NO_RECORD: Fuer diese Transaktion existiert (noch) kein
-    -- payfacsettlementrecord - der LEFT JOIN auf settle_tx traf nicht. Damit
-    -- stimmt die Summe im Settlement-Modus mit dem Brand-Modus ueberein,
-    -- statt dass solche Transaktionen still verschwinden.
-    ${stateExpr}                                     AS settlement_state,
-    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN') AS brand,${termSelect}
     t.currency                                      AS waehrung,
-    COUNT(*)                                        AS anzahl_transaktionen,
-    COALESCE(SUM(s.settlement_records), 0)          AS anzahl_settlement_records,
-    SUM(t.completedamount)                          AS brutto_gross,
-    SUM(s.net_amount)                               AS netamount,
-    SUM(s.processing_fees)                          AS processing_fees,
-    SUM(s.gross_amount)                             AS settlement_gross,
-    COALESCE(SUM(tip.tip_amount), 0)                AS tip_total
-FROM transaction t
+    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN') AS connector,
+    CASE
+        WHEN t.authorizationsaleschannel = 1582816223150 THEN 'Ecommerce'
+        WHEN t.authorizationsaleschannel = 1582819151330 THEN 'Physical Terminal'
+        ELSE 'Other'
+    END                                             AS sales_channel,
+    pt.identifier                                   AS terminal_identifier,
+    t.completedamount                               AS brutto_gross,
+    s.gross_amount                                  AS settlement_gross,
+    s.processing_fees                               AS processing_fees,
+    s.net_amount                                    AS netamount,
+    COALESCE(s.settlement_records, 0)               AS settlement_records
+FROM tx t
 LEFT JOIN settle_tx s ON s.transaction_id = t.id
 LEFT JOIN paymentconnectorconfiguration pcc
        ON pcc.id      = t.paymentconnectorconfiguration_id
       AND pcc.spaceid = t.spaceid
 LEFT JOIN paymentconnector pc
-       ON pc.id       = pcc.connector${termJoin}
-LEFT JOIN tip ON tip.transaction_id = t.id
-${whereClause}
-GROUP BY
-    t.spaceid,
-    date(t.completedon),
-    ${stateExpr},
-    COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN'),
-    t.currency${termGroup}
-ORDER BY
-    space_id,
-    tag DESC,
-    settlement_state;`;
+       ON pc.id       = pcc.connector
+LEFT JOIN paymentterminal pt
+       ON pt.id       = t.terminal_id
+      AND pt.spaceid  = t.spaceid
+ORDER BY settlement_datum, transaction_id;`;
   }
 
   // --- Terminal-Report: CSV-Parser ----------------------------------------
@@ -3917,11 +3899,7 @@ ORDER BY
       const ids = state.terminals.filter(t => t.selected).map(t => t.id);
       sql = buildCardQuery({ spaceIds, start, end, terminalIds: ids, last4: state.cardLast4 || '' });
     } else if (state.mode === 'settlement') {
-      const ids = state.terminals.filter(t => t.selected).map(t => t.id);
-      sql = buildSettlementQuery({
-        spaceIds, start, end, terminalIds: ids,
-        byTerminal: !!state.settlementByTerminal,
-      });
+      sql = buildSettlementQuery({ start, end });
     } else {
       sql = buildBrandQuery({ spaceIds, start, end });
     }
