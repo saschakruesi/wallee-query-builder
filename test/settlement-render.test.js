@@ -42,3 +42,33 @@ test('ingestSettlementCsv verkraftet ein leeres Ergebnis ohne zu werfen', () => 
   assert.doesNotThrow(() => api.ingestSettlementCsv(''));
   assert.strictEqual(api.ingestSettlementCsv(''), false);
 });
+
+// Befund 2 (Schluss-Review): der Modus umfasst alle Spaces eines Accounts und
+// kann deshalb mehrere Waehrungen im Ergebnis haben. Statt sie
+// stillschweigend zu addieren (10 CHF + 100 EUR = "110 CHF"), muss der
+// Report das verweigern - gleicher Fehlerpfad wie bei fehlenden
+// Pflichtspalten (Modell und Ausgabe bleiben leer, Statusmeldung nennt die
+// gefundenen Waehrungen).
+const CSV_ZWEI_WAEHRUNGEN = [KOPF,
+  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+  '2026-01-05,SETTLED,200,,50161,EUR,Visa,Ecommerce,,100.00000000,100.00000000,1.00000000,99.00000000,1',
+].join('\n') + '\n';
+
+test('ingestSettlementCsv verweigert den Report bei mehr als einer Waehrung (Befund 2)', () => {
+  const document = makeDocument();
+  const api = loadBuilders({ document });
+  assert.strictEqual(api.ingestSettlementCsv(CSV_ZWEI_WAEHRUNGEN), false);
+  const status = document.getElementById('settlementReportStatus').textContent;
+  assert.match(status, /Währungen/);
+  assert.match(status, /CHF/);
+  assert.match(status, /EUR/);
+  assert.strictEqual(document.getElementById('settlementReportOutput').innerHTML, '');
+});
+
+test('ingestSettlementCsv bleibt bei einer einzigen Waehrung unveraendert (Befund 2, Regression)', () => {
+  const document = makeDocument();
+  const api = loadBuilders({ document });
+  assert.strictEqual(api.ingestSettlementCsv(CSV), true);
+  const html = document.getElementById('settlementReportOutput').innerHTML;
+  assert.match(html, /Zusammenfassung/);
+});

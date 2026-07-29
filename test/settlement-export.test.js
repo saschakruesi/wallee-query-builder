@@ -102,6 +102,22 @@ test('Zusammenfassung weist offene Transaktionen als eigene Kennzahl aus', () =>
   ]);
 });
 
+test('Hinweis: ausstehende Settlements UND offene Transaktionen erscheinen beide, nebeneinander', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  // ZEILEN traegt bereits ein Settlement nach dem Berichtsende (Ausstehend);
+  // dazu eine NO_RECORD-Zeile, die in der TOTAL-Zeile nur mit Brutto steckt.
+  const m = modell(...ZEILEN, ',NO_RECORD,999,,50161,CHF,Visa,Ecommerce,,7.00000000,,,,0');
+  const b = settlementExportBloecke(m, { detail: false, end: '2026-02-01 00:00:00' });
+  const hinweis = String(b[2].hinweis);
+  assert.match(hinweis, /^1 Settlement\(s\) mit 1 Transaktionen/);
+  assert.match(hinweis, /nach dem 31\.01\.2026 abgerechnet\./);
+  assert.match(hinweis, /1 Transaktion\(en\) ohne Settlement-Record/);
+  assert.match(hinweis, /TOTAL-Zeile hier nicht\.$/);
+  // Keiner der beiden Saetze verdraengt den anderen - beide muessen als
+  // eigenstaendige Saetze auftauchen, nicht ineinander verschmolzen.
+  assert.ok(!/ {2,}/.test(hinweis), `Hinweis enthaelt ein doppeltes Leerzeichen: "${hinweis}"`);
+});
+
 test('CSV: Bloecke untereinander, Semikolon, BOM', () => {
   const { buildSettlementReportCsv } = loadBuilders();
   const csv = buildSettlementReportCsv(modell(...ZEILEN), { detail: false, end: '2026-02-01 00:00:00' });

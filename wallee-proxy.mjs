@@ -336,7 +336,9 @@ export function findeRoute(methode, pfad) {
   }
 
   treffer = /^\/query\/(.+)$/.exec(p);
-  if (m === 'DELETE' && treffer) return { name: 'cancel', token: decodeURIComponent(treffer[1]) };
+  if (m === 'DELETE' && treffer) {
+    return { name: 'cancel', token: decodeURIComponent(treffer[1]), account };
+  }
 
   if (m === 'GET' && p === '/terminals') {
     const query = String(pfad || '').split('?')[1] || '';
@@ -721,8 +723,16 @@ export async function behandleAnfrage(req, res) {
       }
 
       case 'cancel': {
-        // Das SDK bricht per DELETE ab, nicht per POST.
-        const antwort = await rufeApi('DELETE', API_PFADE.cancel(route.token));
+        // Das SDK bricht per DELETE ab, nicht per POST. Account wie bei
+        // status/result validieren und durchreichen - sonst bricht ein
+        // Abbruch im konfigurierten statt im tatsaechlich verwendeten Account
+        // ab (relevant bei aktivem Super-User-Flip).
+        if (route.account && !accountValide(route.account)) {
+          sendeJson(res, 400, { ok: false, fehler: 'Ungültige Account-ID.' }, origin);
+          return;
+        }
+        const antwort = await rufeApi('DELETE', API_PFADE.cancel(route.token), undefined,
+          { account: route.account });
         reicheWalleeDurch(res, antwort, origin, 'cancel');
         return;
       }
