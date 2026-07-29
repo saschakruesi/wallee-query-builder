@@ -2910,11 +2910,52 @@ ORDER BY t.completedon DESC;`;
   // Eine Zeile pro Transaktion: die drei Report-Abschnitte entstehen
   // clientseitig aus dem CSV (wie beim Terminal-Report), nicht per GROUP BY.
   //
-  // Kein Join auf currentaccountwithdrawal: die Tabelle enthaelt die
-  // Auszahlungen ALLER Accounts der Plattform (an Produktivdaten belegt, siehe
-  // CLAUDE.md). Der Report gruppiert nach Valutadatum und braucht die
-  // Withdrawal-Referenz nicht - der teuerste Join der alten Vorlage entfaellt.
-  function buildSettlementQuery({ start, end }) {
+  // Join auf currentaccountwithdrawal nur bei aktivem Referenz-Opt-in
+  // (Parameter reference) - dann account-korrekt ueber spacereference aus dem
+  // tx-CTE eingeschraenkt. Ohne die Option bleibt der Modus wie in v5.8 ohne
+  // diesen teuren Join.
+  function buildSettlementQuery({ start, end, reference }) {
+    // Opt-in: die Auszahlungsreferenz (currentaccountwithdrawal.internalreference,
+    // wie auf dem Bank Statement) holt den in v5.8 aus Performance-Gruenden
+    // entfernten Withdrawal-Range-Join zurueck. Standardmaessig aus.
+    const mitReferenz = !!reference;
+    // currentaccountwithdrawal enthaelt OHNE Einschraenkung die Auszahlungen der
+    // GESAMTEN Plattform (an Produktivdaten belegt, siehe CLAUDE.md). Hier ueber
+    // spacereference auf genau die Spaces des tx-CTE eingeschraenkt: da die Query
+    // account-scoped laeuft, sind das die eigenen Spaces und damit der eigene
+    // Account - ohne dass der Client die Account-ID kennen muss (im
+    // Kopieren-Modus tut er das nicht). Das Zeitfenster laesst den Optimizer
+    // Partitionen beschneiden. Die Zuordnung bleibt rein heuristisch (kein
+    // Fremdschluessel); 10 Tage als Puffer fuer Feiertage/Wochenenden.
+    const referenzCtes = mitReferenz ? `,
+auszahlungen AS (
+    SELECT w.internalreference, w.createdon
+    FROM currentaccountwithdrawal w
+    JOIN spacereference sr
+      ON sr.accountid = w.accountid
+    WHERE sr.spaceid IN (SELECT DISTINCT spaceid FROM tx)
+      AND w.createdon >= TIMESTAMP '${start}'
+      AND w.createdon <  TIMESTAMP '${end}' + INTERVAL '10' DAY
+),
+payoutref AS (
+    SELECT
+        psr.transaction_id,
+        min_by(a.internalreference, a.createdon) AS settlement_reference
+    FROM payfacsettlementrecord psr
+    JOIN banktransaction bt
+      ON bt.id = psr.banktransaction_id
+     AND bt.state = 'SETTLED'
+    JOIN auszahlungen a
+      ON a.createdon >= bt.valuedate
+     AND a.createdon <  bt.valuedate + INTERVAL '10' DAY
+    WHERE psr.transaction_id IN (SELECT id FROM tx)
+    GROUP BY psr.transaction_id
+)` : '';
+    const referenzSelect = mitReferenz ? `,
+    payoutref.settlement_reference                  AS settlement_reference` : '';
+    const referenzJoin = mitReferenz ? `
+LEFT JOIN payoutref ON payoutref.transaction_id = t.id` : '';
+
     return `WITH tx AS (
     SELECT
         t.id,
@@ -2952,7 +2993,7 @@ settle_tx AS (
       ON bt.id = psr.banktransaction_id
     WHERE psr.transaction_id IN (SELECT id FROM tx)
     GROUP BY psr.transaction_id
-)
+)${referenzCtes}
 SELECT
     date(s.valuedate)                               AS settlement_datum,
     -- NO_RECORD: fuer diese Transaktion existiert noch gar kein
@@ -2974,9 +3015,9 @@ SELECT
     s.gross_amount                                  AS settlement_gross,
     s.processing_fees                               AS processing_fees,
     s.net_amount                                    AS netamount,
-    COALESCE(s.settlement_records, 0)               AS settlement_records
+    COALESCE(s.settlement_records, 0)               AS settlement_records${referenzSelect}
 FROM tx t
-LEFT JOIN settle_tx s ON s.transaction_id = t.id
+LEFT JOIN settle_tx s ON s.transaction_id = t.id${referenzJoin}
 LEFT JOIN paymentconnectorconfiguration pcc
        ON pcc.id      = t.paymentconnectorconfiguration_id
       AND pcc.spaceid = t.spaceid

@@ -450,3 +450,37 @@ test('Settlement-Query nimmt den Connector-Namen aus paymentconnector', () => {
   });
   assert.match(sql, /COALESCE\(pc\.name\['en-US'\], pcc\.name, 'UNKNOWN'\)\s+AS connector/);
 });
+
+test('Settlement-Query mit Referenz: auszahlungen/payoutref-CTE, Account-Einschraenkung, Spalte', () => {
+  const { buildSettlementQuery } = loadBuilders();
+  const sql = buildSettlementQuery({
+    start: '2026-01-01 00:00:00',
+    end: '2026-02-01 00:00:00',
+    reference: true,
+  });
+  // Account-korrekte Einschraenkung aus der Query selbst (nicht ueber eine
+  // injizierte Account-ID): spacereference auf die Spaces des tx-CTE.
+  assert.match(sql, /JOIN\s+spacereference\s+sr\s+ON\s+sr\.accountid\s*=\s*w\.accountid/);
+  assert.match(sql, /sr\.spaceid\s+IN\s*\(SELECT DISTINCT spaceid FROM tx\)/);
+  // Withdrawal nur im auszahlungen-CTE, zeitfenster-beschnitten.
+  assert.match(sql, /FROM\s+currentaccountwithdrawal\s+w/);
+  assert.match(sql, /w\.createdon\s*<\s*TIMESTAMP '2026-02-01 00:00:00' \+ INTERVAL '10' DAY/);
+  // payoutref: frueheste Withdrawal im [valuedate, +10 Tage)-Fenster.
+  assert.match(sql, /min_by\(a\.internalreference, a\.createdon\)\s+AS settlement_reference/);
+  assert.match(sql, /LEFT JOIN payoutref ON payoutref\.transaction_id = t\.id/);
+  assert.match(sql, /payoutref\.settlement_reference\s+AS settlement_reference/);
+  // Zwei GROUP BY: settle_tx UND payoutref.
+  assert.strictEqual((sql.match(/GROUP BY/g) || []).length, 2);
+});
+
+test('Settlement-Query ohne Referenz ist byte-identisch zum Default', () => {
+  const { buildSettlementQuery } = loadBuilders();
+  const args = { start: '2026-01-01 00:00:00', end: '2026-02-01 00:00:00' };
+  const ohne = buildSettlementQuery(args);
+  const explizitAus = buildSettlementQuery({ ...args, reference: false });
+  assert.strictEqual(explizitAus, ohne);
+  assert.doesNotMatch(ohne, /currentaccountwithdrawal/i);
+  assert.doesNotMatch(ohne, /payoutref/i);
+  assert.doesNotMatch(ohne, /settlement_reference/i);
+  assert.strictEqual((ohne.match(/GROUP BY/g) || []).length, 1);
+});
