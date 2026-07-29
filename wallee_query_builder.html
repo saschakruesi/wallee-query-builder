@@ -2938,12 +2938,20 @@ ORDER BY t.completedon DESC;`;
     // Fremdschluessel); 10 Tage als Puffer fuer Feiertage/Wochenenden.
     const referenzCtes = mitReferenz ? `,
 auszahlungen AS (
-    SELECT w.internalreference, w.createdon
+    -- DISTINCT: spacereference hat eine Zeile pro Space, ein Account mit
+    -- mehreren Spaces im tx-CTE wuerde jede Withdrawal sonst N-fach liefern
+    -- - das kostet den nachfolgenden Range-Join in payoutref unnoetig N-fach
+    -- Arbeit (das Ergebnis waere dank min_by/Gruppierung dort zwar korrekt,
+    -- aber die Query unnoetig teuer).
+    SELECT DISTINCT w.internalreference, w.createdon
     FROM currentaccountwithdrawal w
     JOIN spacereference sr
       ON sr.accountid = w.accountid
     WHERE sr.spaceid IN (SELECT DISTINCT spaceid FROM tx)
       AND w.createdon >= TIMESTAMP '${start}'
+      -- Achtung: eine "Ausstehend"-Auszahlung mit Valutadatum weit nach
+      -- Berichtsende kann ausserhalb dieses Fensters liegen und dann ohne
+      -- Referenz erscheinen - bewusste Heuristik-Grenze, kein Bug.
       AND w.createdon <  TIMESTAMP '${end}' + INTERVAL '10' DAY
 ),
 payoutref AS (

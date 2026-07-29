@@ -465,6 +465,10 @@ test('Settlement-Query mit Referenz: auszahlungen/payoutref-CTE, Account-Einschr
   // Withdrawal nur im auszahlungen-CTE, zeitfenster-beschnitten.
   assert.match(sql, /FROM\s+currentaccountwithdrawal\s+w/);
   assert.match(sql, /w\.createdon\s*<\s*TIMESTAMP '2026-02-01 00:00:00' \+ INTERVAL '10' DAY/);
+  // DISTINCT dedupliziert Withdrawals vor dem teuren Range-Join in payoutref
+  // (spacereference hat eine Zeile pro Space, ein Account mit mehreren
+  // Spaces im tx-CTE wuerde sonst jede Withdrawal N-fach durchreichen).
+  assert.match(sql, /SELECT DISTINCT w\.internalreference, w\.createdon/);
   // payoutref: frueheste Withdrawal im [valuedate, +10 Tage)-Fenster.
   assert.match(sql, /min_by\(a\.internalreference, a\.createdon\)\s+AS settlement_reference/);
   assert.match(sql, /LEFT JOIN payoutref ON payoutref\.transaction_id = t\.id/);
