@@ -23,7 +23,7 @@ analog zum Terminal-Report.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.8.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.9.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -100,13 +100,14 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
    Kartensuche aus dem Transaktions-Export herausgelöst wurde.
 5. **`settlement`** – seit v5.8 **account-, nicht space-basiert**: eine Auszahlung fasst die
    Transaktionen aller Spaces eines Accounts zu einer Gutschrift zusammen, deshalb entfallen
-   Space- und Terminal-Filter. `buildSettlementQuery({ start, end })` liefert **eine Zeile
-   pro Transaktion** (kein `GROUP BY`, kein Aggregat-Modus mehr), `LEFT JOIN` auf ein
+   Space- und Terminal-Filter. `buildSettlementQuery({ start, end, reference })` liefert **eine
+   Zeile pro Transaktion** (kein `GROUP BY`, kein Aggregat-Modus mehr), `LEFT JOIN` auf ein
    vor-aggregiertes `settle_tx`-CTE, Zeitfilter wie gewohnt auf `t.completedon`; kein Join
    mehr auf `currentaccountwithdrawal` (die Auszahlungsreferenz-Heuristik bleibt exklusiv im
-   Transaktions-Export, siehe `payoutref`/`auszahlungen`-CTE unten). Gruppiert wird
-   **clientseitig** nach `bt.valuedate` — Ausgabe ist der **Settlement-Report** (siehe eigener
-   Abschnitt unten), nicht mehr die reine SQL-Zeile pro Tag. Der Modus liefert **kein**
+   Transaktions-Export, siehe `payoutref`/`auszahlungen`-CTE unten) — **ausser bei aktiver
+   Referenz-Option, seit v5.9** (`reference: true`, siehe „Settlement-Report" unten). Gruppiert
+   wird **clientseitig** nach `bt.valuedate` — Ausgabe ist der **Settlement-Report** (siehe
+   eigener Abschnitt unten), nicht mehr die reine SQL-Zeile pro Tag. Der Modus liefert **kein**
    `tip_total` mehr (kein `tipCte`-Join). Statt eines Accounts aus dem Space-Selektor kommt der
    Account aus den Zugangsdaten (Feld gesperrt) bzw., mit dem Flip „Anderen Account abfragen
    (Super-User)", aus einem frei eingebbaren Feld.
@@ -245,6 +246,17 @@ Query-Ergebnisses, nichts wird editiert oder gemerged.
 - **Kein Datei-Upload:** anders als früher beim Terminal-Report vor v5 gibt es hier nie einen
   CSV-Upload-Pfad — der Report wird ausschliesslich aus dem eigenen Query-Ergebnis befüllt
   (`ingestSettlementCsv`, ausgelöst über `uebergibSettlementCsv` nach dem Submit).
+- **Auszahlungsreferenz (opt-in, seit v5.9):** Über die Checkbox „Auszahlungsreferenz
+  einschliessen" (`state.settlementReference`, Default aus) führt der Report je
+  Settlement die `currentaccountwithdrawal.internalreference` mit — dieselbe Referenz
+  wie auf dem Bank Statement. `buildSettlementQuery({ start, end, reference })` hängt
+  dann die CTEs `auszahlungen`+`payoutref` und die Spalte `settlement_reference` an,
+  account-korrekt eingeschränkt **aus der Query selbst** (`spacereference.accountid`
+  auf `SELECT DISTINCT spaceid FROM tx`) — ohne externe Account-ID, funktioniert also
+  in Kopier- und API-Modus. Ohne die Option bleibt die Query wie in v5.8 (kein
+  Withdrawal-Join). Die Referenz erscheint pro Settlement-Gruppe (`model.settlements[].referenz`,
+  distinct/sortiert) in der Übersicht-Spalte „Referenz" und als Hinweis im Detailblock;
+  sie fliesst in keine Summe. Rein additives State-Feld, **kein** `STORAGE_KEY`-Bump.
 - **Abfrage-Verlauf:** wie beim Terminal-Report zeigt die Verlaufszeile im Modus `settlement`
   nur den Roh-CSV-Download — Excel und PDF laufen ausschliesslich über das Report-Panel
   selbst (`exportSettlementXlsx`/`exportSettlementPdf`).
@@ -389,7 +401,9 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
   Transaktions-Export und Kartensuche gemeinsam genutzt. **`buildSettlementQuery` nutzt
   `txCte` seit v5.8 nicht mehr** — der Modus ist account- statt space-basiert (kein
   `spaceIds`-Parameter mehr) und baut sein eigenes, kleineres `tx`-CTE (nur Zeitraum +
-  Status, kein Space-Filter) sowie ein eigenes `settle_tx`-CTE inline auf.
+  Status, kein Space-Filter) sowie ein eigenes `settle_tx`-CTE inline auf. Kein Join mehr auf
+  `currentaccountwithdrawal` (ausser bei aktiver Referenz-Option, seit v5.9 — siehe
+  „Settlement-Report" oben).
 - `spaceInClause(ids, col)`: 0 Spaces → `col = -1 -- BITTE ... AUSWÄHLEN` (Query läuft leer
   statt zu crashen), 1 Space → `=`, mehrere → `IN (...)`.
 - Zeitfilter immer auf `t.completedon` (Tagesabschluss, nicht Erstellung!) mit
@@ -697,15 +711,21 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     fachlich richtige Zuordnung aus. 10 Tage sind bewusst ein Vielfaches der gemessenen 1–2
     Tage, als Puffer für Feiertage und Wochenenden.
   - **Der Settlement-Modus (`buildSettlementQuery`) braucht diese Withdrawal-Referenz seit
-    v5.8 nicht mehr.** Die obigen Punkte zu `currentaccountwithdrawal` bleiben dauerhaftes
-    Wissen — sie gelten weiterhin uneingeschränkt für den `payoutref`-CTE im
-    Transaktions-Export (Spalte `settlement_reference`) —, betreffen den Settlement-Modus
-    aber nicht mehr: der ist seit dem Umbau auf Account-Basis ohnehin bereits auf einen
-    einzelnen Account eingeschränkt (der Account-Header der Anfrage selbst übernimmt diese
-    Rolle) und braucht daher keinen eigenen, zusätzlichen Join auf
-    `currentaccountwithdrawal` mehr, um die Auszahlungsreferenz zu ermitteln — er verzichtet
-    schlicht auf diese Spalte und zeigt Auszahlungen nur noch über `banktransaction`
-    (Valutadatum, Beträge, Status), nicht über die Referenz selbst.
+    v5.8 nicht mehr (ausser bei aktiver Referenz-Option, seit v5.9).** Die obigen Punkte zu
+    `currentaccountwithdrawal` bleiben dauerhaftes Wissen — sie gelten weiterhin
+    uneingeschränkt für den `payoutref`-CTE im Transaktions-Export (Spalte
+    `settlement_reference`) —, betreffen den Settlement-Modus standardmässig aber nicht: der
+    ist seit dem Umbau auf Account-Basis ohnehin bereits auf einen einzelnen Account
+    eingeschränkt (der Account-Header der Anfrage selbst übernimmt diese Rolle) und braucht
+    daher im Regelfall keinen eigenen, zusätzlichen Join auf `currentaccountwithdrawal`, um
+    die Auszahlungsreferenz zu ermitteln — er verzichtet standardmässig schlicht auf diese
+    Spalte und zeigt Auszahlungen nur über `banktransaction` (Valutadatum, Beträge, Status),
+    nicht über die Referenz selbst. Aktiviert der Nutzer die Checkbox „Auszahlungsreferenz
+    einschliessen" (seit v5.9, siehe „Settlement-Report" oben), holt der Modus den Join
+    gezielt zurück — dabei gilt dieselbe Account-Einschränkung wie beim `payoutref`-CTE im
+    Transaktions-Export, nur account-scoped aus der Query selbst hergeleitet
+    (`spacereference.accountid` auf die Spaces des eigenen `tx`-CTE) statt über einen
+    extern übergebenen `spaceIds`-Parameter.
 - **Grenzen der Analytics** (nicht lösbar, dem Kunden so kommunizieren):
   - Keine IC++-Aufschlüsselung (DCC/Interchange/Scheme/Acquirer) — nur `totalappliedfees` gesamt.
   - Eine Query läuft in **einem** Account; Spaces fremder Accounts → Permission Error.
