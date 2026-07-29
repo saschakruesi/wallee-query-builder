@@ -1001,6 +1001,12 @@
       <span>Transaktionsdetail einschliessen</span>
     </label>
     <p class="hint" style="margin-top:6px;margin-bottom:0;">Abschnitt 3 listet jede einzelne Transaktion je Settlement. Bei grossen Zeiträumen wird das lang — abschalten macht Bildschirm, PDF und Excel deutlich kürzer, Zusammenfassung und Übersicht bleiben unverändert.</p>
+
+    <label class="check-row">
+      <input type="checkbox" id="settlementReferenceToggle" />
+      <span>Auszahlungsreferenz einschliessen</span>
+    </label>
+    <p class="hint" style="margin-top:6px;margin-bottom:0;">Führt je Settlement die Auszahlungsreferenz mit (wie auf dem Bank Statement, für den Kontoauszug-Abgleich). Braucht einen teureren Join auf die Auszahlungen — standardmässig aus. Wirksam ab der nächsten Abfrage.</p>
   </div>
 
   <div class="panel" id="sqlPanel">
@@ -1673,6 +1679,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const settlementAccountInput    = document.getElementById('settlementAccountInput');
   const settlementSuperUserToggle = document.getElementById('settlementSuperUserToggle');
   const settlementDetailToggle    = document.getElementById('settlementDetailToggle');
+  const settlementReferenceToggle = document.getElementById('settlementReferenceToggle');
   const settlementReportSection   = document.getElementById('settlementReportSection');
   const settlementReportStatus    = document.getElementById('settlementReportStatus');
   const settlementReportOutput    = document.getElementById('settlementReportOutput');
@@ -1805,6 +1812,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     settlementAccountId: '',
     settlementSuperUser: false,
     settlementDetail: true,
+    settlementReference: false,
     userPresets: [],
     // Betriebsmodus (v4). Default ist bewusst der Kopieren-Modus: er braucht
     // keine Installation und ist damit das, was ohne Zutun funktioniert.
@@ -1837,6 +1845,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         if (typeof state.settlementAccountId !== 'string') state.settlementAccountId = '';
         state.settlementSuperUser = !!state.settlementSuperUser;
         if (typeof state.settlementDetail !== 'boolean') state.settlementDetail = true;
+        if (typeof state.settlementReference !== 'boolean') state.settlementReference = false;
         delete state.settlementByTerminal;
         // Migration: altes Einzelfeld spaceId -> spaces[]
         if ((!state.spaces || !state.spaces.length) && parsed.spaceId) {
@@ -3628,6 +3637,7 @@ ORDER BY settlement_datum, transaction_id;`;
     }
     const opt = {
       detail: !!state.settlementDetail,
+      reference: !!state.settlementReference,
       start: settlementZeitraum.start,
       end: settlementZeitraum.end,
     };
@@ -4739,6 +4749,7 @@ ORDER BY settlement_datum, transaction_id;`;
   function settlementExportOptionen() {
     return {
       detail: !!state.settlementDetail,
+      reference: !!state.settlementReference,
       start: settlementZeitraum.start,
       end: settlementZeitraum.end,
       account: settlementZeitraum.account,
@@ -5070,7 +5081,7 @@ ORDER BY settlement_datum, transaction_id;`;
       const ids = state.terminals.filter(t => t.selected).map(t => t.id);
       sql = buildCardQuery({ spaceIds, start, end, terminalIds: ids, last4: state.cardLast4 || '' });
     } else if (state.mode === 'settlement') {
-      sql = buildSettlementQuery({ start, end });
+      sql = buildSettlementQuery({ start, end, reference: state.settlementReference });
     } else {
       sql = buildBrandQuery({ spaceIds, start, end });
     }
@@ -5177,12 +5188,21 @@ ORDER BY settlement_datum, transaction_id;`;
     renderSettlementReport();
   });
 
+  settlementReferenceToggle.addEventListener('change', () => {
+    state.settlementReference = settlementReferenceToggle.checked;
+    saveState();
+    // Aendert die Query (nicht nur die Darstellung) - SQL-Vorschau neu bauen.
+    // Wirksam wird die Referenz erst mit dem naechsten Submit.
+    generate();
+  });
+
   // Der gesperrte Normalfall zeigt den Account aus den Zugangsdaten. Im
   // Kopieren-Modus gibt es keinen Proxy und damit keinen Wert - dann bleibt das
   // Feld leer, denn der Account steckt dort ohnehin im Kontext des Portals.
   async function aktualisiereSettlementAccount() {
     settlementSuperUserToggle.checked = !!state.settlementSuperUser;
     settlementDetailToggle.checked = !!state.settlementDetail;
+    settlementReferenceToggle.checked = !!state.settlementReference;
     if (state.settlementSuperUser) {
       settlementAccountInput.disabled = false;
       settlementAccountInput.value = state.settlementAccountId || '';

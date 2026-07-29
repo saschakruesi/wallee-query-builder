@@ -207,6 +207,11 @@ test('Settlement-State: neue Felder mit Defaults, kein STORAGE_KEY-Bump noetig',
   assert.strictEqual(STORAGE_KEY, 'wallee_query_builder_v6', 'Die Aenderung ist additiv - kein Bump');
 });
 
+test('loadState setzt settlementReference-Default false', () => {
+  const app = loadBuilders();
+  assert.strictEqual(app.getState().settlementReference, false);
+});
+
 test('Settlement-State: alter State ohne die neuen Felder bekommt die Defaults', () => {
   const alt = JSON.stringify({
     mode: 'settlement',
