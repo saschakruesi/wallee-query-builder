@@ -3423,6 +3423,7 @@ ORDER BY settlement_datum, transaction_id;`;
       connectorTotal: { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 }, settlements: [],
       gesamt: { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 }, ausstehend: {} };
     const mitDetail = !optionen || optionen.detail !== false;
+    const mitReferenz = !!(optionen && optionen.reference);
     const w = m.kpi && m.kpi.waehrung ? m.kpi.waehrung : '';
 
     const zus = [
@@ -3480,11 +3481,20 @@ ORDER BY settlement_datum, transaction_id;`;
       },
       {
         name: 'Settlement-Übersicht',
-        header: ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status'],
-        typen: ['text', 'text', 'zahl', 'betrag', 'betrag', 'betrag', 'text'],
-        rows: m.settlements.map(s => [s.nr, datumCH(s.datum), s.anzahlTx,
-          unitsZuZahl(s.brutto), unitsZuZahl(s.fees), unitsZuZahl(s.netto), s.status])
-          .concat([['TOTAL', '', m.gesamt.anzahlTx, unitsZuZahl(m.gesamt.brutto),
+        header: mitReferenz
+          ? ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status', 'Referenz']
+          : ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status'],
+        typen: mitReferenz
+          ? ['text', 'text', 'zahl', 'betrag', 'betrag', 'betrag', 'text', 'text']
+          : ['text', 'text', 'zahl', 'betrag', 'betrag', 'betrag', 'text'],
+        rows: m.settlements.map(s => {
+          const basis = [s.nr, datumCH(s.datum), s.anzahlTx,
+            unitsZuZahl(s.brutto), unitsZuZahl(s.fees), unitsZuZahl(s.netto), s.status];
+          return mitReferenz ? basis.concat([s.referenz || '']) : basis;
+        }).concat([mitReferenz
+          ? ['TOTAL', '', m.gesamt.anzahlTx, unitsZuZahl(m.gesamt.brutto),
+            unitsZuZahl(m.gesamt.fees), unitsZuZahl(m.gesamt.netto), '', '']
+          : ['TOTAL', '', m.gesamt.anzahlTx, unitsZuZahl(m.gesamt.brutto),
             unitsZuZahl(m.gesamt.fees), unitsZuZahl(m.gesamt.netto), '']]),
         hinweis,
       },
@@ -3500,6 +3510,10 @@ ORDER BY settlement_datum, transaction_id;`;
             unitsZuZahl(d.brutto), unitsZuZahl(d.fees), unitsZuZahl(d.netto)])
             .concat([[`Subtotal (${s.anzahlTx} Tx)`, '', '',
               unitsZuZahl(s.brutto), unitsZuZahl(s.fees), unitsZuZahl(s.netto)]]),
+          // Referenz gehoert bewusst NICHT in block.name (der wird zum
+          // Excel-Blattnamen und ist auf 31 Zeichen begrenzt) - deshalb als
+          // Hinweiszeile unter dem Blocktitel, wie beim Ausstehend-/Offen-Hinweis.
+          hinweis: mitReferenz && s.referenz ? `Auszahlungsreferenz: ${s.referenz}` : undefined,
         });
       });
     }

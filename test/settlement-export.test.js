@@ -272,6 +272,46 @@ test('xlsxBlattName: Eindeutigkeit ueber viele echte Settlement-Bloecke hinweg (
     `Blattnamen kollidieren im 40-Settlement-Modell: ${JSON.stringify(blattnamen)}`);
 });
 
+// --- Referenz-Spalte + Detail-Hinweis (Task 4) ------------------------------
+
+const ZEILEN_REF = [
+  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1,PAYOUT-1',
+  '2026-01-05,SETTLED,200,,50161,CHF,TWINT,Physical Terminal,,20.00000000,20.00000000,0.20000000,19.80000000,1,PAYOUT-1',
+];
+function modellRef(...zeilen) {
+  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
+  const res = parseSettlementCsv([KOPF + ',settlement_reference', ...zeilen].join('\n') + '\n');
+  assert.strictEqual(res.error, null);
+  return buildSettlementReportModel(res.rows, { end: '2026-02-01 00:00:00' });
+}
+
+test('Uebersicht: mit reference-Option zusaetzliche Spalte "Referenz"', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modellRef(...ZEILEN_REF), { detail: false, reference: true });
+  const uebersicht = b.find(x => x.name === 'Settlement-Übersicht');
+  assert.deepStrictEqual(plain(uebersicht.header),
+    ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status', 'Referenz']);
+  // Datenzeile traegt die Referenz in der letzten Spalte.
+  assert.strictEqual(uebersicht.rows[0][7], 'PAYOUT-1');
+  // TOTAL-Zeile: Referenz-Spalte leer.
+  assert.strictEqual(uebersicht.rows[uebersicht.rows.length - 1][7], '');
+});
+
+test('Uebersicht: ohne reference-Option unveraendert 7 Spalten', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modellRef(...ZEILEN_REF), { detail: false });
+  const uebersicht = b.find(x => x.name === 'Settlement-Übersicht');
+  assert.deepStrictEqual(plain(uebersicht.header),
+    ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status']);
+});
+
+test('Detailblock: mit reference-Option ein Auszahlungsreferenz-Hinweis', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modellRef(...ZEILEN_REF), { detail: true, reference: true });
+  const detail = b.find(x => x.name.startsWith('Settlement 1:'));
+  assert.strictEqual(detail.hinweis, 'Auszahlungsreferenz: PAYOUT-1');
+});
+
 test('formatZahlCH: negativer Betrag (Refund) stimmt mit formatAmountCH ueberein', () => {
   const { formatZahlCH, formatAmountCH } = loadBuilders();
   // -530000000 in 1e-8-Einheiten entspricht -5.30 CHF.
