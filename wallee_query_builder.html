@@ -3233,6 +3233,9 @@ ORDER BY settlement_datum, transaction_id;`;
     // spaltenweise aufgehen, nicht die fachliche Kennzahl abbilden.
     const gesamt = leereSettlementSumme();
     let waehrung = '';
+    // Referenz je Valutadatum sammeln (distinct). Nur SETTLED/PARTIAL-Zeilen
+    // tragen eine Referenz bei - NO_RECORD hat keine Banktransaktion.
+    const refMap = new Map();   // datum -> Set von Referenzen
 
     zeilen.forEach(r => {
       if (!waehrung && r.waehrung) waehrung = r.waehrung;
@@ -3272,6 +3275,12 @@ ORDER BY settlement_datum, transaction_id;`;
       addiereSettlement(g, brutto, fees, netto);
       g.detail.push({ nr: 0, transactionId: r.transactionId, connector: r.connector,
         brutto, fees, netto });
+
+      if (r.settlementReference) {
+        let set = refMap.get(r.settlementDatum);
+        if (!set) { set = new Set(); refMap.set(r.settlementDatum, set); }
+        set.add(r.settlementReference);
+      }
     });
 
     const settlements = [...gruppen.values()].sort((a, b) => a.datum < b.datum ? -1 : a.datum > b.datum ? 1 : 0);
@@ -3282,6 +3291,7 @@ ORDER BY settlement_datum, transaction_id;`;
 
     settlements.forEach((g, i) => {
       g.nr = i + 1;
+      g.referenz = [...(refMap.get(g.datum) || [])].sort().join(', ');
       g.detail.sort((a, b) => String(a.transactionId).localeCompare(String(b.transactionId), 'en', { numeric: true }));
       g.detail.forEach((d, j) => { d.nr = j + 1; });
     });

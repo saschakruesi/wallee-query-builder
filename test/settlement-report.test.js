@@ -371,3 +371,48 @@ test('kpi.anzahlSettlements zaehlt Settled und Ausstehend zusammen, aber nicht O
   );
   assert.strictEqual(m.kpi.anzahlSettlements, 2);
 });
+
+test('Modell fuehrt je Settlement-Gruppe die distinct Referenz(en)', () => {
+  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
+  const kopf = KOPF + ',settlement_reference';
+  const zeilen = [
+    // zwei Tx desselben Valutadatums, gleiche Referenz -> genau eine
+    '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1,PAYOUT-1',
+    '2026-01-05,SETTLED,101,,50161,CHF,TWINT,Physical Terminal,,20.00000000,20.00000000,0.20000000,19.80000000,1,PAYOUT-1',
+    // anderer Valutatag, andere Referenz
+    '2026-01-06,SETTLED,200,,50161,CHF,Visa,Ecommerce,,30.00000000,30.00000000,0.30000000,29.70000000,1,PAYOUT-2',
+  ];
+  const res = parseSettlementCsv(kopf + '\n' + zeilen.join('\n') + '\n');
+  const m = buildSettlementReportModel(res.rows, { end: '2026-02-01 00:00:00' });
+  assert.deepStrictEqual(plain(m.settlements.map(s => [s.datum, s.referenz])), [
+    ['2026-01-05', 'PAYOUT-1'],
+    ['2026-01-06', 'PAYOUT-2'],
+  ]);
+});
+
+test('Modell verbindet mehrere Referenzen einer Gruppe distinct und sortiert', () => {
+  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
+  const kopf = KOPF + ',settlement_reference';
+  const zeilen = [
+    '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1,PAYOUT-B',
+    '2026-01-05,SETTLED,101,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1,PAYOUT-A',
+    '2026-01-05,SETTLED,102,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1,PAYOUT-A',
+  ];
+  const res = parseSettlementCsv(kopf + '\n' + zeilen.join('\n') + '\n');
+  const m = buildSettlementReportModel(res.rows, { end: '2026-02-01 00:00:00' });
+  assert.strictEqual(m.settlements[0].referenz, 'PAYOUT-A, PAYOUT-B');
+});
+
+test('Modell: Offen-Gruppe (NO_RECORD) hat keine Referenz', () => {
+  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
+  const kopf = KOPF + ',settlement_reference';
+  const zeilen = [
+    '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1,PAYOUT-1',
+    ',NO_RECORD,900,,50161,CHF,Visa,Ecommerce,,88.50000000,,,,0,',
+  ];
+  const res = parseSettlementCsv(kopf + '\n' + zeilen.join('\n') + '\n');
+  const m = buildSettlementReportModel(res.rows, { end: '2026-02-01 00:00:00' });
+  const offen = m.settlements[m.settlements.length - 1];
+  assert.strictEqual(offen.datum, '');
+  assert.strictEqual(offen.referenz, '');
+});
