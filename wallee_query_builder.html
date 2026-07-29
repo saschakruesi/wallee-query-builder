@@ -3183,6 +3183,9 @@ ORDER BY settlement_datum, transaction_id;`;
         fees:               betrag(z, 'processing_fees'),
         netto:              betrag(z, 'netamount'),
         records:            Number.isFinite(anzahl) ? anzahl : 0,
+        // Optional: nur vorhanden, wenn die Referenz-Option aktiv war. Fehlt die
+        // Spalte, liefert txt() '' - deshalb NICHT in SETTLEMENT_PFLICHT.
+        settlementReference: txt(z, 'settlement_reference'),
       });
     }
     return { rows, headers, error: null };

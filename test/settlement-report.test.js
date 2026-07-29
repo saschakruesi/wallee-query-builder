@@ -36,6 +36,7 @@ test('parseSettlementCsv liest eine Zeile in 1e-8-Einheiten', () => {
     fees: 214000000,
     netto: 22286000000,
     records: 1,
+    settlementReference: '',
   });
 });
 
@@ -61,6 +62,26 @@ test('parseSettlementCsv nimmt eine NO_RECORD-Zeile mit leeren Betraegen an', ()
   assert.strictEqual(res.rows[0].bruttoTx, 8850000000);
   assert.strictEqual(res.rows[0].brutto, 0);
   assert.strictEqual(res.rows[0].netto, 0);
+});
+
+test('parseSettlementCsv liest die optionale settlement_reference-Spalte', () => {
+  const { parseSettlementCsv } = loadBuilders();
+  const kopf = KOPF + ',settlement_reference';
+  const zeile = '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,'
+    + '10.00000000,10.00000000,0.10000000,9.90000000,1,PAYOUT-4711';
+  const res = parseSettlementCsv(kopf + '\n' + zeile + '\n');
+  assert.strictEqual(res.error, null);
+  assert.strictEqual(res.rows[0].settlementReference, 'PAYOUT-4711');
+});
+
+test('parseSettlementCsv ohne Referenz-Spalte bleibt gueltig, Feld ist leer', () => {
+  const { parseSettlementCsv } = loadBuilders();
+  const res = parseSettlementCsv(csv(
+    '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,'
+    + '10.00000000,10.00000000,0.10000000,9.90000000,1',
+  ));
+  assert.strictEqual(res.error, null);
+  assert.strictEqual(res.rows[0].settlementReference, '');
 });
 
 test('parseSettlementCsv meldet eine fehlende Pflichtspalte als Fehlerobjekt, ohne zu werfen', () => {
@@ -129,6 +150,7 @@ test('parseSettlementCsv ist unabhaengig von der Spaltenreihenfolge im Kopf', ()
     fees: 50000000,
     netto: 4950000000,
     records: 2,
+    settlementReference: '',
   });
 });
 
