@@ -93,6 +93,28 @@ test('Verlaufseintrag ohne Super-User traegt einen leeren Account', () => {
   assert.strictEqual(e.account, '');
 });
 
+// Regression v5.10: der Super-User-Account gehoert zum Settlement-Modus. Stand er
+// auch an einem Terminal-/Brand-Eintrag, lief der spaetere Download-by-Token im
+// falschen Account und lieferte nichts.
+test('Verlaufseintrag traegt den Super-User-Account nur im Settlement-Modus', () => {
+  const { historyEintragBauen } = loadBuilders();
+  const st = {
+    spaces: [{ id: '50161', selected: true }],
+    start: '2026-01-01 00:00:00', end: '2026-02-01 00:00:00',
+    terminals: [{ id: '3265', selected: true }],
+    settlementSuperUser: true, settlementAccountId: '99999',
+  };
+
+  ['brand', 'terminal', 'export', 'card'].forEach(mode => {
+    const e = historyEintragBauen(mode, 'tok-' + mode, st, '2026-07-24T10:00:00Z', 'SUCCESS');
+    assert.strictEqual(e.account, '', `Modus ${mode} darf den Settlement-Account nicht merken`);
+  });
+
+  const s = historyEintragBauen('settlement', 'tok-s', st, '2026-07-24T10:00:00Z', 'SUCCESS');
+  assert.strictEqual(s.account, '99999', 'im Settlement-Modus bleibt er erhalten');
+  assert.strictEqual(s.spacesSummary, 'Account 99999');
+});
+
 // --- Zusammenfassung im Settlement-Modus ist account-basiert, nicht Space/Terminal (Fix) --
 
 test('Settlement-Eintrag mit abweichendem Account zeigt den Account, keine Space-/Terminalangabe', () => {

@@ -736,7 +736,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.10.0</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.10.1</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -2257,7 +2257,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.10.0';
+  const APP_VERSION = '5.10.1';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -4078,6 +4078,13 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
   // Leerer settlementAccountId heisst: der Account aus den Zugangsdaten gilt.
   // Der Proxy setzt ihn dann selbst - die App muss ihn gar nicht kennen.
   function aktiverAccount() {
+    // Der Override gehoert zum Settlement-Modus: nur dort ist er einstellbar
+    // (Flip im Settlement-Panel), und nur dort ist er fachlich richtig. Die
+    // uebrigen Modi filtern nach Space - ein fremder Account kennt diese Spaces
+    // nicht, die Query lief dann im falschen Kontext und kam leer zurueck
+    // (Regression v5.10: der Terminal-Report blieb dadurch dauerhaft leer,
+    // sobald der Flip fuer eine Settlement-Auswertung angeschaltet war).
+    if (state.mode !== 'settlement') return '';
     return state.settlementSuperUser ? String(state.settlementAccountId || '').trim() : '';
   }
 
@@ -4403,7 +4410,11 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     const term = (s.terminals || []).filter(t => t.selected).length;
     // Leer heisst: der konfigurierte Account galt. Ein alter Eintrag ohne das
     // Feld verhaelt sich damit automatisch richtig.
-    const accountWert = s.settlementSuperUser ? String(s.settlementAccountId || '').trim() : '';
+    // Nur im Settlement-Modus gilt der Super-User-Account (analog aktiverAccount):
+    // stand er auch an einem Terminal-/Brand-Eintrag, lief der spaetere
+    // Download-by-Token im falschen Account und lieferte nichts.
+    const accountWert = (mode === 'settlement' && s.settlementSuperUser)
+      ? String(s.settlementAccountId || '').trim() : '';
     let spacesSummary;
     let filterSummary = '';
     if (mode === 'settlement') {
