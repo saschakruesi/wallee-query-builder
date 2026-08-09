@@ -1,6 +1,6 @@
 # Wallee Analytics Query Builder
 
-**Aktuelle Version: v5.8.0**
+**Aktuelle Version: v5.10.1**
 
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies

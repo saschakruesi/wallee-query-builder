@@ -607,6 +607,9 @@ test('submitUndReport toleriert transiente 404 beim Status-Poll und laeuft dann 
 test('aktiverAccount liefert den Super-User-Account nur bei aktivem Flip', () => {
   const api = loadBuilders();
   const st = api.getState();
+  // Der Account-Override gehoert zum Settlement-Modus - nur dort ist er ueberhaupt
+  // einstellbar, also auch nur dort wirksam (siehe eigener Test weiter unten).
+  st.mode = 'settlement';
 
   st.settlementSuperUser = true;
   st.settlementAccountId = '99999';
@@ -620,6 +623,27 @@ test('aktiverAccount liefert den Super-User-Account nur bei aktivem Flip', () =>
   st.settlementSuperUser = true;
   st.settlementAccountId = '';
   assert.strictEqual(api.aktiverAccount(), '');
+});
+
+// Regression v5.10: der Super-User-Flip steht im Settlement-Panel und meint den
+// Account, in dem der SETTLEMENT-Report laufen soll. Er darf nicht auf die
+// uebrigen Modi durchschlagen - deren Queries filtern nach Space, und ein
+// fremder Account kennt diese Spaces nicht. Die Query lief dann im falschen
+// Kontext und lieferte null Zeilen ("Die Datei ist leer ...").
+test('aktiverAccount wirkt nur im Settlement-Modus, nicht in den uebrigen', () => {
+  const api = loadBuilders();
+  const st = api.getState();
+  st.settlementSuperUser = true;
+  st.settlementAccountId = '99999';
+
+  ['brand', 'terminal', 'export', 'card'].forEach(mode => {
+    st.mode = mode;
+    assert.strictEqual(api.aktiverAccount(), '',
+      `Modus ${mode} darf den Settlement-Account nicht mitschicken`);
+  });
+
+  st.mode = 'settlement';
+  assert.strictEqual(api.aktiverAccount(), '99999', 'im Settlement-Modus gilt er weiterhin');
 });
 
 test('mitAccount haengt den Account nur an, wenn einer gilt', () => {
@@ -663,19 +687,52 @@ test('Submit schickt account, wenn der Super-User-Flip aktiv und eine ID eingetr
       return { status: 200, json: async () => ({ portalQueryToken: 'TOKB' }) };
     }
     if (/\/status\//.test(url)) return { status: 200, json: async () => ({ status: 'SUCCESS' }) };
-    if (/\/result\//.test(url)) return { status: 200, text: async () => 'a,b\n1,2', json: async () => null };
+    if (/\/result\//.test(url)) return { status: 200, text: async () => 'settlement_valuedate\n', json: async () => null };
     return { status: 200, json: async () => ({ ok: true }) };
   };
   const x = loadBuilders({ fetch: fetchStub });
   const st = x.getState();
   st.proxyUrl = 'http://localhost:8787';
-  st.mode = 'brand';
+  // Der Flip gehoert zum Settlement-Panel und wirkt nur in dessen Modus - in
+  // 'brand' waere der Account fachlich falsch (siehe Regressionstest oben).
+  st.mode = 'settlement';
   st.settlementSuperUser = true;
   st.settlementAccountId = '99999';
   x.apiPollConfig.retryStandardSek = 0;
   await x.submitUndReport('SELECT 1');
   assert.strictEqual(gesehen.length, 1);
   assert.strictEqual(gesehen[0].account, '99999', 'bei aktivem Flip mit eingetragener ID muss der Account mitgeschickt werden');
+});
+
+// Gegenstueck: derselbe Flip, aber ein Modus, der nach Space filtert. Hier darf
+// der Account NICHT mitgehen, sonst laeuft die Query im fremden Kontext und
+// liefert null Zeilen (Regression v5.10, Terminal-Report blieb leer).
+test('Submit laesst account weg, wenn der Flip an ist, der Modus aber nicht settlement ist', async () => {
+  const gesehen = [];
+  const fetchStub = async (url, opts) => {
+    if (/\/submit$/.test(url)) {
+      gesehen.push({ body: JSON.parse(opts.body), url });
+      return { status: 200, json: async () => ({ portalQueryToken: 'TOKC' }) };
+    }
+    if (/\/status\//.test(url)) { gesehen.push({ url }); return { status: 200, json: async () => ({ status: 'SUCCESS' }) }; }
+    if (/\/result\//.test(url)) { gesehen.push({ url }); return { status: 200, text: async () => 'a,b\n1,2', json: async () => null }; }
+    return { status: 200, json: async () => ({ ok: true }) };
+  };
+  const x = loadBuilders({ fetch: fetchStub });
+  const st = x.getState();
+  st.proxyUrl = 'http://localhost:8787';
+  st.mode = 'terminal';
+  st.settlementSuperUser = true;
+  st.settlementAccountId = '99999';
+  x.apiPollConfig.retryStandardSek = 0;
+  await x.submitUndReport('SELECT 1');
+
+  const submit = gesehen.find(g => g.body);
+  assert.ok(!('account' in submit.body), 'kein account-Feld im Submit-Body');
+  // Auch Status und Result duerfen den Account nicht als Query-Parameter tragen.
+  gesehen.filter(g => !g.body).forEach(g => {
+    assert.ok(!/account=/.test(g.url), 'kein account-Parameter in ' + g.url);
+  });
 });
 
 // --- Settlement-Zweig im Submit-Pfad (Fix nach Review Task 10) -------------

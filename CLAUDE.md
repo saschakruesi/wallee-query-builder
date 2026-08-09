@@ -23,7 +23,7 @@ analog zum Terminal-Report.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.10.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.10.1).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -320,6 +320,19 @@ Valutazeitpunkt, (3) *Welche Transaktionen stecken darin?* → **Transaktionsdet
   Beide nur im Modus `settlement` sichtbar (siehe „Sichtbarkeit der Panels" oben). Auf dem
   Bildschirm stehen alle Übersichts-Blöcke offen; nur der `Transaktionen`-Block steckt in
   einem `<details>` (mit Zeilenzahl im Summary), sonst erschlägt er die Übersicht.
+- **Account-Override gilt nur im Settlement-Modus (seit v5.10.1).** `aktiverAccount()` gibt
+  ausserhalb von `mode === 'settlement'` **immer** `''` zurück — der Super-User-Flip steht im
+  Settlement-Panel und meint den Account, in dem der *Settlement*-Report laufen soll.
+  `submitUndReport`, `tokenAbrufen` und `historyEintragBauen` nutzen diese eine Funktion
+  modusübergreifend, deshalb muss die Eingrenzung **in ihr** sitzen, nicht bei den Aufrufern.
+  **Warum das zwingend ist:** alle anderen Modi filtern nach `spaceid`. Ein fremder Account
+  kennt diese Spaces nicht, die Query läuft im falschen Kontext und liefert **null Zeilen** —
+  der Report meldet dann „Die Datei ist leer oder enthält keine lesbaren Zeilen". Genau das war
+  der Fehler in v5.10.0: wer den Flip einmal für eine Settlement-Auswertung angeschaltet hatte,
+  bekam im Terminal-Report dauerhaft einen leeren Report, ohne erkennbaren Zusammenhang. Die
+  Testsuite war grün, weil kein Test „Flip an **und** anderer Modus" abdeckte — die Regression
+  ist seither in `test/api-anbindung.test.js` und `test/history.test.js` über alle vier übrigen
+  Modi festgenagelt.
 - **Kein Datei-Upload:** anders als früher beim Terminal-Report vor v5 gibt es hier nie einen
   CSV-Upload-Pfad — der Report wird ausschliesslich aus dem eigenen Query-Ergebnis befüllt
   (`ingestSettlementCsv`, ausgelöst über `uebergibSettlementCsv` nach dem Submit).
@@ -399,7 +412,9 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   `terminal` und `settlement` speisen zusätzlich sofort ihr jeweiliges Report-Panel, um einen
   weiteren Result-Abruf zu sparen. Der Verlaufseintrag merkt seit v5.8 zusätzlich den Account,
   in dessen Kontext die Query lief (`e.account`) — im `settlement`-Modus kann das ein anderer
-  als der konfigurierte Account sein (Super-User).
+  als der konfigurierte Account sein (Super-User). **Nur dort**: `historyEintragBauen` setzt
+  `account` ausschliesslich bei `mode === 'settlement'`, analog zu `aktiverAccount()` (siehe
+  „Account-Override gilt nur im Settlement-Modus" unten).
 
 ### Betriebsmodus & API (v4, Zugangsdaten-Dialog seit v5)
 
