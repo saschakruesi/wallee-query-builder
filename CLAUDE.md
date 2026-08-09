@@ -23,13 +23,14 @@ analog zum Terminal-Report.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.9.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.10.0).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
 | `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
+| `settlement-report-spec/` | **Nur lokal, bewusst nicht im Git** (siehe `.gitignore`): fachliche Vorgabe des Settlement-Reports (seit v5.10 umgesetzt) — `SPEC.md` (Datenmodell, Aggregation, Aufbau, Edge Cases, Validierungen §7), `GAP-ANALYSIS.md` (was der Report vor v5.10 anders machte), `generate_report.py` (Referenz-Implementierung in Python) sowie die Referenz-Ausgaben `Settlement_Report_Juni-Juli_2026.pdf` / `Settlement_Detail_Juni-Juli_2026.xlsx`. Die Referenzdateien enthalten **echte Produktivdaten** (~69'000 Transaktionen mit Bankreferenzen, namentlich genannter Händler) — dieses Repo ist **öffentlich**, weil das Self-Update ohne Auth von `raw.githubusercontent.com` lädt, deshalb dürfen sie nicht eingecheckt werden. **Bei Änderungen am Settlement-Report zuerst hier nachlesen** — die Referenzdaten sind der Prüfstein (siehe „Gegen die Referenzdaten prüfen" unten). |
 | `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
 
@@ -64,6 +65,17 @@ Kein Framework, keine Dependencies, läuft offline per Doppelklick.
   der Settlement-Modus ist seit v5.8 account- statt space-/terminal-basiert und kennt keine
   Terminal-Aufschlüsselung mehr; `loadState()` löscht das Feld aus altem State, statt es
   stehen zu lassen.
+- **`settlementReference` ist seit v5.10 default `true`** (vormals `false`): das Feld steuert
+  nicht mehr bloss eine Zusatzspalte, sondern den gesamten Abschnitt **Bankgutschriften** —
+  den Kern des Kontoauszug-Abgleichs und damit den Hauptzweck des Reports. Damit ein aus v5.9
+  übernommenes `false` diesen Abschnitt nicht stumm unterdrückt, hebt `loadState()` den Wert
+  **einmalig** auf `true` und setzt dazu den Marker `settlementReferenceV510`. Der Marker steht
+  **auch im Default-State**, damit ein frisch angelegter State die Migration gar nicht erst
+  durchläuft; die Erkennung prüft deshalb bewusst `parsed.settlementReferenceV510` (den
+  gespeicherten Stand) und **nicht** `state....` — der Spread über die Defaults würde sonst
+  jede Prüfung mit „schon migriert" beantworten und die Migration liefe nie. Ein bewusstes
+  Abschalten nach der Migration bleibt erhalten (beides in `test/betriebsmodus.test.js`
+  festgenagelt). Rein additiv, **kein** `STORAGE_KEY`-Bump.
 
 Seit v4 enthält die HTML-Datei mehrere `<script>`-Blöcke: den eingebetteten XLSX-Vendor
 (`<script id="vendor-xlsx">`, nur für den XLSX-Export), seit v5.8 zusätzlich den eingebetteten
@@ -105,12 +117,19 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
    vor-aggregiertes `settle_tx`-CTE, Zeitfilter wie gewohnt auf `t.completedon`; kein Join
    mehr auf `currentaccountwithdrawal` (die Auszahlungsreferenz-Heuristik bleibt exklusiv im
    Transaktions-Export, siehe `payoutref`/`auszahlungen`-CTE unten) — **ausser bei aktiver
-   Referenz-Option, seit v5.9** (`reference: true`, siehe „Settlement-Report" unten). Gruppiert
-   wird **clientseitig** nach `bt.valuedate` — Ausgabe ist der **Settlement-Report** (siehe
-   eigener Abschnitt unten), nicht mehr die reine SQL-Zeile pro Tag. Der Modus liefert **kein**
-   `tip_total` mehr (kein `tipCte`-Join). Statt eines Accounts aus dem Space-Selektor kommt der
-   Account aus den Zugangsdaten (Feld gesperrt) bzw., mit dem Flip „Anderen Account abfragen
-   (Super-User)", aus einem frei eingebbaren Feld.
+   Referenz-Option** (`reference: true`, seit v5.9, **seit v5.10 default an**, siehe
+   „Settlement-Report" unten). Ausgabe ist der **Settlement-Report** (eigener Abschnitt unten),
+   nicht die rohe SQL-Zeile. Der Modus liefert **kein** `tip_total` mehr (kein `tipCte`-Join).
+   Statt eines Accounts aus dem Space-Selektor kommt der Account aus den Zugangsdaten (Feld
+   gesperrt) bzw., mit dem Flip „Anderen Account abfragen (Super-User)", aus einem frei
+   eingebbaren Feld.
+   **Seit v5.10 gruppiert der Report nach (Space, Valuta-Zeitpunkt)** statt nach blossem
+   Valutadatum. Die Query liefert dafür zwei zusätzliche Felder: `s.valuedate` als vollen
+   Timestamp unter dem Alias **`settlement_valuedate`** (**nicht** mehr `date(...) AS
+   settlement_datum` — ein Space kann am selben Tag mehrfach ausbezahlt werden, `date()`
+   verschmilzt diese Auszahlungen zu einer und macht den Bankabgleich unmöglich) sowie
+   `t.createdon AS created_on` (Erfassungsbeginn im Titelblock, Sortierung des
+   Transaktionsdetails).
 
 Sichtbarkeit der Panels steuert `setMode()` über die CSS-Klasse `.cond-section.active`
 bzw. `.hidden`. Terminal-Panel aktiv in `terminal`/`export`/`card` (seit v5.8 **nicht** mehr
@@ -189,7 +208,7 @@ Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Sch
   Datei-Input im Report-Panel dient nur noch dem Import/Export der Gruppen-Konfiguration
   (`reportImportCfgInput`, JSON), nicht mehr dem Laden der Report-Rohdaten.
 
-### Settlement-Report (Ausgabe des Modus `settlement`, seit v5.8)
+### Settlement-Report (Ausgabe des Modus `settlement`, seit v5.8, Spec-Umbau in v5.10)
 
 Analog zum Terminal-Report: reine, DOM-freie Funktionen (harness-getestet in
 `test/settlement-report.test.js`, `test/settlement-export.test.js`,
@@ -197,24 +216,67 @@ Analog zum Terminal-Report: reine, DOM-freie Funktionen (harness-getestet in
 hat er **keine** persistente Gruppen-Konfiguration — er ist eine reine Auswertung des
 Query-Ergebnisses, nichts wird editiert oder gemerged.
 
+**Seit v5.10 folgt der Aufbau `settlement-report-spec/SPEC.md`** (Referenz-Implementierung
+`generate_report.py`). Der Report beantwortet die drei Fragen der Buchhaltung in dieser
+Reihenfolge: (1) *Welche Zahlung traf auf dem Konto ein und unter welcher Referenz?* →
+**Bankgutschriften**, (2) *Woraus besteht eine Auszahlung?* → **Settlements** je Space und
+Valutazeitpunkt, (3) *Welche Transaktionen stecken darin?* → **Transaktionsdetail**.
+
 - **`parseSettlementCsv(text)` → `{ rows, headers, error }`** — eigener CSV-Parser (getrennt
   von `parseReportCsv`: andere Pflichtspalten, andere Feldnamen), Pflichtspalten
-  `settlement_datum`, `settlement_state`, `transaction_id`, `connector`, `waehrung`,
-  `brutto_gross`, `settlement_gross`, `processing_fees`, `netamount`. Beträge wie beim
-  Terminal-Report als ganzzahlige 1e-8-Einheiten.
-- **Drei Status pro Settlement-Zeile** (Konstante `SETTLEMENT_STATUS`): **Settled**
-  (Valutadatum liegt im Berichtszeitraum), **Ausstehend** (Valutadatum liegt nach dem
-  Berichtszeitraum — entsteht daraus, dass nach Transaktionsdatum gefiltert, aber nach
-  Valutadatum gruppiert wird: Transaktionen der letzten Tage werden erst danach abgerechnet),
-  **Offen** (Transaktion ganz ohne Settlement-Record, `settlement_state = NO_RECORD`). *Offen*
-  zählt **nicht** als Settlement, nicht ins ausbezahlte Netto (`kpi.netto`) und nicht in den
-  Durchschnitt (`kpi.avgNetto`) — es hat ja noch keine Banktransaktion, auf der diese Werte
-  beruhen könnten.
+  **`settlement_valuedate`** (seit v5.10, vormals `settlement_datum`), `settlement_state`,
+  `transaction_id`, `connector`, `waehrung`, `brutto_gross`, `settlement_gross`,
+  `processing_fees`, `netamount`. Optional (fehlen dürfen): `settlement_reference`,
+  `created_on`, `space_id`, `merchant_reference`, `sales_channel`, `terminal_identifier`.
+  Beträge wie beim Terminal-Report als ganzzahlige 1e-8-Einheiten. Jede Zeile trägt den
+  vollen Valuta-Timestamp (`settlementValuedate`, Gruppierungsschlüssel) **und** dessen
+  Datumsanteil (`settlementDatum`, für Status-Einstufung und Kapitel-Zeiträume) — abgeleitet
+  über `valutaDatum()`.
+- **Drei Status pro Settlement** (Konstante `SETTLEMENT_STATUS`): **Settled** (Valutadatum
+  im Berichtszeitraum), **Ausstehend** (Valutadatum nach dem Berichtszeitraum — entsteht
+  daraus, dass nach Transaktionsdatum gefiltert, aber nach Valutadatum gruppiert wird),
+  **Offen** (Transaktion ganz ohne Settlement-Record, `settlement_state = NO_RECORD`).
+  *Ausstehend* ist eine bewusste Erweiterung über SPEC hinaus und ergibt sich aus dem
+  Filterfeld der App. *Offen* zählt **nicht** als Settlement und in **keine** Summe des
+  Reports — seit v5.10 steht es nicht mehr als Pseudo-Zeile in der Settlement-Übersicht,
+  sondern in einem **eigenen Abschnitt „Offene Transaktionen"** (SPEC 4.4). Dadurch erfüllt
+  die TOTAL-Zeile der Übersicht `Brutto − Fees = Netto` wieder ausnahmslos; der frühere
+  Fussnoten-Hinweis dazu ist entfallen. Gibt es keine offenen Posten, bleibt der Abschnitt
+  mit „Keine." stehen — die Abwesenheit ist selbst eine berichtenswerte Aussage.
 - **`buildSettlementReportModel(rows, optionen)`** → `{ kpi, connectors, connectorTotal,
-  settlements, gesamt, ausstehend }`. Gruppierung nach `settlement_datum` (Valutadatum);
-  `optionen.end` markiert Gruppen ab dem Berichtsende als *Ausstehend*. Zusätzlich eine
-  Aufschlüsselung nach Zahlungsmittel (`connectors`/`connectorTotal`), die *Offen*-Zeilen
-  bewusst **nicht** mitzählt (siehe „Wichtiger fachlicher Entscheid" unten).
+  spaces, spaceTotal, spaceListe, credits, creditTotal, settlements, gesamt, ausstehend,
+  offen, txDetail, hasReference }`. Kern der Umstellung (SPEC 2.2–2.4):
+  - **Settlement = (Space, Valuta-Timestamp)**, nicht Valutadatum. Ein Space kann am selben
+    Tag mehrfach ausbezahlt werden (an Produktivdaten: dreimal); auf das Datum zu gruppieren
+    verschmilzt getrennte Gutschriften und macht den Bankabgleich unmöglich. Settlements
+    heissen `<spaceid>-S001` (je Space aufsteigend nach Valuta), der Bucket ohne
+    Space-Zuordnung `OZ-S001` (SPEC 6.4). Über Spaces hinweg wird **nie** gruppiert.
+  - **Bankgutschrift = `internalreference`** (`credits`, nummeriert `BG-01…` nach frühestem
+    Valutazeitpunkt). Sie ist **nicht** 1:1 zum Settlement: eine Gutschrift bündelt mehrere
+    Spaces und Valutatage (an den Referenzdaten: 23 Gutschriften über 82 Settlements). Die
+    `BG-nn` ist der Querverweis, der in Übersicht, Space-Kapitel und Transaktionsdetail
+    wieder auftaucht. **Bewusst über SPEC 4.4 hinaus** führt die Settlement-Übersicht neben
+    `BG-nn` auch die **volle Referenz** mit (Spalte „Referenz (Kontoauszug)"): die Spec hält
+    dort aus Platzgründen nur das Kürzel und verweist für den vollen String auf Abschnitt 2
+    bzw. die Space-Kapitel — beim Abgleich will man ihn aber genau dort sehen, wo das
+    Settlement steht, ohne zu springen. Settlements ohne Referenz zeigen `—`, nicht eine
+    leere Zelle (sonst bliebe offen, ob die Referenz fehlt oder nur nicht geladen wurde).
+    Der PDF-Export schaltet ab 10 Spalten auf Schriftgrösse 7, damit die 32-Zeichen-Referenz
+    einzeilig bleibt. Abgerechnete Zeilen **ohne** Referenz landen in einer Sammelzeile
+    (`bg: '—'`), sonst wäre die Summe der Gutschriften kleiner als das Report-Total und
+    SPEC-Check 3 ginge nicht auf (an den Referenzdaten betrifft das 26 Transaktionen).
+  - **`spaces`/`spaceTotal`** je Space (treibt Space-Übersicht und die PDF-Kapitel),
+    **`connectors`** je Zahlungsmittel (Name über `zahlungsmittelName()` von den Präfixen
+    `Wallee All-in-One - ` / `Wallee ACQ - ` befreit, SPEC 2.1), **`txDetail`** eine Zeile je
+    Transaktion (sortiert nach Valuta, Space, Transaktionsdatum) für den Excel-Drilldown.
+  - Beide Aufschlüsselungen zählen *Offen*-Zeilen bewusst **nicht** mit, damit ihre
+    Total-Zeilen zu den KPIs darüber passen.
+  - **Refunds** sind gewöhnliche Zeilen mit negativem Brutto und **positiver** Gebühr (SPEC
+    6.1) — nichts wird genettet, gefiltert oder in den Betrag gezogen.
+- **KPIs** (SPEC 4.2): Anzahl Bankgutschriften, Settlements, Transaktionen, Spaces, Brutto,
+  Fees, Netto, nicht ausbezahlt (Tx/Brutto), dazu Erfassungsbeginn und Valuta-Zeitraum.
+  **`Ø Netto/Settlement` und die Fee-Quote sind auf Kundenwunsch entfallen** (SPEC 4.2,
+  GAP-ANALYSIS G7) — bei der früheren Datums-Gruppierung war der Nenner ohnehin falsch.
 - **Wichtiger fachlicher Entscheid: Brutto, Fees und Netto stammen in jeder Settlement-Zeile
   durchgängig aus der Banktransaktion** (`banktransaction.postingamount` für Brutto,
   `postingamount − valueamount` für Fees, `valueamount` für Netto) — **nicht** aus der
@@ -231,35 +293,72 @@ Query-Ergebnisses, nichts wird editiert oder gemerged.
   1e-8-Einheiten — beide Domänen bewusst getrennt, keine Umrechnung zwischen ihnen).
 - **`settlementExportBloecke(modell, optionen)`** ist die gemeinsame Basis für Bildschirm,
   CSV, Excel und PDF — **vier Ausgaben aus einer Quelle**, wie schon beim Terminal-Report.
-  `optionen.detail` (gespiegelt aus `state.settlementDetail`) blendet den
-  Transaktionsdetail-Abschnitt aus, Zusammenfassung/Übersicht bleiben unverändert.
+  Die Blöcke ergeben seit v5.10 genau die **sieben Blätter** aus SPEC 5:
+  `Zusammenfassung`, `Aufschlüsselung nach Zahlungsmittel`, `Übersicht nach Space`,
+  `Bankgutschriften` (nur mit Referenz), `Settlement-Übersicht`, `Offene Transaktionen`,
+  `Transaktionen` (nur mit `detail`). `optionen.detail` (aus `state.settlementDetail`)
+  steuert allein den `Transaktionen`-Block, `optionen.reference` (aus
+  `state.settlementReference`) die Bankgutschriften und alle Referenz-/BG-Spalten.
   `buildSettlementReportCsv` und `settlementPdfBloecke` sitzen auf denselben Blöcken auf; das
   PDF läuft über den zweiten Vendor-Block (`vendor-jspdf`, jsPDF 2.5.2 + jspdf-autotable
   3.8.4), ebenso wie das Excel über `vendor-xlsx`. Excel-Blattnamen über `xlsxBlattName`
   wort-bewusst auf 31 Zeichen gekürzt (Excel-Limit), mit sprechenden Kürzeln für bekannte
   lange Blocknamen (`XLSX_BLATTNAME_KUERZEL`).
+- **`settlementPdfBloecke`** baut daraus zusätzlich die Gliederung aus SPEC 4: bilingualer
+  Titel, Kopfzeilen nach **Valutadatum** (Erfassungsdatum nur als Nebennotiz, SPEC 4.1),
+  Abschnitt *Bankgutschriften* und *Settlement-Übersicht* je auf frischer Seite, danach
+  **ein Kapitel pro Space** (`4. Detail pro Space — <id>`, jeweils neue Seite, SPEC 4.5) mit
+  KPI-Zeile, Zahlungsmittel-Aufschlüsselung und einer Settlement-Tabelle, die die
+  **vollständige Referenz** wiederholt — damit ein einzelnes Space-Kapitel für sich allein
+  an einen Händler gehen kann. Ohne Referenz-Option rutschen die Abschnittsnummern um eins
+  nach vorn. **Das Transaktionsdetail steht bewusst nie im PDF** (SPEC 4.6: ~69k
+  Transaktionen wären ~1'500 Seiten) — es lebt in Excel/CSV.
 - **UI:** eigenes Panel `settlementSection` (Account-Feld, vorbelegt aus den Zugangsdaten und
-  gesperrt; Flip „Anderen Account abfragen (Super-User)" schaltet das Feld frei; Checkbox
-  „Transaktionsdetail einschliessen") sowie das Ausgabe-Panel `settlementReportSection`
-  (CSV-/Excel-/PDF-Button). Beide nur im Modus `settlement` sichtbar (siehe „Sichtbarkeit der
-  Panels" oben).
+  gesperrt; Flip „Anderen Account abfragen (Super-User)" schaltet das Feld frei; Checkboxen
+  „Transaktionsdetail einschliessen" und „Bankgutschriften / Auszahlungsreferenz
+  einschliessen") sowie das Ausgabe-Panel `settlementReportSection` (CSV-/Excel-/PDF-Button).
+  Beide nur im Modus `settlement` sichtbar (siehe „Sichtbarkeit der Panels" oben). Auf dem
+  Bildschirm stehen alle Übersichts-Blöcke offen; nur der `Transaktionen`-Block steckt in
+  einem `<details>` (mit Zeilenzahl im Summary), sonst erschlägt er die Übersicht.
 - **Kein Datei-Upload:** anders als früher beim Terminal-Report vor v5 gibt es hier nie einen
   CSV-Upload-Pfad — der Report wird ausschliesslich aus dem eigenen Query-Ergebnis befüllt
   (`ingestSettlementCsv`, ausgelöst über `uebergibSettlementCsv` nach dem Submit).
-- **Auszahlungsreferenz (opt-in, seit v5.9):** Über die Checkbox „Auszahlungsreferenz
-  einschliessen" (`state.settlementReference`, Default aus) führt der Report je
-  Settlement die `currentaccountwithdrawal.internalreference` mit — dieselbe Referenz
-  wie auf dem Bank Statement. `buildSettlementQuery({ start, end, reference })` hängt
-  dann die CTEs `auszahlungen`+`payoutref` und die Spalte `settlement_reference` an,
-  account-korrekt eingeschränkt **aus der Query selbst** (`spacereference.accountid`
-  auf `SELECT DISTINCT spaceid FROM tx`) — ohne externe Account-ID, funktioniert also
-  in Kopier- und API-Modus. Ohne die Option bleibt die Query wie in v5.8 (kein
-  Withdrawal-Join). Die Referenz erscheint pro Settlement-Gruppe (`model.settlements[].referenz`,
-  distinct/sortiert) in der Übersicht-Spalte „Referenz" und als Hinweis im Detailblock;
-  sie fliesst in keine Summe. Rein additives State-Feld, **kein** `STORAGE_KEY`-Bump.
+- **Auszahlungsreferenz / Bankgutschriften (seit v5.9, seit v5.10 default an):** Die Checkbox
+  (`state.settlementReference`) führt je Transaktion die
+  `currentaccountwithdrawal.internalreference` mit — dieselbe Referenz wie auf dem Bank
+  Statement. `buildSettlementQuery({ start, end, reference })` hängt dann die CTEs
+  `auszahlungen`+`payoutref` und die Spalte `settlement_reference` an, account-korrekt
+  eingeschränkt **aus der Query selbst** (`spacereference.accountid` auf
+  `SELECT DISTINCT spaceid FROM tx`) — ohne externe Account-ID, funktioniert also in Kopier-
+  und API-Modus. Ohne die Option bleibt die Query wie in v5.8 (kein Withdrawal-Join) und der
+  Report **degradiert sauber**: `hasReference` bleibt `false`, der Abschnitt
+  *Bankgutschriften* sowie alle BG-/Referenz-Spalten entfallen, alles andere bleibt
+  unverändert. Der Join ist teurer und die zeitliche Zuordnung bleibt heuristisch (siehe
+  „Wallee-Referenzwissen") — er ist trotzdem default an, weil der Kontoauszug-Abgleich der
+  Hauptzweck des Reports ist.
 - **Abfrage-Verlauf:** wie beim Terminal-Report zeigt die Verlaufszeile im Modus `settlement`
   nur den Roh-CSV-Download — Excel und PDF laufen ausschliesslich über das Report-Panel
   selbst (`exportSettlementXlsx`/`exportSettlementPdf`).
+
+#### Gegen die Referenzdaten prüfen
+
+`settlement-report-spec/Settlement_Detail_Juni-Juli_2026.xlsx` enthält **69'436 echte
+Transaktionen** samt Soll-Ergebnis — der belastbarste Test für Änderungen am Modell, weit
+über die Unit-Tests hinaus. Das Blatt `Transaktionen` lässt sich ohne Python-Bibliotheken
+lesen (XLSX ist ein ZIP; `xl/worksheets/sheet6.xml` + `xl/sharedStrings.xml`, gestreamt mit
+`ET.iterparse`). **Zwei Fallstricke**, beide beim ersten Versuch zugeschlagen:
+
+1. **Leere Zellen werden im XML weggelassen.** Ohne Auswertung des `r`-Attributs (`A1`,
+   `C1`, …) verrutschen ganze Spalten und Zahlen landen in Textspalten. Immer über die
+   Zellreferenz in ein Array fester Breite einsortieren, nie Kind-Elemente durchzählen.
+2. **Datums-/Zeitwerte sind Excel-Serials** (`46185.157…`), keine Strings — mit
+   `datetime(1899,12,30) + timedelta(days=f)` umrechnen.
+
+Erwartete Werte (SPEC 7): 82 Settlements, 69'436 Transaktionen, Brutto `1'551'946.46`,
+Fees `16'900.34`, Netto `1'535'046.12`, 23 Referenzen + 1 Sammelzeile ohne Referenz
+(= 24 Bankgutschriften), 6 Spaces inkl. `ohne Zuordnung`. Der aktuelle Stand reproduziert
+diese Zahlen exakt, ebenso die Space- und Zahlungsmittel-Summen und die einzelnen
+`BG-nn`-Zeilen des Referenz-Reports.
 
 ### Abfrage-Verlauf (seit v5)
 
@@ -425,7 +524,9 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
     `sql/settlement_reference_reference.sql`. Der Settlement-**Modus** hat seit v5.8 sein
     eigenes, ähnlich gebautes, aber eigenständiges `settle_tx`-CTE (kein Space-Filter, dafür
     zusätzlich `min(bt.valuedate)` als Gruppierungsschlüssel für den Report) — die beiden
-    teilen sich keinen Code, nur das Muster.
+    teilen sich keinen Code, nur das Muster. **Seit v5.10 gibt der Settlement-Modus
+    `min(bt.valuedate)` als vollen Timestamp aus** (`settlement_valuedate`), nicht mehr
+    `date(...)` — siehe „Fünf Modi" oben.
   - **`auszahlungen`** / **`payoutref`**: Auszahlungsreferenz =
     `currentaccountwithdrawal.internalreference`, zeitlich zugeordnet (früheste Withdrawal
     des eigenen Accounts im Fenster `[bt.valuedate, bt.valuedate + 10 Tage)`) — rein
@@ -710,22 +811,22 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     nur dadurch, dass etwa täglich eine Auszahlung stattfindet — sie sagt nichts über die
     fachlich richtige Zuordnung aus. 10 Tage sind bewusst ein Vielfaches der gemessenen 1–2
     Tage, als Puffer für Feiertage und Wochenenden.
-  - **Der Settlement-Modus (`buildSettlementQuery`) braucht diese Withdrawal-Referenz seit
-    v5.8 nicht mehr (ausser bei aktiver Referenz-Option, seit v5.9).** Die obigen Punkte zu
-    `currentaccountwithdrawal` bleiben dauerhaftes Wissen — sie gelten weiterhin
-    uneingeschränkt für den `payoutref`-CTE im Transaktions-Export (Spalte
-    `settlement_reference`) —, betreffen den Settlement-Modus standardmässig aber nicht: der
-    ist seit dem Umbau auf Account-Basis ohnehin bereits auf einen einzelnen Account
-    eingeschränkt (der Account-Header der Anfrage selbst übernimmt diese Rolle) und braucht
-    daher im Regelfall keinen eigenen, zusätzlichen Join auf `currentaccountwithdrawal`, um
-    die Auszahlungsreferenz zu ermitteln — er verzichtet standardmässig schlicht auf diese
-    Spalte und zeigt Auszahlungen nur über `banktransaction` (Valutadatum, Beträge, Status),
-    nicht über die Referenz selbst. Aktiviert der Nutzer die Checkbox „Auszahlungsreferenz
-    einschliessen" (seit v5.9, siehe „Settlement-Report" oben), holt der Modus den Join
-    gezielt zurück — dabei gilt dieselbe Account-Einschränkung wie beim `payoutref`-CTE im
-    Transaktions-Export, nur account-scoped aus der Query selbst hergeleitet
-    (`spacereference.accountid` auf die Spaces des eigenen `tx`-CTE) statt über einen
-    extern übergebenen `spaceIds`-Parameter.
+  - **Der Settlement-Modus (`buildSettlementQuery`) zieht diese Withdrawal-Referenz seit
+    v5.10 standardmässig wieder mit** (v5.8 hatte sie entfernt, v5.9 als Opt-in
+    zurückgeholt). Die obigen Punkte zu `currentaccountwithdrawal` bleiben dauerhaftes
+    Wissen und gelten unverändert für **beide** Aufrufer — den `payoutref`-CTE im
+    Transaktions-Export und den des Settlement-Modus. Im Settlement-Modus gilt dieselbe
+    Account-Einschränkung, nur aus der Query selbst hergeleitet (`spacereference.accountid`
+    auf die Spaces des eigenen `tx`-CTE) statt über einen extern übergebenen
+    `spaceIds`-Parameter — der Modus ist ohnehin account-scoped (der Account-Header der
+    Anfrage übernimmt diese Rolle), die Einschränkung bleibt aber trotzdem zwingend, damit
+    der Range-Join nicht gegen die Auszahlungen der gesamten Plattform läuft.
+    **Warum default an, obwohl der Join teuer und die Zuordnung heuristisch ist:** Die
+    Referenz ist der String auf dem Kontoauszug und damit der Schlüssel, gegen den die
+    Buchhaltung abgleicht — ohne sie beantwortet der Report seine wichtigste Frage nicht
+    (SPEC 2.2). An den Referenzdaten hält die Heuristik: jedes `(spaceid, valuedate)`-Paar
+    bildet auf **genau eine** Referenz ab (über alle 82 Settlements geprüft). Wer die
+    Kosten sparen will, schaltet die Checkbox ab — der Report degradiert dann sauber.
 - **Grenzen der Analytics** (nicht lösbar, dem Kunden so kommunizieren):
   - Keine IC++-Aufschlüsselung (DCC/Interchange/Scheme/Acquirer) — nur `totalappliedfees` gesamt.
   - Eine Query läuft in **einem** Account; Spaces fremder Accounts → Permission Error.
@@ -755,7 +856,8 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    gegen Realm-Grenzen bei `deepStrictEqual`).
    Testdateien: `queries` (SQL), `report`/`report-render`/`report-xlsx` (Terminal-Report-Kern,
    Render, XLSX end-to-end), `settlement-report`/`settlement-export`/`settlement-render`
-   (Settlement-Report-Kern, Export-Blöcke, Render — analog zum Terminal-Report, seit v5.8),
+   (Settlement-Report-Kern, Export-Blöcke, Render — analog zum Terminal-Report, seit v5.8;
+   seit v5.10 gegen das Spec-Modell: Settlement-Grain, Bankgutschriften, Space-Kapitel),
    `betriebsmodus`/`api-anbindung` (Modi, Health, Submit-Poll-Result), `terminal-sync`/
    `terminal-labels` (Terminal-Synchronisierung, Label-Auflösung), `tip_unsettled`
    (Trinkgeld/Unsettled-Zähler), `proxy` (reine Proxy-Funktionen inkl. JWT gegen RFC-7515
@@ -777,10 +879,25 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
 
 ## Offene Punkte / Ideen
 
-- Auszahlungsreferenz-Zuordnung über Withdrawals (`payoutref`-CTE im Transaktions-Export) ist
-  heuristisch (zeitbasiert) — beobachten, ob es einen direkten Verknüpfungspfad gibt. Betrifft
-  seit v5.8 **nur noch den Transaktions-Export**, nicht mehr den Settlement-Modus (der braucht
-  diese Referenz nicht mehr, siehe „Wallee-Referenzwissen").
+- Auszahlungsreferenz-Zuordnung über Withdrawals (`payoutref`-CTE) ist heuristisch
+  (zeitbasiert) — beobachten, ob es einen direkten Verknüpfungspfad gibt. Betrifft seit v5.10
+  **beide** Aufrufer: den Transaktions-Export und wieder den Settlement-Modus, wo die Referenz
+  die Bankgutschriften trägt (siehe „Wallee-Referenzwissen"). Ein direkter Fremdschlüssel
+  würde dort die letzte verbleibende Unschärfe des Reports beseitigen.
+- **Offen aus SPEC 1.2 / GAP-ANALYSIS G3+G4:** Die Query filtert weiterhin auf
+  `t.completedon` (Transaktionsdatum), die Spec verlangt für den Report eigentlich einen
+  Filter auf **`valuedate`**. Solange nach Transaktionsdatum gefiltert wird, ist der letzte
+  Settlement-Tag am Rand des Zeitraums unvollständig — die App fängt das ab, indem sie diese
+  Settlements als **Ausstehend** kennzeichnet statt sie stillschweigend abzuschneiden (genau
+  der Fehler, den G3 als „sieht vollständig aus, ist es aber nicht" beschreibt). Ein echter
+  Valuta-Filter wäre die saubere Lösung, ändert aber die Bedeutung des Zeitraum-Pickers für
+  alle Modi — bewusst zurückgestellt, nicht übersehen. G4 (nicht abgerechnete Transaktionen
+  müssen im Export enthalten sein) ist dagegen erfüllt: der `LEFT JOIN` hält sie als
+  `NO_RECORD` fest.
+- **Bewusste Abweichung von SPEC 3:** Das Tausendertrennzeichen ist `’` (U+2019,
+  `CH_TAUSENDER`), die Spec zeigt den geraden Apostroph `'`. Die App nutzt U+2019 seit v4
+  durchgängig, auch im Terminal-Report; eine Umstellung nur für den Settlement-Report würde
+  die beiden Reports auseinanderlaufen lassen. Bei Bedarf zentral an `CH_TAUSENDER` ändern.
 - Das Zeitfenster im `payoutref`-CTE steht seit der Account-Einschränkung auf 10 Tagen
   (vormals 30, gemessen mit `sql/settlement_verifikation.sql` Query 10) — weiter gegen
   echte Fälle in anderen Spaces/Accounts validieren, inkl. mehrerer Settlements pro

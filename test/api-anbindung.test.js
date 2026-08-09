@@ -684,11 +684,11 @@ test('Submit schickt account, wenn der Super-User-Flip aktiv und eine ID eingetr
 // holt submitUndReport nach SUCCESS den Ergebnistext und uebergibt ihn an
 // uebergibSettlementCsv statt an den Terminal-Report.
 
-const SETTLEMENT_KOPF = 'settlement_datum,settlement_state,transaction_id,merchant_reference,'
+const SETTLEMENT_KOPF = 'settlement_valuedate,settlement_state,transaction_id,created_on,merchant_reference,'
   + 'space_id,waehrung,connector,sales_channel,terminal_identifier,'
   + 'brutto_gross,settlement_gross,processing_fees,netamount,settlement_records';
 const SETTLEMENT_CSV = [SETTLEMENT_KOPF,
-  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+  '2026-01-05 09:00:00,SETTLED,100,2026-01-03 12:00:00,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
 ].join('\n') + '\n';
 
 test('Submit im settlement-Modus uebernimmt das Ergebnis in den Settlement-Report', async () => {

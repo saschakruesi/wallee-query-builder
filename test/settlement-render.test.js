@@ -6,13 +6,13 @@ const assert = require('node:assert');
 const { loadBuilders } = require('./harness');
 const { makeDocument } = require('./dom-stub');
 
-const KOPF = 'settlement_datum,settlement_state,transaction_id,merchant_reference,'
+const KOPF = 'settlement_valuedate,settlement_state,transaction_id,created_on,merchant_reference,'
   + 'space_id,waehrung,connector,sales_channel,terminal_identifier,'
   + 'brutto_gross,settlement_gross,processing_fees,netamount,settlement_records';
 
 const CSV = [KOPF,
-  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
-  '2026-01-05,SETTLED,200,,50161,CHF,TWINT,Physical Terminal,,20.00000000,20.00000000,0.20000000,19.80000000,1',
+  '2026-01-05 09:00:00,SETTLED,100,2026-01-03 10:00:00,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+  '2026-01-05 09:00:00,SETTLED,200,2026-01-03 11:00:00,,50161,CHF,TWINT,Physical Terminal,,20.00000000,20.00000000,0.20000000,19.80000000,1',
 ].join('\n') + '\n';
 
 test('ingestSettlementCsv nimmt ein gueltiges Ergebnis an und rendert die Abschnitte', () => {
@@ -50,8 +50,8 @@ test('ingestSettlementCsv verkraftet ein leeres Ergebnis ohne zu werfen', () => 
 // Pflichtspalten (Modell und Ausgabe bleiben leer, Statusmeldung nennt die
 // gefundenen Waehrungen).
 const CSV_ZWEI_WAEHRUNGEN = [KOPF,
-  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
-  '2026-01-05,SETTLED,200,,50161,EUR,Visa,Ecommerce,,100.00000000,100.00000000,1.00000000,99.00000000,1',
+  '2026-01-05 09:00:00,SETTLED,100,2026-01-03 10:00:00,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
+  '2026-01-05 09:00:00,SETTLED,200,2026-01-03 11:00:00,,50161,EUR,Visa,Ecommerce,,100.00000000,100.00000000,1.00000000,99.00000000,1',
 ].join('\n') + '\n';
 
 test('ingestSettlementCsv verweigert den Report bei mehr als einer Waehrung (Befund 2)', () => {

@@ -736,7 +736,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.9.0</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.10.0</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -980,7 +980,7 @@
 
   <div class="panel cond-section" id="settlementSection">
     <h2>Settlement / Auszahlung</h2>
-    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Diese Auswertung ist <strong>account-</strong>, nicht space-basiert: eine Auszahlung fasst die Transaktionen aller Spaces eines Accounts zu einer Gutschrift zusammen. Gefiltert wird nach Transaktionsdatum, gruppiert nach Valutadatum der Gutschrift — deshalb reichen die Settlements am Ende des Zeitraums typischerweise ein paar Tage darüber hinaus und erscheinen als <strong>Ausstehend</strong>. Transaktionen ganz ohne Settlement-Record stehen als <strong>Offen</strong> am Ende.</p>
+    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Diese Auswertung ist <strong>account-</strong>, nicht space-basiert. Ein <strong>Settlement</strong> ist eine Auszahlung je Space und Valutazeitpunkt (ein Space kann am selben Tag mehrfach ausbezahlt werden); eine <strong>Bankgutschrift</strong> ist eine Zahlung auf dem Kontoauszug und bündelt oft mehrere Settlements über Spaces und Valutatage. Gefiltert wird nach Transaktionsdatum, gruppiert nach Valutadatum — deshalb reichen die Settlements am Ende des Zeitraums typischerweise ein paar Tage darüber hinaus und erscheinen als <strong>Ausstehend</strong>. Transaktionen ganz ohne Settlement-Record stehen als <strong>Offen</strong> und zählen in keine Summe.</p>
 
     <div class="field">
       <label class="feld-label" for="settlementAccountInput">Account</label>
@@ -1000,13 +1000,13 @@
       <input type="checkbox" id="settlementDetailToggle" checked />
       <span>Transaktionsdetail einschliessen</span>
     </label>
-    <p class="hint" style="margin-top:6px;margin-bottom:0;">Abschnitt 3 listet jede einzelne Transaktion je Settlement. Bei grossen Zeiträumen wird das lang — abschalten macht Bildschirm, PDF und Excel deutlich kürzer, Zusammenfassung und Übersicht bleiben unverändert.</p>
+    <p class="hint" style="margin-top:6px;margin-bottom:0;">Ergänzt Bildschirm, CSV und Excel um eine Tabelle mit <strong>einer Zeile je Transaktion</strong> (inkl. Settlement-ID und Bankreferenz) für den Drilldown. Bei grossen Zeiträumen wird das lang — abschalten macht die Ausgabe deutlich kürzer, alle Übersichten bleiben unverändert. Das PDF enthält das Transaktionsdetail bewusst nie.</p>
 
     <label class="check-row">
-      <input type="checkbox" id="settlementReferenceToggle" />
-      <span>Auszahlungsreferenz einschliessen</span>
+      <input type="checkbox" id="settlementReferenceToggle" checked />
+      <span>Bankgutschriften / Auszahlungsreferenz einschliessen</span>
     </label>
-    <p class="hint" style="margin-top:6px;margin-bottom:0;">Führt je Settlement die Auszahlungsreferenz mit (wie auf dem Bank Statement, für den Kontoauszug-Abgleich). Braucht einen teureren Join auf die Auszahlungen — standardmässig aus. Wirksam ab der nächsten Abfrage.</p>
+    <p class="hint" style="margin-top:6px;margin-bottom:0;">Führt je Settlement die Auszahlungsreferenz (wie auf dem Bank Statement) mit und gruppiert die Settlements zu <strong>Bankgutschriften</strong> für den Kontoauszug-Abgleich. Braucht einen teureren Join auf die Auszahlungen — bei Bedarf abschaltbar. Wirksam ab der nächsten Abfrage.</p>
   </div>
 
   <div class="panel" id="sqlPanel">
@@ -1828,7 +1828,12 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     settlementAccountId: '',
     settlementSuperUser: false,
     settlementDetail: true,
-    settlementReference: false,
+    settlementReference: true,
+    // Marker der einmaligen v5.10-Neu-Vorbelegung von settlementReference
+    // (siehe loadState). Hier bereits true, damit ein frisch angelegter State
+    // die Migration gar nicht erst durchlaeuft - sonst wuerde ein bewusstes
+    // Abschalten beim naechsten Laden wieder ueberschrieben.
+    settlementReferenceV510: true,
     userPresets: [],
     // Betriebsmodus (v4). Default ist bewusst der Kopieren-Modus: er braucht
     // keine Installation und ist damit das, was ohne Zutun funktioniert.
@@ -1861,7 +1866,21 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         if (typeof state.settlementAccountId !== 'string') state.settlementAccountId = '';
         state.settlementSuperUser = !!state.settlementSuperUser;
         if (typeof state.settlementDetail !== 'boolean') state.settlementDetail = true;
-        if (typeof state.settlementReference !== 'boolean') state.settlementReference = false;
+        if (typeof state.settlementReference !== 'boolean') state.settlementReference = true;
+        // Einmalige Neu-Vorbelegung fuer v5.10: das Feld steuert seit dem
+        // Spec-Umbau nicht mehr nur eine Zusatzspalte, sondern den gesamten
+        // Abschnitt "Bankgutschriften" - den Kern des Kontoauszug-Abgleichs.
+        // Ein aus v5.9 uebernommenes false wuerde diesen Abschnitt stumm
+        // unterdruecken, obwohl er jetzt der Hauptzweck des Reports ist.
+        // Der Marker sorgt dafuer, dass ein spaeteres bewusstes Abschalten
+        // erhalten bleibt (die Migration laeuft genau einmal).
+        // Bewusst gegen parsed (den gespeicherten Stand) geprueft, nicht gegen
+        // state: der Default traegt den Marker bereits, der Spread wuerde die
+        // Erkennung also immer als "schon migriert" beantworten.
+        if (!parsed.settlementReferenceV510) {
+          state.settlementReference = true;
+          state.settlementReferenceV510 = true;
+        }
         delete state.settlementByTerminal;
         // Migration: altes Einzelfeld spaceId -> spaces[]
         if ((!state.spaces || !state.spaces.length) && parsed.spaceId) {
@@ -2238,7 +2257,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.9.0';
+  const APP_VERSION = '5.10.0';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -2995,6 +3014,7 @@ LEFT JOIN payoutref ON payoutref.transaction_id = t.id` : '';
         t.spaceid,
         t.currency,
         t.completedamount,
+        t.createdon,
         t.merchantreference,
         t.paymentconnectorconfiguration_id,
         t.authorizationsaleschannel,
@@ -3028,12 +3048,16 @@ settle_tx AS (
     GROUP BY psr.transaction_id
 )${referenzCtes}
 SELECT
-    date(s.valuedate)                               AS settlement_datum,
+    -- Voller Valuta-Timestamp (nicht date()): das Modell gruppiert Settlements
+    -- pro (Space, Valutazeitpunkt) - ein Space kann am selben Tag mehrfach
+    -- ausbezahlt werden (SPEC 2.3). date() wuerde diese Auszahlungen verschmelzen.
+    s.valuedate                                     AS settlement_valuedate,
     -- NO_RECORD: fuer diese Transaktion existiert noch gar kein
     -- Settlement-Record. Der LEFT JOIN haelt sie fest, statt sie still
     -- herausfallen zu lassen - im Report wird daraus die Zeile "Offen".
     COALESCE(s.settlement_state, 'NO_RECORD')       AS settlement_state,
     t.id                                            AS transaction_id,
+    t.createdon                                     AS created_on,
     t.merchantreference                             AS merchant_reference,
     t.spaceid                                       AS space_id,
     t.currency                                      AS waehrung,
@@ -3059,7 +3083,7 @@ LEFT JOIN paymentconnector pc
 LEFT JOIN paymentterminal pt
        ON pt.id       = t.terminal_id
       AND pt.spaceid  = t.spaceid
-ORDER BY settlement_datum, transaction_id;`;
+ORDER BY settlement_valuedate, space_id, transaction_id;`;
   }
 
   // --- Terminal-Report: CSV-Parser ----------------------------------------
@@ -3170,9 +3194,18 @@ ORDER BY settlement_datum, transaction_id;`;
   // Spaltenlogik mit (unmatched/unsettled-Alias, Outlet-Zuordnung). Gemeinsam
   // bleiben csvZuZeilen als Zerleger und parseAmount fuer die 1e-8-Einheiten.
   const SETTLEMENT_PFLICHT = [
-    'settlement_datum', 'settlement_state', 'transaction_id', 'connector',
+    'settlement_valuedate', 'settlement_state', 'transaction_id', 'connector',
     'waehrung', 'brutto_gross', 'settlement_gross', 'processing_fees', 'netamount',
   ];
+
+  // Nur der Datumsanteil eines Valuta-Timestamps ('2026-07-15 05:10:23.1' ->
+  // '2026-07-15'). Fuer die Ausstehend-Einstufung (Vergleich gegen das
+  // Berichtsende) und die Space-Kapitel-Zeitraeume; die Settlement-Gruppierung
+  // selbst laeuft ueber den vollen Timestamp (SPEC 2.3).
+  function valutaDatum(ts) {
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(ts || '').trim());
+    return m ? m[1] : '';
+  }
 
   function parseSettlementCsv(text) {
     const zeilen = csvZuZeilen(text);
@@ -3201,8 +3234,13 @@ ORDER BY settlement_datum, transaction_id;`;
       // Die Analytics-CSV endet mit einer Leerzeile; die faellt hier weg.
       if (!z || z.length === 1 && String(z[0] || '').trim() === '') continue;
       const anzahl = parseInt(txt(z, 'settlement_records'), 10);
+      const valuedate = txt(z, 'settlement_valuedate');
       rows.push({
-        settlementDatum:    txt(z, 'settlement_datum'),
+        // Voller Valuta-Timestamp (Gruppierungsschluessel je Settlement) plus
+        // reiner Datumsanteil (Ausstehend-Einstufung, Kapitel-Zeitraeume).
+        settlementValuedate: valuedate,
+        settlementDatum:    valutaDatum(valuedate),
+        createdOn:          txt(z, 'created_on'),
         settlementState:    txt(z, 'settlement_state') || 'NO_RECORD',
         transactionId:      txt(z, 'transaction_id'),
         merchantReference:  txt(z, 'merchant_reference'),
@@ -3225,10 +3263,10 @@ ORDER BY settlement_datum, transaction_id;`;
   }
 
   // --- Settlement-Report: Modell -------------------------------------------
-  // Gruppiert wird nach Valutadatum (settlement_datum), gefiltert wurde in der
-  // Query nach Transaktionsdatum. Genau daraus entsteht der Ueberhang am Ende
-  // des Zeitraums: Transaktionen der letzten Tage werden erst danach
-  // abgerechnet und erscheinen als "Ausstehend".
+  // Gruppiert wird nach (Space, Valutazeitpunkt) aus settlement_valuedate,
+  // gefiltert wurde in der Query nach Transaktionsdatum. Genau daraus entsteht
+  // der Ueberhang am Ende des Zeitraums: Transaktionen der letzten Tage werden
+  // erst danach abgerechnet und erscheinen als "Ausstehend".
   const SETTLEMENT_STATUS = { settled: 'Settled', ausstehend: 'Ausstehend', offen: 'Offen' };
 
   // Eigene Namen statt der generischen "leereSumme"/"addiere": weiter unten im
@@ -3276,135 +3314,238 @@ ORDER BY settlement_datum, transaction_id;`;
     return tag;
   }
 
+  // n/a-Bucket fuer Transaktionen ohne Space-Zuordnung (SPEC 6.4). Im
+  // Analytics-Pfad praktisch nie leer, aber defensiv behandelt.
+  const SETTLEMENT_UNASSIGNED = 'n/a';
+
+  // Zahlungsmittel aus dem Connector-Namen (SPEC 2.1): die wallee-Praefixe
+  // weglassen, damit "Wallee All-in-One - Visa" als "Visa" erscheint.
+  function zahlungsmittelName(connector) {
+    return String(connector || 'UNKNOWN')
+      .replace('Wallee All-in-One - ', '')
+      .replace('Wallee ACQ - ', '');
+  }
+
+  // Stabiler String-Vergleich (Valuta-Timestamps, Space-IDs) fuer sort().
+  function strCmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+  // n/a-Bucket sortiert immer zuletzt, sonst lexikografisch.
+  function spaceCmp(a, b) {
+    return (a === SETTLEMENT_UNASSIGNED) - (b === SETTLEMENT_UNASSIGNED) || strCmp(a, b);
+  }
+  function summeReduce(liste) {
+    return liste.reduce((a, x) => {
+      a.anzahlTx += x.anzahlTx; a.brutto += x.brutto; a.fees += x.fees; a.netto += x.netto; return a;
+    }, leereSettlementSumme());
+  }
+
+  // Port von generate_report.py build_model()/aggregate() in die 1e-8-Welt der
+  // App. Baut aus den (nach Transaktionsdatum gefilterten) Zeilen das
+  // Spec-Modell: Settlements pro (Space, Valuta-Timestamp), Bankgutschriften
+  // pro internalreference, Space- und Zahlungsmittel-Aggregate sowie das
+  // Transaktionsdetail fuer den Excel-Drilldown. Betraege bleiben bank-basiert
+  // (settlement_gross/processing_fees/netamount) - Netto = Brutto - Fees gilt
+  // damit in jeder Zeile und Summe exakt.
   function buildSettlementReportModel(rows, optionen) {
     const zeilen = Array.isArray(rows) ? rows : [];
     // berichtsEndeTag() liefert den letzten Tag, den der Bericht abdeckt - ein
-    // Valutadatum danach liegt ausserhalb des Berichts und gilt als Ausstehend.
+    // Valutadatum danach liegt ausserhalb des Berichts und gilt als Ausstehend
+    // (App-Erweiterung: die Query filtert nach Transaktions-, nicht Valutadatum).
     const endeTag = berichtsEndeTag(optionen && optionen.end);
 
-    const gruppen = new Map();   // datum -> Gruppe
-    const offen = { nr: 0, datum: '', status: SETTLEMENT_STATUS.offen, ...leereSettlementSumme(), detail: [] };
-    const connectorMap = new Map();
-    // gesamt ist bewusst die Spaltensumme der Settlement-Uebersicht (inkl. der
-    // "Offen"-Zeile: Brutto vorhanden, Fees/Netto 0) - kein Pendant zu den
-    // KPIs. Die Identitaet Brutto - Fees = Netto gilt hier deshalb NICHT,
-    // sobald "Offen"-Zeilen vorkommen. Das ist kein Bug: die Uebersicht muss
-    // spaltenweise aufgehen, nicht die fachliche Kennzahl abbilden.
-    const gesamt = leereSettlementSumme();
+    // --- 1. Zeilen normalisieren, settled/offen trennen -------------------
+    const settled = [];
+    const offen = { anzahlTx: 0, brutto: 0, fees: 0, netto: 0, detail: [] };
     let waehrung = '';
-    // Der Modus umfasst alle Spaces eines Accounts - anders als bei brand/
-    // terminal (die bewusst nach t.currency gruppieren) kann hier mehr als
-    // eine Waehrung vorkommen. waehrungenSet haelt alle vorkommenden fest,
-    // damit ingestSettlementCsv den Report bei mehr als einer Waehrung
-    // verweigern kann, statt Betraege ueber Waehrungen hinweg stillschweigend
-    // zu addieren.
     const waehrungenSet = new Set();
-    // Referenz je Valutadatum sammeln (distinct). Nur SETTLED/PARTIAL-Zeilen
-    // tragen eine Referenz bei - NO_RECORD hat keine Banktransaktion.
-    const refMap = new Map();   // datum -> Set von Referenzen
+    let createdMin = '';
 
     zeilen.forEach(r => {
       if (!waehrung && r.waehrung) waehrung = r.waehrung;
       if (r.waehrung) waehrungenSet.add(r.waehrung);
+      if (r.createdOn && (!createdMin || r.createdOn < createdMin)) createdMin = r.createdOn;
 
       // Ohne Settlement-Record gibt es keine Banktransaktion und damit weder
-      // Fees noch Netto. Als Brutto zaehlt dann der Transaktionsbetrag.
-      const hatRecord = r.settlementState !== 'NO_RECORD' && !!r.settlementDatum;
-      const brutto = hatRecord ? r.brutto : r.bruttoTx;
-      const fees   = hatRecord ? r.fees : 0;
-      const netto  = hatRecord ? r.netto : 0;
-
-      addiereSettlement(gesamt, brutto, fees, netto);
+      // Fees noch Netto. Als Brutto zaehlt dann der Transaktionsbetrag (SPEC 4.4).
+      const hatRecord = r.settlementState !== 'NO_RECORD' && !!r.settlementValuedate;
+      const spaceId = r.spaceId || SETTLEMENT_UNASSIGNED;
+      const mittel = zahlungsmittelName(r.connector);
 
       if (!hatRecord) {
-        addiereSettlement(offen, brutto, fees, netto);
-        offen.detail.push({ nr: 0, transactionId: r.transactionId, connector: r.connector,
-          brutto, fees, netto });
+        addiereSettlement(offen, r.bruttoTx, 0, 0);
+        offen.detail.push({ nr: 0, transactionId: r.transactionId, connector: mittel,
+          spaceId, brutto: r.bruttoTx, fees: 0, netto: 0 });
         return;
       }
+      settled.push({ transactionId: r.transactionId, spaceId, mittel,
+        // datum kommt aus dem Parser (settlementDatum), nicht erneut abgeleitet.
+        valuedate: r.settlementValuedate, datum: r.settlementDatum,
+        referenz: r.settlementReference || '', createdOn: r.createdOn,
+        merchantReference: r.merchantReference, salesChannel: r.salesChannel,
+        terminalIdentifier: r.terminalIdentifier, waehrung: r.waehrung,
+        brutto: r.brutto, fees: r.fees, netto: r.netto });
+    });
 
-      // Die Connector-Aufschluesselung steht im Report direkt unter den
-      // KPI-Kennzahlen (Brutto/Fees/Netto) - ihre Total-Zeile muss deshalb zu
-      // genau diesen Kennzahlen passen. Die Aggregation laeuft daher bewusst
-      // erst hier, nach dem hatRecord-Guard: NO_RECORD-Zeilen (ohne Fees/Netto)
-      // duerfen nicht mitgezaehlt werden, sonst widerspricht connectorTotal
-      // den KPIs zwei Zeilen darueber.
-      const c = connectorMap.get(r.connector) || { connector: r.connector, ...leereSettlementSumme() };
-      addiereSettlement(c, brutto, fees, netto);
-      connectorMap.set(r.connector, c);
+    // --- 2. Settlement-IDs je (Space, Valuta-Timestamp), seq pro Space -----
+    // Aufsteigend nach Valutazeitpunkt (SPEC 2.3); mehrere Auszahlungen pro
+    // Space und Tag bleiben getrennte Settlements.
+    const SEP = ' ';
+    const keyPaare = [...new Set(settled.map(r => r.spaceId + SEP + r.valuedate))]
+      .map(k => { const i = k.indexOf(SEP); return { spaceId: k.slice(0, i), valuedate: k.slice(i + 1) }; })
+      .sort((a, b) => strCmp(a.spaceId, b.spaceId) || strCmp(a.valuedate, b.valuedate));
+    const seqProSpace = new Map();
+    const settlementIdVon = new Map();
+    keyPaare.forEach(p => {
+      const seq = (seqProSpace.get(p.spaceId) || 0) + 1;
+      seqProSpace.set(p.spaceId, seq);
+      const prefix = p.spaceId === SETTLEMENT_UNASSIGNED ? 'OZ' : p.spaceId;
+      settlementIdVon.set(p.spaceId + SEP + p.valuedate, prefix + '-S' + String(seq).padStart(3, '0'));
+    });
 
-      let g = gruppen.get(r.settlementDatum);
-      if (!g) {
-        g = { nr: 0, datum: r.settlementDatum, status: SETTLEMENT_STATUS.settled,
+    // --- 3. Bankgutschriften: BG-nn je internalreference (SPEC 2.2) --------
+    // Nummeriert nach fruehestem Valutazeitpunkt der Referenz.
+    const refMin = new Map();
+    settled.forEach(r => {
+      if (!r.referenz) return;
+      const cur = refMin.get(r.referenz);
+      if (cur === undefined || r.valuedate < cur) refMin.set(r.referenz, r.valuedate);
+    });
+    const bgVon = new Map();
+    [...refMin.entries()].sort((a, b) => strCmp(a[1], b[1]) || strCmp(a[0], b[0]))
+      .forEach(([ref], i) => bgVon.set(ref, 'BG-' + String(i + 1).padStart(2, '0')));
+    const bgFuer = ref => (ref && bgVon.get(ref)) || '—';
+
+    // --- 4. Settlements / Connector / Space / Credit aggregieren ----------
+    const settlementMap = new Map();
+    const connectorMap = new Map();
+    const spaceMap = new Map();
+    const creditMap = new Map();
+    const txDetail = [];
+
+    settled.forEach(r => {
+      const key = r.spaceId + SEP + r.valuedate;
+      const settlementId = settlementIdVon.get(key);
+      const bg = bgFuer(r.referenz);
+
+      let s = settlementMap.get(key);
+      if (!s) {
+        s = { nr: 0, settlementId, spaceId: r.spaceId, valuedate: r.valuedate, datum: r.datum,
+          referenz: r.referenz, bg, status: SETTLEMENT_STATUS.settled,
           ...leereSettlementSumme(), detail: [] };
-        gruppen.set(r.settlementDatum, g);
+        settlementMap.set(key, s);
       }
-      addiereSettlement(g, brutto, fees, netto);
-      g.detail.push({ nr: 0, transactionId: r.transactionId, connector: r.connector,
-        brutto, fees, netto });
+      addiereSettlement(s, r.brutto, r.fees, r.netto);
+      s.detail.push({ nr: 0, transactionId: r.transactionId, connector: r.mittel,
+        brutto: r.brutto, fees: r.fees, netto: r.netto });
 
-      if (r.settlementReference) {
-        let set = refMap.get(r.settlementDatum);
-        if (!set) { set = new Set(); refMap.set(r.settlementDatum, set); }
-        set.add(r.settlementReference);
+      const c = connectorMap.get(r.mittel) || { connector: r.mittel, ...leereSettlementSumme() };
+      addiereSettlement(c, r.brutto, r.fees, r.netto); connectorMap.set(r.mittel, c);
+
+      const sp = spaceMap.get(r.spaceId)
+        || { spaceId: r.spaceId, anzahlSettlements: 0, ...leereSettlementSumme() };
+      addiereSettlement(sp, r.brutto, r.fees, r.netto); spaceMap.set(r.spaceId, sp);
+
+      if (r.referenz) {
+        const cr = creditMap.get(r.referenz)
+          || { bg, referenz: r.referenz, von: r.valuedate, bis: r.valuedate,
+               spacesSet: new Set(), ...leereSettlementSumme() };
+        addiereSettlement(cr, r.brutto, r.fees, r.netto);
+        if (r.valuedate < cr.von) cr.von = r.valuedate;
+        if (r.valuedate > cr.bis) cr.bis = r.valuedate;
+        cr.spacesSet.add(r.spaceId);
+        creditMap.set(r.referenz, cr);
       }
+
+      txDetail.push({ spaceId: r.spaceId, settlementId, bg, referenz: r.referenz,
+        valuedate: r.valuedate, transactionId: r.transactionId,
+        merchantReference: r.merchantReference, createdOn: r.createdOn, connector: r.mittel,
+        salesChannel: r.salesChannel, terminalIdentifier: r.terminalIdentifier,
+        waehrung: r.waehrung, brutto: r.brutto, fees: r.fees, netto: r.netto });
     });
 
-    const settlements = [...gruppen.values()].sort((a, b) => a.datum < b.datum ? -1 : a.datum > b.datum ? 1 : 0);
-    settlements.forEach(g => {
-      if (endeTag && g.datum > endeTag) g.status = SETTLEMENT_STATUS.ausstehend;
-    });
-    if (offen.anzahlTx > 0) settlements.push(offen);
-
-    settlements.forEach((g, i) => {
-      g.nr = i + 1;
-      g.referenz = [...(refMap.get(g.datum) || [])].sort().join(', ');
-      g.detail.sort((a, b) => String(a.transactionId).localeCompare(String(b.transactionId), 'en', { numeric: true }));
-      g.detail.forEach((d, j) => { d.nr = j + 1; });
+    // Settlements sortieren (Valuta, Space), Status/Nummer/Detail setzen.
+    const settlements = [...settlementMap.values()]
+      .sort((a, b) => strCmp(a.valuedate, b.valuedate) || strCmp(a.spaceId, b.spaceId));
+    settlements.forEach((s, i) => {
+      s.nr = i + 1;
+      if (endeTag && s.datum > endeTag) s.status = SETTLEMENT_STATUS.ausstehend;
+      s.detail.sort((a, b) => String(a.transactionId).localeCompare(String(b.transactionId), 'en', { numeric: true }));
+      s.detail.forEach((d, j) => { d.nr = j + 1; });
+      const sp = spaceMap.get(s.spaceId); if (sp) sp.anzahlSettlements += 1;
     });
 
-    const mitDatum = settlements.filter(g => g.status !== SETTLEMENT_STATUS.offen);
-    const bezahlt = mitDatum.reduce((a, g) => {
-      a.anzahlTx += g.anzahlTx; a.brutto += g.brutto; a.fees += g.fees; a.netto += g.netto;
-      return a;
-    }, leereSettlementSumme());
-
-    const ausstehendGruppen = settlements.filter(g => g.status === SETTLEMENT_STATUS.ausstehend);
-    const ausstehend = ausstehendGruppen.reduce((a, g) => {
-      a.anzahlSettlements += 1; a.anzahlTx += g.anzahlTx; a.brutto += g.brutto; a.netto += g.netto;
-      return a;
-    }, { anzahlSettlements: 0, anzahlTx: 0, brutto: 0, netto: 0 });
+    // --- 5. Totale + Ableitungen ------------------------------------------
+    const spaceListe = [...spaceMap.keys()].sort(spaceCmp);
+    const spaces = spaceListe.map(id => spaceMap.get(id));
+    const spaceTotal = spaces.reduce((a, sp) => {
+      a.anzahlSettlements += sp.anzahlSettlements; a.anzahlTx += sp.anzahlTx;
+      a.brutto += sp.brutto; a.fees += sp.fees; a.netto += sp.netto; return a;
+    }, { anzahlSettlements: 0, ...leereSettlementSumme() });
 
     const connectors = [...connectorMap.values()].sort((a, b) => b.brutto - a.brutto
       || String(a.connector).localeCompare(String(b.connector), 'de'));
-    const connectorTotal = connectors.reduce((a, c) => {
-      a.anzahlTx += c.anzahlTx; a.brutto += c.brutto; a.fees += c.fees; a.netto += c.netto;
-      return a;
-    }, leereSettlementSumme());
+    const connectorTotal = summeReduce(connectors);
+
+    const credits = [...creditMap.values()].map(cr => ({
+      bg: cr.bg, referenz: cr.referenz, von: cr.von, bis: cr.bis,
+      spaces: [...cr.spacesSet].sort(spaceCmp),
+      anzahlTx: cr.anzahlTx, brutto: cr.brutto, fees: cr.fees, netto: cr.netto,
+    })).sort((a, b) => strCmp(a.von, b.von));
+    // Sammelzeile fuer abgerechnete Transaktionen ohne Referenz: sonst waere
+    // die Summe der Bankgutschriften kleiner als das Report-Total und die
+    // Abstimmung (SPEC 7, Check 3) ginge nicht auf. An den Referenzdaten
+    // betrifft das 26 Transaktionen - sie gehoeren zu einer echten Gutschrift,
+    // deren Referenz im Export fehlt, und duerfen nicht verschwinden.
+    if (credits.length) {
+      const ohneRef = settled.filter(r => !r.referenz);
+      if (ohneRef.length) {
+        const von = ohneRef.reduce((a, r) => (a && a < r.valuedate ? a : r.valuedate), '');
+        const bis = ohneRef.reduce((a, r) => (a > r.valuedate ? a : r.valuedate), '');
+        credits.push({
+          bg: '—', referenz: '', von, bis,
+          spaces: [...new Set(ohneRef.map(r => r.spaceId))].sort(spaceCmp),
+          ...summeReduce(ohneRef.map(r => ({ anzahlTx: 1, brutto: r.brutto, fees: r.fees, netto: r.netto }))),
+        });
+      }
+    }
+    const creditTotal = summeReduce(credits);
+
+    const gesamt = summeReduce(settled.map(r => ({ anzahlTx: 1, brutto: r.brutto, fees: r.fees, netto: r.netto })));
+
+    const ausstehend = settlements.filter(s => s.status === SETTLEMENT_STATUS.ausstehend)
+      .reduce((a, s) => {
+        a.anzahlSettlements += 1; a.anzahlTx += s.anzahlTx; a.brutto += s.brutto; a.netto += s.netto; return a;
+      }, { anzahlSettlements: 0, anzahlTx: 0, brutto: 0, netto: 0 });
+
+    offen.detail.sort((a, b) => String(a.transactionId).localeCompare(String(b.transactionId), 'en', { numeric: true }));
+    offen.detail.forEach((d, j) => { d.nr = j + 1; });
+
+    txDetail.sort((a, b) => strCmp(a.valuedate, b.valuedate) || strCmp(a.spaceId, b.spaceId)
+      || strCmp(String(a.createdOn || ''), String(b.createdOn || '')));
 
     return {
       kpi: {
-        anzahlSettlements: mitDatum.length,
-        anzahlTx: bezahlt.anzahlTx,
-        brutto: bezahlt.brutto,
-        fees: bezahlt.fees,
-        netto: bezahlt.netto,
-        // Ganzzahlig gerundet: die Betraege sind 1e-8-Einheiten, ein Bruchteil
-        // davon waere sinnlos und wuerde die Float-Freiheit wieder aufgeben.
-        avgNetto: mitDatum.length ? Math.round(bezahlt.netto / mitDatum.length) : 0,
+        anzahlBankgutschriften: credits.length,
+        anzahlSettlements: settlements.length,
+        anzahlTx: gesamt.anzahlTx,
+        anzahlSpaces: spaceListe.length,
+        brutto: gesamt.brutto,
+        fees: gesamt.fees,
+        netto: gesamt.netto,
         offenAnzahlTx: offen.anzahlTx,
         offenBrutto: offen.brutto,
         waehrung,
         // Sortiertes Array aller vorkommenden Waehrungen - bei mehr als einer
-        // muss der Aufrufer (ingestSettlementCsv) den Report verweigern,
-        // statt Betraege verschiedener Waehrungen stillschweigend zu addieren.
+        // muss der Aufrufer (ingestSettlementCsv) den Report verweigern.
         waehrungen: [...waehrungenSet].sort(),
+        createdAb: valutaDatum(createdMin),
+        valutaVon: settlements.length ? settlements[0].datum : '',
+        valutaBis: settlements.length ? settlements[settlements.length - 1].datum : '',
       },
-      connectors,
-      connectorTotal,
-      settlements,
-      gesamt,
-      ausstehend,
+      connectors, connectorTotal,
+      spaces, spaceTotal, spaceListe,
+      credits, creditTotal,
+      settlements, gesamt, ausstehend, offen, txDetail,
+      hasReference: credits.length > 0,
     };
   }
 
@@ -3444,6 +3585,28 @@ ORDER BY settlement_datum, transaction_id;`;
     const tag = berichtsEndeTag(end);
     return tag ? datumCH(tag) : '';
   }
+
+  // Valuta-Timestamp schweizerisch: '2026-07-15 16:33:00' -> '15.07.2026 16:33';
+  // Mitternacht ohne Zeitanteil -> '15.07.2026' (SPEC 3).
+  function valutaZeitCH(ts) {
+    const s = String(ts || '').trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(s);
+    if (!m) return s;
+    const d = `${m[3]}.${m[2]}.${m[1]}`;
+    return (m[4] && !(m[4] === '00' && m[5] === '00')) ? `${d} ${m[4]}:${m[5]}` : d;
+  }
+
+  // Valuta-Bereich einer Bankgutschrift: gleicher Tag -> ein Datum, sonst
+  // Kurzform '24.06. - 25.06.2026' (SPEC 3).
+  function valutaBereichCH(von, bis) {
+    const dv = valutaDatum(von), db = valutaDatum(bis);
+    if (dv === db) return datumCH(dv);
+    const mv = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dv);
+    return (mv ? `${mv[3]}.${mv[2]}.` : dv) + ' - ' + datumCH(db);
+  }
+
+  // Space-Anzeige: der n/a-Bucket heisst im Report "ohne Zuordnung" (SPEC 6.4).
+  function spaceLabel(id) { return id === SETTLEMENT_UNASSIGNED ? 'ohne Zuordnung' : String(id); }
 
   // Der Spaltentyp gilt normalerweise fuer die ganze Spalte. Der Block
   // "Zusammenfassung" mischt in seiner Wert-Spalte aber Zaehler und Betraege -
@@ -3488,64 +3651,61 @@ ORDER BY settlement_datum, transaction_id;`;
     return ergebnis || bereinigt.slice(0, 31);
   }
 
+  // Leeres Modell als Fallback (Bildschirm ohne Daten, defensive Aufrufe).
+  function leeresSettlementModell() {
+    const s0 = { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 };
+    return { kpi: {}, connectors: [], connectorTotal: { ...s0 }, spaces: [],
+      spaceTotal: { anzahlSettlements: 0, ...s0 }, spaceListe: [], credits: [],
+      creditTotal: { ...s0 }, settlements: [], gesamt: { ...s0 },
+      ausstehend: {}, offen: { anzahlTx: 0, brutto: 0, detail: [] }, txDetail: [] };
+  }
+
+  // Analytische Bloecke fuer Bildschirm, CSV und Excel (SPEC 4.2-4.4, 5).
+  // Eine Quelle, mehrere Ausgaben - wie beim Terminal-Report. Der PDF-Report
+  // (settlementPdfBloecke) baut daraus zusaetzlich Per-Space-Kapitel.
   function settlementExportBloecke(modell, optionen) {
-    const m = modell || { kpi: {}, connectors: [],
-      connectorTotal: { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 }, settlements: [],
-      gesamt: { anzahlTx: 0, brutto: 0, fees: 0, netto: 0 }, ausstehend: {} };
+    const m = modell && modell.kpi ? modell : leeresSettlementModell();
     const mitDetail = !optionen || optionen.detail !== false;
-    const mitReferenz = !!(optionen && optionen.reference);
-    const w = m.kpi && m.kpi.waehrung ? m.kpi.waehrung : '';
+    // Referenz/Bankgutschriften erscheinen nur, wenn die Option aktiv war UND
+    // das Ergebnis ueberhaupt Referenzen trug (sonst degradiert der Report
+    // sauber auf Space-/Settlement-Ebene).
+    const mitReferenz = !!(optionen && optionen.reference) && !!m.hasReference;
+    const k = m.kpi;
+    const w = k.waehrung || '';
 
-    const zus = [
-      ['Anzahl Settlements', m.kpi.anzahlSettlements || 0],
-      ['Anzahl Transaktionen', m.kpi.anzahlTx || 0],
-      ['Brutto Volumen', unitsZuZahl(m.kpi.brutto || 0)],
-      ['Processing Fees', unitsZuZahl(m.kpi.fees || 0)],
-      ['Netto Auszahlung', unitsZuZahl(m.kpi.netto || 0)],
-      ['Ø Netto/Settlement', unitsZuZahl(m.kpi.avgNetto || 0)],
-    ];
-    // Zeilenweise Zelltypen zur Wert-Spalte von "zus": Zaehler bleiben 'zahl',
-    // Geldbetraege 'betrag' - sonst wuerden Zaehler spaeter als "2.00" gerendert.
-    const zusTypen = [
-      ['text', 'zahl'],
-      ['text', 'zahl'],
-      ['text', 'betrag'],
-      ['text', 'betrag'],
-      ['text', 'betrag'],
-      ['text', 'betrag'],
-    ];
-    if (m.kpi.offenAnzahlTx) {
-      zus.push(['Noch nicht abgerechnet (Tx)', m.kpi.offenAnzahlTx]);
-      zusTypen.push(['text', 'zahl']);
-      zus.push(['Noch nicht abgerechnet (Brutto)', unitsZuZahl(m.kpi.offenBrutto || 0)]);
-      zusTypen.push(['text', 'betrag']);
-    }
+    // --- 1. Zusammenfassung (KPI-Liste, SPEC 4.2) -------------------------
+    const zus = [];
+    const zusTypen = [];
+    const kpiZeile = (label, wert, typ) => { zus.push([label, wert]); zusTypen.push(['text', typ]); };
+    kpiZeile('Transaktionen erfasst ab', k.createdAb ? datumCH(k.createdAb) : '—', 'text');
+    kpiZeile('Zeitraum Auszahlungen',
+      k.valutaVon ? `${datumCH(k.valutaVon)} – ${datumCH(k.valutaBis)}` : '—', 'text');
+    kpiZeile('Anzahl Bankgutschriften', k.anzahlBankgutschriften || 0, 'zahl');
+    kpiZeile('Anzahl Settlements', k.anzahlSettlements || 0, 'zahl');
+    kpiZeile('Anzahl Transaktionen', k.anzahlTx || 0, 'zahl');
+    kpiZeile('Anzahl Spaces', k.anzahlSpaces || 0, 'zahl');
+    kpiZeile('Brutto Volumen', unitsZuZahl(k.brutto || 0), 'betrag');
+    kpiZeile('Processing Fees', unitsZuZahl(k.fees || 0), 'betrag');
+    kpiZeile('Netto Auszahlung', unitsZuZahl(k.netto || 0), 'betrag');
+    kpiZeile('Nicht ausbezahlt (Tx)', k.offenAnzahlTx || 0, 'zahl');
+    kpiZeile('Nicht ausbezahlt (Brutto)', unitsZuZahl(k.offenBrutto || 0), 'betrag');
 
+    // Hinweise unter der Settlement-Uebersicht: Ausstehend + Offen.
     const a = m.ausstehend || {};
     const berichtsEnde = berichtsEndeCH(optionen && optionen.end);
     const ausstehendHinweis = a.anzahlSettlements
       ? `${a.anzahlSettlements} Settlement(s) mit ${a.anzahlTx} Transaktionen `
         + `(Brutto ${w} ${formatAmountCH(a.brutto)}, Netto ${w} ${formatAmountCH(a.netto)}) `
         + (berichtsEnde
-          ? `wurden nach dem ${berichtsEnde} abgerechnet.`
-          : 'wurden erst nach dem Berichtszeitraum abgerechnet.')
+          ? `haben ein Valutadatum nach dem ${berichtsEnde} und sind als „Ausstehend“ markiert.`
+          : 'haben ein Valutadatum nach dem Berichtszeitraum und sind als „Ausstehend“ markiert.')
       : '';
-    // Die "Offen"-Zeile (NO_RECORD) steckt in der TOTAL-Zeile (m.gesamt) mit
-    // Brutto, aber ohne Fees/Netto (siehe Kommentar bei buildSettlementReportModel/
-    // gesamt) - die Zusammenfassung zaehlt sie separat unter "Noch nicht
-    // abgerechnet" und NICHT in "Brutto Volumen". Beide Zahlen weichen also
-    // bewusst voneinander ab, Brutto - Fees = Netto gilt in der TOTAL-Zeile
-    // deshalb nicht. Ohne diesen Hinweis wirkt das wie ein Rechenfehler.
-    const offenHinweis = m.kpi.offenAnzahlTx
-      ? `${m.kpi.offenAnzahlTx} Transaktion(en) ohne Settlement-Record `
-        + `(Brutto ${w} ${formatAmountCH(m.kpi.offenBrutto || 0)}) stecken in der TOTAL-Zeile `
-        + 'mit Brutto, aber ohne Fees/Netto (siehe "Noch nicht abgerechnet" in der '
-        + 'Zusammenfassung) - deshalb gilt Brutto − Fees = Netto in der TOTAL-Zeile hier nicht.'
+    const offenHinweis = k.offenAnzahlTx
+      ? `${k.offenAnzahlTx} Transaktion(en) ohne Settlement-Record `
+        + `(Brutto ${w} ${formatAmountCH(k.offenBrutto || 0)}) sind noch nicht ausbezahlt und `
+        + 'in keiner Summe oben enthalten - sie stehen einzeln im Abschnitt „Offene Transaktionen“.'
       : '';
-    // Beide Hinweise koennen gleichzeitig zutreffen (ausstehende Settlements
-    // UND offene Transaktionen im selben Zeitraum) - deshalb zusammenfuegen
-    // statt den einen durch den anderen zu ersetzen.
-    const hinweis = [ausstehendHinweis, offenHinweis].filter(Boolean).join(' ');
+    const uebersichtHinweis = [ausstehendHinweis, offenHinweis].filter(Boolean).join(' ');
 
     const bloecke = [
       {
@@ -3566,41 +3726,109 @@ ORDER BY settlement_datum, transaction_id;`;
             unitsZuZahl(m.connectorTotal.netto)]]),
       },
       {
-        name: 'Settlement-Übersicht',
-        header: mitReferenz
-          ? ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status', 'Referenz']
-          : ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status'],
-        typen: mitReferenz
-          ? ['text', 'text', 'zahl', 'betrag', 'betrag', 'betrag', 'text', 'text']
-          : ['text', 'text', 'zahl', 'betrag', 'betrag', 'betrag', 'text'],
-        rows: m.settlements.map(s => {
-          const basis = [s.nr, datumCH(s.datum), s.anzahlTx,
-            unitsZuZahl(s.brutto), unitsZuZahl(s.fees), unitsZuZahl(s.netto), s.status];
-          return mitReferenz ? basis.concat([s.referenz || '']) : basis;
-        }).concat([mitReferenz
-          ? ['TOTAL', '', m.gesamt.anzahlTx, unitsZuZahl(m.gesamt.brutto),
-            unitsZuZahl(m.gesamt.fees), unitsZuZahl(m.gesamt.netto), '', '']
-          : ['TOTAL', '', m.gesamt.anzahlTx, unitsZuZahl(m.gesamt.brutto),
-            unitsZuZahl(m.gesamt.fees), unitsZuZahl(m.gesamt.netto), '']]),
-        hinweis,
+        name: 'Übersicht nach Space',
+        header: ['Space ID', 'Settlements', 'Anzahl Tx', 'Brutto', 'Fees', 'Netto'],
+        typen: ['text', 'zahl', 'zahl', 'betrag', 'betrag', 'betrag'],
+        rows: m.spaces.map(sp => [spaceLabel(sp.spaceId), sp.anzahlSettlements, sp.anzahlTx,
+          unitsZuZahl(sp.brutto), unitsZuZahl(sp.fees), unitsZuZahl(sp.netto)])
+          .concat([['Total', m.spaceTotal.anzahlSettlements, m.spaceTotal.anzahlTx,
+            unitsZuZahl(m.spaceTotal.brutto), unitsZuZahl(m.spaceTotal.fees),
+            unitsZuZahl(m.spaceTotal.netto)]]),
       },
     ];
 
+    // --- Bankgutschriften (SPEC 4.3) - nur mit Referenz -------------------
+    if (mitReferenz) {
+      bloecke.push({
+        name: 'Bankgutschriften',
+        header: ['Nr.', 'Referenz (Kontoauszug)', 'Valuta', 'Spaces', 'Tx', 'Brutto', 'Fees', 'Netto'],
+        typen: ['text', 'text', 'text', 'text', 'zahl', 'betrag', 'betrag', 'betrag'],
+        rows: m.credits.map(c => [c.bg, c.referenz || 'keine Referenz im Export',
+          valutaBereichCH(c.von, c.bis), c.spaces.map(spaceLabel).join(', '),
+          c.anzahlTx, unitsZuZahl(c.brutto), unitsZuZahl(c.fees), unitsZuZahl(c.netto)])
+          .concat([['', 'TOTAL', '', '', m.creditTotal.anzahlTx,
+            unitsZuZahl(m.creditTotal.brutto), unitsZuZahl(m.creditTotal.fees),
+            unitsZuZahl(m.creditTotal.netto)]]),
+        hinweis: 'Jede Zeile ist eine Gutschrift auf dem Bankkonto. Die Referenz ist die '
+          + 'Zahlungsreferenz auf dem Kontoauszug und dient dem Abgleich der Buchhaltung. '
+          + 'Eine Gutschrift kann mehrere Settlements über Spaces und Valutazeitpunkte bündeln.',
+      });
+    }
+
+    // --- Settlement-Übersicht (SPEC 4.4) ----------------------------------
+    // Neben dem kurzen Querverweis "BG-Nr." steht hier bewusst auch die volle
+    // Referenz: sie ist der String, der auf dem Bankkonto erscheint, und
+    // erspart beim Abgleich den Sprung in den Abschnitt Bankgutschriften.
+    const uebHeader = ['#', 'Settlement-ID', 'Space', 'Valuta'];
+    const uebTypen = ['text', 'text', 'text', 'text'];
+    if (mitReferenz) {
+      uebHeader.push('BG-Nr.', 'Referenz (Kontoauszug)');
+      uebTypen.push('text', 'text');
+    }
+    uebHeader.push('Tx', 'Brutto', 'Fees', 'Netto', 'Status');
+    uebTypen.push('zahl', 'betrag', 'betrag', 'betrag', 'text');
+    const uebTotal = ['TOTAL', '', '', ''];
+    if (mitReferenz) uebTotal.push('', '');
+    uebTotal.push(m.gesamt.anzahlTx, unitsZuZahl(m.gesamt.brutto),
+      unitsZuZahl(m.gesamt.fees), unitsZuZahl(m.gesamt.netto), '');
+    bloecke.push({
+      name: 'Settlement-Übersicht',
+      header: uebHeader,
+      typen: uebTypen,
+      rows: m.settlements.map(s => {
+        const basis = [s.nr, s.settlementId, spaceLabel(s.spaceId), valutaZeitCH(s.valuedate)];
+        // Em-Dash statt leer, wenn ein Settlement keine Referenz traegt (die
+        // Sammelzeile "keine Referenz im Export") - eine leere Zelle liesse
+        // offen, ob die Referenz fehlt oder nur nicht geladen wurde.
+        if (mitReferenz) basis.push(s.bg, s.referenz || '—');
+        basis.push(s.anzahlTx, unitsZuZahl(s.brutto), unitsZuZahl(s.fees),
+          unitsZuZahl(s.netto), s.status);
+        return basis;
+      }).concat([uebTotal]),
+      hinweis: uebersichtHinweis,
+    });
+
+    // --- Offene Transaktionen (SPEC 4.4) ----------------------------------
+    const offen = m.offen || { anzahlTx: 0, brutto: 0, detail: [] };
+    bloecke.push({
+      name: 'Offene Transaktionen',
+      header: ['#', 'Transaktions-ID', 'Zahlungsmittel', 'Brutto', 'Status'],
+      typen: ['text', 'text', 'text', 'betrag', 'text'],
+      rows: offen.anzahlTx
+        ? offen.detail.map(d => [d.nr, d.transactionId, d.connector, unitsZuZahl(d.brutto), 'Offen'])
+          .concat([['Total', '', '', unitsZuZahl(offen.brutto), '']])
+        : [],
+      hinweis: offen.anzahlTx
+        ? 'Diese Transaktionen haben (noch) keinen Settlement-Record und wurden nicht '
+          + 'ausbezahlt. Sie sind in keiner Summe oben enthalten.'
+        : 'Keine. Alle Transaktionen im Zeitraum sind einem Settlement zugeordnet.',
+    });
+
+    // --- Transaktionsdetail, flach (SPEC 5, Blatt „Transaktionen“) --------
     if (mitDetail) {
-      m.settlements.forEach(s => {
-        bloecke.push({
-          name: `Settlement ${s.nr}: ${s.datum ? datumCH(s.datum) : 'Offen'}`,
-          header: ['#', 'Transaction ID', 'Connector', 'Brutto', 'Fees', 'Netto'],
-          typen: ['text', 'text', 'text', 'betrag', 'betrag', 'betrag'],
-          rows: s.detail.map(d => [d.nr, d.transactionId, d.connector,
-            unitsZuZahl(d.brutto), unitsZuZahl(d.fees), unitsZuZahl(d.netto)])
-            .concat([[`Subtotal (${s.anzahlTx} Tx)`, '', '',
-              unitsZuZahl(s.brutto), unitsZuZahl(s.fees), unitsZuZahl(s.netto)]]),
-          // Referenz gehoert bewusst NICHT in block.name (der wird zum
-          // Excel-Blattnamen und ist auf 31 Zeichen begrenzt) - deshalb als
-          // Hinweiszeile unter dem Blocktitel, wie beim Ausstehend-/Offen-Hinweis.
-          hinweis: mitReferenz && s.referenz ? `Auszahlungsreferenz: ${s.referenz}` : undefined,
-        });
+      const dHeader = ['Space ID', 'Settlement-ID'];
+      const dTypen = ['text', 'text'];
+      if (mitReferenz) { dHeader.push('BG-Nr.', 'Referenz (Kontoauszug)'); dTypen.push('text', 'text'); }
+      dHeader.push('Valuta', 'Transaktionsref.', 'Transaktions-ID', 'Transaktionsdatum',
+        'Zahlungsmittel', 'Kanal', 'Terminal', 'Whrg.', 'Brutto', 'Fees', 'Netto');
+      dTypen.push('text', 'text', 'text', 'text', 'text', 'text', 'text', 'text',
+        'betrag', 'betrag', 'betrag');
+      bloecke.push({
+        name: 'Transaktionen',
+        header: dHeader,
+        typen: dTypen,
+        rows: m.txDetail.map(d => {
+          const row = [spaceLabel(d.spaceId), d.settlementId];
+          if (mitReferenz) row.push(d.bg, d.referenz);
+          row.push(valutaZeitCH(d.valuedate), d.merchantReference || '', d.transactionId,
+            valutaZeitCH(d.createdOn), d.connector, d.salesChannel || '',
+            d.terminalIdentifier || '', d.waehrung || w,
+            unitsZuZahl(d.brutto), unitsZuZahl(d.fees), unitsZuZahl(d.netto));
+          return row;
+        }),
+        hinweis: 'Eine Zeile je Transaktion, sortiert nach Valuta, Space und Transaktionsdatum. '
+          + 'Jede Zeile trägt Settlement-ID' + (mitReferenz ? ' und Bankreferenz' : '')
+          + ' zur lückenlosen Nachverfolgung.',
       });
     }
 
@@ -3656,30 +3884,93 @@ ORDER BY settlement_datum, transaction_id;`;
 
   function settlementPdfBloecke(modell, optionen) {
     const opt = optionen || {};
-    const bloecke = settlementExportBloecke(modell, opt);
-    const vonCH = datumCH(String(opt.start || '').slice(0, 10));
-    const bisCH = berichtsEndeCH(opt.end);
+    const m = modell && modell.kpi ? modell : leeresSettlementModell();
+    const bloecke = settlementExportBloecke(m, opt);
+    const byName = {};
+    bloecke.forEach(b => { byName[b.name] = b; });
+    const mitReferenz = !!opt.reference && !!m.hasReference;
+    const w = m.kpi.waehrung || '';
 
+    // Titel/Kopf (SPEC 4.1): Zeitraum ueber das Valutadatum, Erfassung nur als Notiz.
+    const vonCH = m.kpi.valutaVon ? datumCH(m.kpi.valutaVon) : datumCH(String(opt.start || '').slice(0, 10));
+    const bisCH = m.kpi.valutaBis ? datumCH(m.kpi.valutaBis) : berichtsEndeCH(opt.end);
     const kopfzeilen = [];
-    if (vonCH && bisCH) kopfzeilen.push(`Zeitraum: ${vonCH} – ${bisCH}`);
+    if (vonCH) {
+      kopfzeilen.push(`Auszahlungen / Valuta: ${vonCH} – ${bisCH}`
+        + (m.kpi.createdAb ? ` (Transaktionen erfasst ab ${datumCH(m.kpi.createdAb)})` : ''));
+    }
+    const spaceIds = m.spaceListe.filter(s => s !== SETTLEMENT_UNASSIGNED);
+    if (spaceIds.length) kopfzeilen.push('Space IDs: ' + spaceIds.join(', '));
     if (opt.account) kopfzeilen.push(`Account: ${opt.account}`);
 
+    // Abschnittsnummern haengen davon ab, ob es Bankgutschriften gibt.
+    const nBank = mitReferenz ? 2 : null;
+    const nUeber = mitReferenz ? 3 : 2;
+    const nSpace = mitReferenz ? 4 : 3;
+
     const tabellen = [
-      pdfTabelle(bloecke[0], '1. Zusammenfassung', false),
-      pdfTabelle(bloecke[1], 'Aufschlüsselung nach Zahlungsmittel', false),
-      // Abschnitt 2 und 3 beginnen jeweils auf einer frischen Seite, damit der
-      // Report so gegliedert wirkt wie die Vorlage.
-      pdfTabelle(bloecke[2], '2. Settlement-Übersicht', true),
+      pdfTabelle(byName['Zusammenfassung'], '1. Zusammenfassung', false),
+      pdfTabelle(byName['Aufschlüsselung nach Zahlungsmittel'], 'Aufschlüsselung nach Zahlungsmittel', false),
+      pdfTabelle(byName['Übersicht nach Space'], 'Übersicht nach Space', false),
     ];
-    bloecke.slice(3).forEach((b, i) => {
-      tabellen.push(pdfTabelle(
-        b,
-        i === 0 ? '3. Transaktionsdetail pro Settlement' : b.name,
-        i === 0,
-      ));
+    if (mitReferenz && byName['Bankgutschriften']) {
+      tabellen.push(pdfTabelle(byName['Bankgutschriften'], `${nBank}. Bankgutschriften`, true));
+    }
+    tabellen.push(pdfTabelle(byName['Settlement-Übersicht'], `${nUeber}. Settlement-Übersicht`, true));
+    tabellen.push(pdfTabelle(byName['Offene Transaktionen'], 'Noch nicht abgerechnete Transaktionen', false));
+
+    // Abschnitt 4/3: ein Kapitel pro Space, jeweils auf frischer Seite (SPEC 4.5).
+    m.spaceListe.forEach((id, i) => {
+      const sp = m.spaces.find(x => x.spaceId === id)
+        || { anzahlSettlements: 0, anzahlTx: 0, brutto: 0, fees: 0, netto: 0 };
+      const spSettlements = m.settlements.filter(s => s.spaceId === id);
+      const von = spSettlements.length ? datumCH(spSettlements[0].datum) : '—';
+      const bis = spSettlements.length ? datumCH(spSettlements[spSettlements.length - 1].datum) : '—';
+      const kpiLine = `${sp.anzahlSettlements} Settlements · ${formatIntCH(sp.anzahlTx)} Tx · `
+        + `Brutto ${w} ${formatAmountCH(sp.brutto)} · Fees ${w} ${formatAmountCH(sp.fees)} · `
+        + `Netto ${w} ${formatAmountCH(sp.netto)} · Auszahlungen ${von} – ${bis}`;
+
+      // Zahlungsmittel-Aufschluesselung fuer diesen Space (aus txDetail).
+      const mMap = new Map();
+      m.txDetail.forEach(d => {
+        if (d.spaceId !== id) return;
+        const c = mMap.get(d.connector) || { connector: d.connector, ...leereSettlementSumme() };
+        addiereSettlement(c, d.brutto, d.fees, d.netto); mMap.set(d.connector, c);
+      });
+      const mList = [...mMap.values()].sort((x, y) => y.brutto - x.brutto);
+      const mTot = summeReduce(mList);
+      tabellen.push(pdfTabelle({
+        header: ['Zahlungsmittel', 'Anzahl Tx', 'Brutto', 'Fees', 'Netto'],
+        typen: ['text', 'zahl', 'betrag', 'betrag', 'betrag'],
+        rows: mList.map(c => [c.connector, c.anzahlTx,
+          unitsZuZahl(c.brutto), unitsZuZahl(c.fees), unitsZuZahl(c.netto)])
+          .concat([['Total', mTot.anzahlTx, unitsZuZahl(mTot.brutto),
+            unitsZuZahl(mTot.fees), unitsZuZahl(mTot.netto)]]),
+        hinweis: kpiLine,
+      }, `${nSpace}. Detail pro Space — ${spaceLabel(id)}`, true));
+
+      // Settlement-Tabelle des Space, volle Referenz (SPEC 4.5).
+      const sHeader = ['#', 'Settlement-ID', 'Valuta'];
+      const sTypen = ['text', 'text', 'text'];
+      if (mitReferenz) { sHeader.push('BG-Nr.', 'Referenz'); sTypen.push('text', 'text'); }
+      sHeader.push('Tx', 'Brutto', 'Fees', 'Netto');
+      sTypen.push('zahl', 'betrag', 'betrag', 'betrag');
+      const sTotal = ['', 'TOTAL', ''];
+      if (mitReferenz) sTotal.push('', '');
+      sTotal.push(sp.anzahlTx, unitsZuZahl(sp.brutto), unitsZuZahl(sp.fees), unitsZuZahl(sp.netto));
+      tabellen.push(pdfTabelle({
+        header: sHeader,
+        typen: sTypen,
+        rows: spSettlements.map((s, j) => {
+          const row = [j + 1, s.settlementId, valutaZeitCH(s.valuedate)];
+          if (mitReferenz) row.push(s.bg, s.referenz || '—');
+          row.push(s.anzahlTx, unitsZuZahl(s.brutto), unitsZuZahl(s.fees), unitsZuZahl(s.netto));
+          return row;
+        }).concat([sTotal]),
+      }, `Settlements — ${spaceLabel(id)}`, false));
     });
 
-    return { titel: 'SETTLEMENT-REPORT', kopfzeilen, tabellen };
+    return { titel: 'SETTLEMENT-REPORT / SETTLEMENT REPORT', kopfzeilen, tabellen };
   }
 
   // --- Settlement-Report: Ansicht ------------------------------------------
@@ -3720,14 +4011,12 @@ ORDER BY settlement_datum, transaction_id;`;
     };
     const bloecke = settlementExportBloecke(settlementModell, opt);
 
-    // Die ersten drei Bloecke stehen offen, die Detailbloecke stecken je in
-    // einem <details> - sonst erschlaegt Abschnitt 3 die Uebersicht.
-    const oben = bloecke.slice(0, 3).map(settlementTabelleHtml).join('');
-    const detail = bloecke.slice(3).map(b =>
-      `<details><summary>${escapeHtml(b.name)}</summary>${settlementTabelleHtml(b)}</details>`
-    ).join('');
-
-    settlementReportOutput.innerHTML = oben + detail;
+    // Alle Uebersichts-Bloecke stehen offen; nur das flache Transaktionsdetail
+    // (potenziell zehntausende Zeilen) steckt in einem <details>, sonst
+    // erschlaegt es die Uebersicht.
+    settlementReportOutput.innerHTML = bloecke.map(b => (b.name === 'Transaktionen'
+      ? `<details><summary>${escapeHtml(b.name)} (${formatIntCH(b.rows.length)})</summary>${settlementTabelleHtml(b)}</details>`
+      : settlementTabelleHtml(b))).join('');
     settlementReportActions.classList.remove('hidden');
   }
 
@@ -4951,12 +5240,19 @@ ORDER BY settlement_datum, transaction_id;`;
       doc.text(tab.titel, 40, y);
       const spalten = {};
       tab.ausrichtung.forEach((a, i) => { spalten[i] = { halign: a }; });
+      // Breite Tabellen (Settlement-Uebersicht mit BG-Nr. UND voller
+      // 32-Zeichen-Referenz) sprengen bei Schriftgroesse 8 die nutzbaren 515pt
+      // der A4-Seite; autoTable bricht die Referenz dann mitten im String um.
+      // Kleinere Schrift ab 10 Spalten haelt sie einzeilig - autoTable
+      // ueberlappt zwar nie (anders als reportlab, siehe SPEC 8), eine
+      // umgebrochene Kontoauszug-Referenz liest sich aber schlecht.
+      const schrift = tab.header.length >= 10 ? 7 : 8;
       doc.autoTable({
         head: [tab.header],
         body: tab.rows,
         startY: y + 8,
         margin: { left: 40, right: 40 },
-        styles: { fontSize: 8, cellPadding: 3 },
+        styles: { fontSize: schrift, cellPadding: 3 },
         headStyles: { fillColor: [17, 217, 204], textColor: [255, 255, 255] },
         alternateRowStyles: { fillColor: [241, 251, 250] },
         columnStyles: spalten,

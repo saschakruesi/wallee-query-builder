@@ -427,7 +427,11 @@ test('Settlement-Query filtert auf completedon und gruppiert ueber valuedate', (
   assert.match(sql, /t\.completedon >= TIMESTAMP '2026-01-01 00:00:00'/);
   assert.match(sql, /t\.completedon <  TIMESTAMP '2026-02-01 00:00:00'/);
   assert.match(sql, /t\.state IN \('FULFILL', 'COMPLETED'\)/);
-  assert.match(sql, /date\(s\.valuedate\)\s+AS settlement_datum/);
+  // Voller Valuta-Timestamp statt date(): das Modell gruppiert Settlements pro
+  // (Space, Valutazeitpunkt), mehrere Auszahlungen pro Tag bleiben getrennt.
+  assert.match(sql, /s\.valuedate\s+AS settlement_valuedate/);
+  assert.doesNotMatch(sql, /date\(s\.valuedate\)/);
+  assert.match(sql, /t\.createdon\s+AS created_on/);
 });
 
 test('Settlement-Query liefert eine Zeile pro Transaktion, kein GROUP BY im Hauptteil', () => {

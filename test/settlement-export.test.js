@@ -1,13 +1,30 @@
-// Export-Basis des Settlement-Reports: eine Blockliste, aus der CSV, XLSX und
-// PDF gleichermassen gespeist werden. Rein und ohne Vendor testbar.
+// Export-Basis des Settlement-Reports: eine Blockliste, aus der Bildschirm,
+// CSV, XLSX und PDF gleichermassen gespeist werden. Rein und ohne Vendor
+// testbar. Aufbau nach settlement-report-spec/SPEC.md (Abschnitte 4.2-4.5, 5).
 
 const test = require('node:test');
 const assert = require('node:assert');
 const { loadBuilders, plain } = require('./harness');
 
-const KOPF = 'settlement_datum,settlement_state,transaction_id,merchant_reference,'
+const KOPF = 'settlement_valuedate,settlement_state,transaction_id,created_on,merchant_reference,'
   + 'space_id,waehrung,connector,sales_channel,terminal_identifier,'
   + 'brutto_gross,settlement_gross,processing_fees,netamount,settlement_records';
+const KOPF_REF = KOPF + ',settlement_reference';
+
+// Kompakter Zeilenbauer, gleiche Form wie in settlement-report.test.js.
+function zeile(opts = {}) {
+  const o = Object.assign({
+    valuedate: '2026-01-05 09:00:00', state: 'SETTLED', id: '1',
+    createdon: '2026-01-03 10:00:00', mref: '', space: '50161', waehrung: 'CHF',
+    connector: 'Visa', channel: 'Ecommerce', terminal: '',
+    brutto: '10.00000000', sgross: '10.00000000', fees: '0.10000000',
+    netto: '9.90000000', records: '1', ref: undefined,
+  }, opts);
+  const felder = [o.valuedate, o.state, o.id, o.createdon, o.mref, o.space, o.waehrung,
+    o.connector, o.channel, o.terminal, o.brutto, o.sgross, o.fees, o.netto, o.records];
+  if (o.ref !== undefined) felder.push(o.ref);
+  return felder.join(',');
+}
 
 function modell(...zeilen) {
   const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
@@ -15,108 +32,284 @@ function modell(...zeilen) {
   assert.strictEqual(res.error, null);
   return buildSettlementReportModel(res.rows, { end: '2026-02-01 00:00:00' });
 }
+function modellRef(...zeilen) {
+  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
+  const res = parseSettlementCsv([KOPF_REF, ...zeilen].join('\n') + '\n');
+  assert.strictEqual(res.error, null);
+  return buildSettlementReportModel(res.rows, { end: '2026-02-01 00:00:00' });
+}
 
+// Zwei Settlements im Zeitraum (05.01., zwei Tx) plus eines danach (03.02.,
+// Ausstehend). Alle in Space 50161.
 const ZEILEN = [
-  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1',
-  '2026-01-05,SETTLED,200,,50161,CHF,TWINT,Physical Terminal,,20.00000000,20.00000000,0.20000000,19.80000000,1',
-  '2026-02-03,SETTLED,300,,50161,CHF,Visa,Ecommerce,,30.00000000,30.00000000,0.30000000,29.70000000,1',
+  zeile({ id: '100', valuedate: '2026-01-05 09:00:00', connector: 'Visa',
+    brutto: '10.00000000', sgross: '10.00000000', fees: '0.10000000', netto: '9.90000000' }),
+  zeile({ id: '200', valuedate: '2026-01-05 09:00:00', connector: 'TWINT', channel: 'Physical Terminal',
+    brutto: '20.00000000', sgross: '20.00000000', fees: '0.20000000', netto: '19.80000000' }),
+  zeile({ id: '300', valuedate: '2026-02-03 09:00:00', connector: 'Visa',
+    brutto: '30.00000000', sgross: '30.00000000', fees: '0.30000000', netto: '29.70000000' }),
 ];
 
-test('Bloecke: Zusammenfassung, Zahlungsmittel und Uebersicht sind immer dabei', () => {
+const OFFEN_ZEILE = zeile({ id: '999', state: 'NO_RECORD', valuedate: '',
+  brutto: '7.00000000', sgross: '', fees: '', netto: '', records: '0' });
+
+// --- Blockstruktur ----------------------------------------------------------
+
+test('Bloecke ohne Referenz: Zusammenfassung, Zahlungsmittel, Space, Uebersicht, Offene', () => {
   const { settlementExportBloecke } = loadBuilders();
   const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
-  assert.deepStrictEqual(
-    plain(b.map(x => x.name)),
-    ['Zusammenfassung', 'Aufschlüsselung nach Zahlungsmittel', 'Settlement-Übersicht'],
-  );
+  assert.deepStrictEqual(plain(b.map(x => x.name)), [
+    'Zusammenfassung', 'Aufschlüsselung nach Zahlungsmittel', 'Übersicht nach Space',
+    'Settlement-Übersicht', 'Offene Transaktionen',
+  ]);
 });
 
-test('Bloecke: mit detail:true folgt je Settlement ein Detailblock', () => {
+test('Bloecke mit Referenz: Bankgutschriften stehen vor der Settlement-Uebersicht', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const m = modellRef(
+    zeile({ id: '100', valuedate: '2026-01-05 09:00:00', ref: 'REF-A' }),
+    zeile({ id: '200', valuedate: '2026-01-06 09:00:00', ref: 'REF-B' }),
+  );
+  const b = settlementExportBloecke(m, { detail: false, reference: true });
+  assert.deepStrictEqual(plain(b.map(x => x.name)), [
+    'Zusammenfassung', 'Aufschlüsselung nach Zahlungsmittel', 'Übersicht nach Space',
+    'Bankgutschriften', 'Settlement-Übersicht', 'Offene Transaktionen',
+  ]);
+});
+
+test('Bloecke mit detail:true haengen die flache Transaktionstabelle an', () => {
   const { settlementExportBloecke } = loadBuilders();
   const b = settlementExportBloecke(modell(...ZEILEN), { detail: true });
-  assert.deepStrictEqual(
-    plain(b.map(x => x.name)),
-    ['Zusammenfassung', 'Aufschlüsselung nach Zahlungsmittel', 'Settlement-Übersicht',
-      'Settlement 1: 05.01.2026', 'Settlement 2: 03.02.2026'],
+  assert.strictEqual(b[b.length - 1].name, 'Transaktionen');
+});
+
+test('reference:true ohne Referenzen im Ergebnis degradiert sauber (keine Bankgutschriften)', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  // Modell ohne Referenzspalte -> hasReference false, obwohl die Option an ist.
+  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false, reference: true });
+  assert.ok(!b.some(x => x.name === 'Bankgutschriften'));
+  const ueb = b.find(x => x.name === 'Settlement-Übersicht');
+  assert.ok(!plain(ueb.header).includes('BG-Nr.'));
+});
+
+// --- Zusammenfassung (SPEC 4.2) ---------------------------------------------
+
+test('Zusammenfassung nennt die Kennzahlen der Spec, ohne Durchschnitt und Fee-Quote', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
+  const namen = b[0].rows.map(r => r[0]);
+  assert.deepStrictEqual(plain(namen), [
+    'Transaktionen erfasst ab', 'Zeitraum Auszahlungen', 'Anzahl Bankgutschriften',
+    'Anzahl Settlements', 'Anzahl Transaktionen', 'Anzahl Spaces',
+    'Brutto Volumen', 'Processing Fees', 'Netto Auszahlung',
+    'Nicht ausbezahlt (Tx)', 'Nicht ausbezahlt (Brutto)',
+  ]);
+  // Spec 4.2 streicht beide Kennzahlen ausdruecklich (GAP-ANALYSIS G7).
+  assert.ok(!namen.some(n => /Ø|Durchschnitt|Quote/.test(String(n))));
+});
+
+test('Zusammenfassung: Werte stimmen (Settlements, Tx, Betraege, Offen)', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(...ZEILEN, OFFEN_ZEILE), { detail: false });
+  const wert = name => b[0].rows.find(r => r[0] === name)[1];
+  assert.strictEqual(wert('Anzahl Settlements'), 2);
+  assert.strictEqual(wert('Anzahl Transaktionen'), 3);
+  assert.strictEqual(wert('Anzahl Spaces'), 1);
+  assert.strictEqual(wert('Brutto Volumen'), 60);
+  assert.strictEqual(wert('Processing Fees'), 0.6);
+  assert.strictEqual(wert('Netto Auszahlung'), 59.4);
+  assert.strictEqual(wert('Nicht ausbezahlt (Tx)'), 1);
+  assert.strictEqual(wert('Nicht ausbezahlt (Brutto)'), 7);
+  assert.strictEqual(wert('Zeitraum Auszahlungen'), '05.01.2026 – 03.02.2026');
+  assert.strictEqual(wert('Transaktionen erfasst ab'), '03.01.2026');
+});
+
+// --- Settlement-Übersicht (SPEC 4.4) ----------------------------------------
+
+test('Uebersicht: Spalten der Spec inkl. Settlement-ID und Space, Betraege als Zahlen', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
+  const ueb = b.find(x => x.name === 'Settlement-Übersicht');
+  assert.deepStrictEqual(plain(ueb.header),
+    ['#', 'Settlement-ID', 'Space', 'Valuta', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status']);
+  assert.deepStrictEqual(plain(ueb.rows), [
+    [1, '50161-S001', '50161', '05.01.2026 09:00', 2, 30, 0.3, 29.7, 'Settled'],
+    [2, '50161-S002', '50161', '03.02.2026 09:00', 1, 30, 0.3, 29.7, 'Ausstehend'],
+    ['TOTAL', '', '', '', 3, 60, 0.6, 59.4, ''],
+  ]);
+  assert.deepStrictEqual(plain(ueb.typen),
+    ['text', 'text', 'text', 'text', 'zahl', 'betrag', 'betrag', 'betrag', 'text']);
+});
+
+test('Uebersicht mit Referenz: BG-Nr. UND volle Kontoauszug-Referenz je Settlement', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const m = modellRef(
+    zeile({ id: '100', valuedate: '2026-01-05 09:00:00', ref: 'a8119a7b077c485e95f3ae0fbede0c13' }),
   );
-  const detail = b[3];
-  assert.deepStrictEqual(plain(detail.header), ['#', 'Transaction ID', 'Connector', 'Brutto', 'Fees', 'Netto']);
-  assert.deepStrictEqual(plain(detail.rows), [
-    [1, '100', 'Visa', 10, 0.1, 9.9],
-    [2, '200', 'TWINT', 20, 0.2, 19.8],
-    ['Subtotal (2 Tx)', '', '', 30, 0.3, 29.7],
-  ]);
+  const b = settlementExportBloecke(m, { detail: false, reference: true });
+  const ueb = b.find(x => x.name === 'Settlement-Übersicht');
+  assert.deepStrictEqual(plain(ueb.header),
+    ['#', 'Settlement-ID', 'Space', 'Valuta', 'BG-Nr.', 'Referenz (Kontoauszug)',
+      'Tx', 'Brutto', 'Fees', 'Netto', 'Status']);
+  assert.strictEqual(ueb.rows[0][4], 'BG-01');
+  // Vollstaendig, nicht gekuerzt - das ist der String auf dem Kontoauszug.
+  assert.strictEqual(ueb.rows[0][5], 'a8119a7b077c485e95f3ae0fbede0c13');
+  // TOTAL-Zeile hat dieselbe Spaltenzahl.
+  assert.strictEqual(ueb.rows[ueb.rows.length - 1].length, ueb.header.length);
 });
 
-test('Bloecke: Betraege stehen als Zahlen, nicht als formatierte Strings', () => {
+test('Uebersicht: Settlement ohne Referenz zeigt einen Em-Dash statt einer leeren Zelle', () => {
   const { settlementExportBloecke } = loadBuilders();
-  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
-  const uebersicht = b[2];
-  assert.deepStrictEqual(plain(uebersicht.header),
-    ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status']);
-  assert.deepStrictEqual(plain(uebersicht.rows), [
-    [1, '05.01.2026', 2, 30, 0.3, 29.7, 'Settled'],
-    [2, '03.02.2026', 1, 30, 0.3, 29.7, 'Ausstehend'],
-    ['TOTAL', '', 3, 60, 0.6, 59.4, ''],
-  ]);
-  assert.deepStrictEqual(plain(uebersicht.typen),
-    ['text', 'text', 'zahl', 'betrag', 'betrag', 'betrag', 'text']);
+  const m = modellRef(
+    zeile({ id: '1', valuedate: '2026-01-05 09:00:00', ref: 'REF-A' }),
+    zeile({ id: '2', valuedate: '2026-01-06 09:00:00', ref: '' }),
+  );
+  const b = settlementExportBloecke(m, { detail: false, reference: true });
+  const ueb = b.find(x => x.name === 'Settlement-Übersicht');
+  assert.strictEqual(ueb.rows[0][5], 'REF-A');
+  assert.strictEqual(ueb.rows[1][5], '—');
 });
 
-test('Bloecke: Uebersicht traegt den Hinweis auf ausstehende Settlements', () => {
+test('Uebersicht: TOTAL-Zeile erfuellt Brutto - Fees = Netto (keine Offen-Vermischung)', () => {
   const { settlementExportBloecke } = loadBuilders();
-  // Der Hinweis nennt das Berichtsende, deshalb braucht dieser Aufruf 'end'.
-  const b = settlementExportBloecke(modell(...ZEILEN),
+  const b = settlementExportBloecke(modell(...ZEILEN, OFFEN_ZEILE), { detail: false });
+  const ueb = b.find(x => x.name === 'Settlement-Übersicht');
+  const total = ueb.rows[ueb.rows.length - 1];
+  // Spalten: TOTAL, '', '', '', Tx, Brutto, Fees, Netto, ''
+  const [, , , , tx, brutto, fees, netto] = total;
+  assert.strictEqual(tx, 3, 'offene Tx zaehlen nicht mit');
+  assert.strictEqual(Math.round((brutto - fees) * 100) / 100, netto);
+});
+
+test('Uebersicht: Hinweis nennt ausstehende Settlements und offene Transaktionen', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(...ZEILEN, OFFEN_ZEILE),
     { detail: false, end: '2026-02-01 00:00:00' });
-  assert.match(String(b[2].hinweis), /^1 Settlement\(s\) mit 1 Transaktionen/);
-  assert.match(String(b[2].hinweis), /nach dem 31\.01\.2026 abgerechnet/);
-});
-
-test('Bloecke: ohne ausstehende Settlements gibt es keinen Hinweis', () => {
-  const { settlementExportBloecke } = loadBuilders();
-  const b = settlementExportBloecke(modell(ZEILEN[0]),
-    { detail: false, end: '2026-02-01 00:00:00' });
-  assert.strictEqual(b[2].hinweis, '');
-});
-
-test('Bloecke: Zusammenfassung nennt die Kennzahlen der Vorlage', () => {
-  const { settlementExportBloecke } = loadBuilders();
-  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
-  assert.deepStrictEqual(plain(b[0].rows), [
-    ['Anzahl Settlements', 2],
-    ['Anzahl Transaktionen', 3],
-    ['Brutto Volumen', 60],
-    ['Processing Fees', 0.6],
-    ['Netto Auszahlung', 59.4],
-    ['Ø Netto/Settlement', 29.7],
-  ]);
-});
-
-test('Zusammenfassung weist offene Transaktionen als eigene Kennzahl aus', () => {
-  const { settlementExportBloecke } = loadBuilders();
-  const m = modell(ZEILEN[0], ',NO_RECORD,999,,50161,CHF,Visa,Ecommerce,,7.00000000,,,,0');
-  const b = settlementExportBloecke(m, { detail: false });
-  assert.deepStrictEqual(plain(b[0].rows).slice(-2), [
-    ['Noch nicht abgerechnet (Tx)', 1],
-    ['Noch nicht abgerechnet (Brutto)', 7],
-  ]);
-});
-
-test('Hinweis: ausstehende Settlements UND offene Transaktionen erscheinen beide, nebeneinander', () => {
-  const { settlementExportBloecke } = loadBuilders();
-  // ZEILEN traegt bereits ein Settlement nach dem Berichtsende (Ausstehend);
-  // dazu eine NO_RECORD-Zeile, die in der TOTAL-Zeile nur mit Brutto steckt.
-  const m = modell(...ZEILEN, ',NO_RECORD,999,,50161,CHF,Visa,Ecommerce,,7.00000000,,,,0');
-  const b = settlementExportBloecke(m, { detail: false, end: '2026-02-01 00:00:00' });
-  const hinweis = String(b[2].hinweis);
+  const hinweis = String(b.find(x => x.name === 'Settlement-Übersicht').hinweis);
   assert.match(hinweis, /^1 Settlement\(s\) mit 1 Transaktionen/);
-  assert.match(hinweis, /nach dem 31\.01\.2026 abgerechnet\./);
+  assert.match(hinweis, /nach dem 31\.01\.2026/);
   assert.match(hinweis, /1 Transaktion\(en\) ohne Settlement-Record/);
-  assert.match(hinweis, /TOTAL-Zeile hier nicht\.$/);
-  // Keiner der beiden Saetze verdraengt den anderen - beide muessen als
-  // eigenstaendige Saetze auftauchen, nicht ineinander verschmolzen.
-  assert.ok(!/ {2,}/.test(hinweis), `Hinweis enthaelt ein doppeltes Leerzeichen: "${hinweis}"`);
+  assert.ok(!/ {2,}/.test(hinweis), `doppeltes Leerzeichen: "${hinweis}"`);
 });
+
+test('Uebersicht: ohne ausstehende und offene Zeilen bleibt der Hinweis leer', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(ZEILEN[0]), { detail: false, end: '2026-02-01 00:00:00' });
+  assert.strictEqual(b.find(x => x.name === 'Settlement-Übersicht').hinweis, '');
+});
+
+test('Hinweis ohne optionen.end bleibt sprachlich sauber', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
+  const hinweis = String(b.find(x => x.name === 'Settlement-Übersicht').hinweis);
+  assert.ok(hinweis.length > 0);
+  assert.ok(!/ {2,}/.test(hinweis));
+  assert.ok(!/nach dem\s*\./.test(hinweis));
+  assert.match(hinweis, /nach dem Berichtszeitraum/);
+});
+
+// --- Bankgutschriften (SPEC 4.3) --------------------------------------------
+
+test('Bankgutschriften: eine Zeile je Referenz mit Valuta-Bereich, Spaces und Summen', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const m = modellRef(
+    zeile({ id: '1', space: '50161', valuedate: '2026-01-05 09:00:00', ref: 'REF-A',
+      brutto: '10.00000000', sgross: '10.00000000', fees: '0.10000000', netto: '9.90000000' }),
+    zeile({ id: '2', space: '97319', valuedate: '2026-01-06 09:00:00', ref: 'REF-A',
+      brutto: '20.00000000', sgross: '20.00000000', fees: '0.20000000', netto: '19.80000000' }),
+  );
+  const b = settlementExportBloecke(m, { detail: false, reference: true });
+  const bg = b.find(x => x.name === 'Bankgutschriften');
+  assert.deepStrictEqual(plain(bg.header),
+    ['Nr.', 'Referenz (Kontoauszug)', 'Valuta', 'Spaces', 'Tx', 'Brutto', 'Fees', 'Netto']);
+  assert.deepStrictEqual(plain(bg.rows), [
+    ['BG-01', 'REF-A', '05.01. - 06.01.2026', '50161, 97319', 2, 30, 0.3, 29.7],
+    ['', 'TOTAL', '', '', 2, 30, 0.3, 29.7],
+  ]);
+});
+
+test('Bankgutschriften: gleicher Valutatag wird als einzelnes Datum gezeigt', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const m = modellRef(zeile({ id: '1', valuedate: '2026-01-05 09:00:00', ref: 'REF-A' }));
+  const b = settlementExportBloecke(m, { detail: false, reference: true });
+  assert.strictEqual(b.find(x => x.name === 'Bankgutschriften').rows[0][2], '05.01.2026');
+});
+
+// --- Übersicht nach Space ---------------------------------------------------
+
+test('Space-Uebersicht: je Space eine Zeile mit Settlement-Zaehler, Total stimmt', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const m = modell(
+    zeile({ id: '1', space: '50161', valuedate: '2026-01-05 09:00:00',
+      brutto: '10.00000000', sgross: '10.00000000', fees: '0.10000000', netto: '9.90000000' }),
+    zeile({ id: '2', space: '97319', valuedate: '2026-01-06 09:00:00',
+      brutto: '20.00000000', sgross: '20.00000000', fees: '0.20000000', netto: '19.80000000' }),
+  );
+  const b = settlementExportBloecke(m, { detail: false });
+  const sp = b.find(x => x.name === 'Übersicht nach Space');
+  assert.deepStrictEqual(plain(sp.header),
+    ['Space ID', 'Settlements', 'Anzahl Tx', 'Brutto', 'Fees', 'Netto']);
+  assert.deepStrictEqual(plain(sp.rows), [
+    ['50161', 1, 1, 10, 0.1, 9.9],
+    ['97319', 1, 1, 20, 0.2, 19.8],
+    ['Total', 2, 2, 30, 0.3, 29.7],
+  ]);
+});
+
+// --- Offene Transaktionen (SPEC 4.4) ----------------------------------------
+
+test('Offene Transaktionen: einzeln gelistet mit Total', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(ZEILEN[0], OFFEN_ZEILE), { detail: false });
+  const offen = b.find(x => x.name === 'Offene Transaktionen');
+  assert.deepStrictEqual(plain(offen.header),
+    ['#', 'Transaktions-ID', 'Zahlungsmittel', 'Brutto', 'Status']);
+  assert.deepStrictEqual(plain(offen.rows), [
+    [1, '999', 'Visa', 7, 'Offen'],
+    ['Total', '', '', 7, ''],
+  ]);
+});
+
+test('Offene Transaktionen: ohne offene Posten bleibt der Abschnitt mit "Keine." stehen', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(ZEILEN[0]), { detail: false });
+  const offen = b.find(x => x.name === 'Offene Transaktionen');
+  assert.ok(offen, 'Abschnitt darf nicht weggelassen werden - die Abwesenheit ist die Aussage');
+  assert.deepStrictEqual(plain(offen.rows), []);
+  assert.match(String(offen.hinweis), /^Keine\./);
+});
+
+// --- Transaktionsdetail (SPEC 5) --------------------------------------------
+
+test('Transaktionen: eine Zeile je Transaktion mit Settlement-ID und Referenz', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const m = modellRef(
+    zeile({ id: '100', space: '50161', valuedate: '2026-01-05 09:00:00', mref: 'M-1',
+      createdon: '2026-01-03 08:30:00', connector: 'Visa', channel: 'Ecommerce',
+      terminal: '', ref: 'REF-A' }),
+  );
+  const b = settlementExportBloecke(m, { detail: true, reference: true });
+  const tx = b.find(x => x.name === 'Transaktionen');
+  assert.deepStrictEqual(plain(tx.header), [
+    'Space ID', 'Settlement-ID', 'BG-Nr.', 'Referenz (Kontoauszug)', 'Valuta',
+    'Transaktionsref.', 'Transaktions-ID', 'Transaktionsdatum', 'Zahlungsmittel',
+    'Kanal', 'Terminal', 'Whrg.', 'Brutto', 'Fees', 'Netto',
+  ]);
+  assert.deepStrictEqual(plain(tx.rows), [[
+    '50161', '50161-S001', 'BG-01', 'REF-A', '05.01.2026 09:00',
+    'M-1', '100', '03.01.2026 08:30', 'Visa', 'Ecommerce', '', 'CHF', 10, 0.1, 9.9,
+  ]]);
+});
+
+test('Transaktionen: ohne Referenz entfallen BG- und Referenzspalte', () => {
+  const { settlementExportBloecke } = loadBuilders();
+  const b = settlementExportBloecke(modell(ZEILEN[0]), { detail: true });
+  const tx = b.find(x => x.name === 'Transaktionen');
+  assert.ok(!plain(tx.header).includes('BG-Nr.'));
+  assert.ok(!plain(tx.header).includes('Referenz (Kontoauszug)'));
+});
+
+// --- CSV --------------------------------------------------------------------
 
 test('CSV: Bloecke untereinander, Semikolon, BOM', () => {
   const { buildSettlementReportCsv } = loadBuilders();
@@ -125,51 +318,35 @@ test('CSV: Bloecke untereinander, Semikolon, BOM', () => {
   const zeilen = csv.replace(/^﻿/, '').split('\r\n');
   assert.strictEqual(zeilen[0], 'Zusammenfassung');
   assert.ok(zeilen.includes('Settlement-Übersicht'));
-  assert.ok(zeilen.includes('1;05.01.2026;2;30;0.3;29.7;Settled'));
+  assert.ok(zeilen.includes('1;50161-S001;50161;05.01.2026 09:00;2;30;0.3;29.7;Settled'));
 });
 
-test('CSV: mit detail:true landen auch die Settlement-Detailbloecke im CSV', () => {
+test('CSV: mit detail:true landet die Transaktionstabelle im CSV', () => {
   const { buildSettlementReportCsv } = loadBuilders();
-  const csv = buildSettlementReportCsv(modell(...ZEILEN),
-    { detail: true, end: '2026-02-01 00:00:00' });
+  const csv = buildSettlementReportCsv(modell(...ZEILEN), { detail: true, end: '2026-02-01 00:00:00' });
   const zeilen = csv.replace(/^﻿/, '').split('\r\n');
-  assert.ok(zeilen.includes('Settlement 1: 05.01.2026'));
-  assert.ok(zeilen.includes('Settlement 2: 03.02.2026'));
-  assert.ok(zeilen.includes('#;Transaction ID;Connector;Brutto;Fees;Netto'));
-  assert.ok(zeilen.includes('1;100;Visa;10;0.1;9.9'));
-  assert.ok(zeilen.includes('Subtotal (2 Tx);;;30;0.3;29.7'));
+  assert.ok(zeilen.includes('Transaktionen'));
+  assert.ok(zeilen.some(z => z.startsWith('50161;50161-S001;')));
 });
 
-test('Hinweis: fehlt optionen.end, bleibt der Satz sauber (kein doppeltes Leerzeichen, kein haengendes "nach dem")', () => {
-  const { settlementExportBloecke } = loadBuilders();
-  const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
-  const hinweis = String(b[2].hinweis);
-  assert.ok(hinweis.length > 0, 'Hinweis sollte hier gesetzt sein (es gibt ausstehende Settlements)');
-  assert.ok(!/ {2,}/.test(hinweis), `Hinweis enthaelt ein doppeltes Leerzeichen: "${hinweis}"`);
-  assert.ok(!/nach dem\s*\.$/.test(hinweis), `Hinweis endet mit haengendem "nach dem": "${hinweis}"`);
-  assert.match(hinweis, /Berichtszeitraum abgerechnet\.$/);
-});
+// --- Hilfsfunktionen --------------------------------------------------------
 
-test('zellTyp: Zusammenfassung liefert je Zeile den richtigen Typ, sonst faellt sie auf typen[c] zurueck', () => {
+test('zellTyp: Zusammenfassung liefert je Zeile den richtigen Typ, sonst typen[c]', () => {
   const { settlementExportBloecke, zellTyp } = loadBuilders();
   const b = settlementExportBloecke(modell(...ZEILEN), { detail: false });
   const zus = b[0];
-  // Zaehler-Zeilen
-  assert.strictEqual(zellTyp(zus, 0, 1), 'zahl'); // Anzahl Settlements
-  assert.strictEqual(zellTyp(zus, 1, 1), 'zahl'); // Anzahl Transaktionen
-  // Betrags-Zeilen
-  assert.strictEqual(zellTyp(zus, 2, 1), 'betrag'); // Brutto Volumen
-  assert.strictEqual(zellTyp(zus, 3, 1), 'betrag'); // Processing Fees
-  assert.strictEqual(zellTyp(zus, 4, 1), 'betrag'); // Netto Auszahlung
-  assert.strictEqual(zellTyp(zus, 5, 1), 'betrag'); // Oe Netto/Settlement
-  // Erste Spalte durchgehend Text
+  const zeilenIndex = name => zus.rows.findIndex(r => r[0] === name);
+  assert.strictEqual(zellTyp(zus, zeilenIndex('Anzahl Settlements'), 1), 'zahl');
+  assert.strictEqual(zellTyp(zus, zeilenIndex('Anzahl Transaktionen'), 1), 'zahl');
+  assert.strictEqual(zellTyp(zus, zeilenIndex('Brutto Volumen'), 1), 'betrag');
+  assert.strictEqual(zellTyp(zus, zeilenIndex('Netto Auszahlung'), 1), 'betrag');
+  assert.strictEqual(zellTyp(zus, zeilenIndex('Zeitraum Auszahlungen'), 1), 'text');
   assert.strictEqual(zellTyp(zus, 0, 0), 'text');
 
-  // Ein Block ohne zellTypen faellt auf typen[c] zurueck (Verhalten unveraendert)
-  const uebersicht = b[2];
-  assert.strictEqual(uebersicht.zellTypen, undefined);
-  for (let c = 0; c < uebersicht.typen.length; c++) {
-    assert.strictEqual(zellTyp(uebersicht, 0, c), uebersicht.typen[c]);
+  const ueb = b.find(x => x.name === 'Settlement-Übersicht');
+  assert.strictEqual(ueb.zellTypen, undefined);
+  for (let c = 0; c < ueb.typen.length; c++) {
+    assert.strictEqual(zellTyp(ueb, 0, c), ueb.typen[c]);
   }
 });
 
@@ -186,151 +363,8 @@ test('Fallback: settlementExportBloecke(null, ...) liefert keine NaN-Werte', () 
   });
 });
 
-// --- xlsxBlattName: Excel-Blattnamen aus den Blocknamen ---------------------
-// Excel erlaubt maximal 31 Zeichen, keines der Zeichen : \ / ? * [ ], und zwei
-// Blaetter duerfen nicht gleich heissen. Der 35 Zeichen lange Blockname
-// "Aufschlüsselung nach Zahlungsmittel" wurde bisher per slice(0, 31) mitten im
-// Wort zu "Aufschlüsselung nach Zahlungsmi" abgeschnitten.
-
-const BEKANNTE_BLOCKNAMEN = [
-  'Zusammenfassung',
-  'Aufschlüsselung nach Zahlungsmittel',
-  'Settlement-Übersicht',
-  'Settlement 1: 05.01.2026',
-  'Settlement 42: Offen',
-];
-
-test('xlsxBlattName: alle bekannten Blocknamen bleiben innerhalb des 31-Zeichen-Limits', () => {
-  const { xlsxBlattName } = loadBuilders();
-  BEKANNTE_BLOCKNAMEN.forEach(n => {
-    const name = xlsxBlattName(n);
-    assert.ok(name.length <= 31, `"${name}" (${name.length} Zeichen) aus "${n}" ueberschreitet 31 Zeichen`);
-  });
-});
-
-test('xlsxBlattName: keines der verbotenen Zeichen : \\ / ? * [ ] im Ergebnis', () => {
-  const { xlsxBlattName } = loadBuilders();
-  const verboten = /[:\\/?*[\]]/;
-  BEKANNTE_BLOCKNAMEN.concat(['Sonderfall: a/b*c?d[e]f\\g']).forEach(n => {
-    const name = xlsxBlattName(n);
-    assert.ok(!verboten.test(name), `"${name}" aus "${n}" enthaelt noch ein verbotenes Zeichen`);
-  });
-});
-
-test('xlsxBlattName: "Aufschlüsselung nach Zahlungsmittel" wird sprechend gekuerzt, nicht mitten im Wort', () => {
-  const { xlsxBlattName } = loadBuilders();
-  const name = xlsxBlattName('Aufschlüsselung nach Zahlungsmittel');
-  assert.strictEqual(name, 'Zahlungsmittel');
-});
-
-test('xlsxBlattName: kurze Blocknamen bleiben unveraendert', () => {
-  const { xlsxBlattName } = loadBuilders();
-  assert.strictEqual(xlsxBlattName('Zusammenfassung'), 'Zusammenfassung');
-  assert.strictEqual(xlsxBlattName('Settlement-Übersicht'), 'Settlement-Übersicht');
-  // Das ':' wird durch '-' ersetzt (Excel vertraegt keinen Doppelpunkt).
-  assert.strictEqual(xlsxBlattName('Settlement 1: 05.01.2026'), 'Settlement 1- 05.01.2026');
-});
-
-test('xlsxBlattName: wort-bewusstes Kuerzen schneidet nie mitten im Wort ab', () => {
-  const { xlsxBlattName } = loadBuilders();
-  // Kein bekannter Blockname, aber realistisch lang - prueft den generischen
-  // Fallback-Pfad (nicht die Zuordnungstabelle).
-  const lang = 'Ein ziemlich langer Blattname mit vielen Woertern';
-  const name = xlsxBlattName(lang);
-  assert.ok(name.length <= 31, `"${name}" ueberschreitet 31 Zeichen`);
-  // Jedes Wort im Ergebnis muss vollstaendig aus dem Original stammen -
-  // kein Wort darf mitten drin enden.
-  const woerterOriginal = lang.split(' ');
-  name.split(' ').forEach((wort, i) => {
-    assert.strictEqual(wort, woerterOriginal[i], `Wort "${wort}" wurde mitten im Wort abgeschnitten`);
-  });
-});
-
-test('xlsxBlattName: die laufende Nummer eines Settlement-Blocks wird nie weggeschnitten', () => {
-  const { xlsxBlattName } = loadBuilders();
-  // Konstruierter Grenzfall: ein Blockname im "Settlement N: ..."-Format, bei
-  // dem der Teil nach der Nummer lang genug ist, um das 31-Zeichen-Limit zu
-  // reissen. Ein naives slice(0, 31) wuerde hier trotzdem nicht die Nummer
-  // kappen (die steht ja am Anfang) - der eigentliche Risikofall ist ein
-  // kuenftiges Namensschema, bei dem die Nummer erst spaeter im String steht.
-  // Das wort-bewusste Kuerzen schuetzt auch dagegen: es trennt nur an
-  // Leerzeichen, nie mitten in einem Token wie einer Nummer.
-  const namen = [
-    'Settlement 1: Ein sehr langer Beschreibungstext fuer den Bericht',
-    'Settlement 2: Ein sehr langer Beschreibungstext fuer den Bericht',
-    'Settlement 3: Ein sehr langer Beschreibungstext fuer den Bericht',
-  ];
-  const gekuerzt = namen.map(xlsxBlattName);
-  gekuerzt.forEach((n, i) => {
-    assert.ok(n.startsWith(`Settlement ${i + 1}`), `"${n}" verliert die laufende Nummer`);
-  });
-  assert.strictEqual(new Set(gekuerzt).size, gekuerzt.length,
-    `Blattnamen kollidieren: ${JSON.stringify(gekuerzt)}`);
-});
-
-test('xlsxBlattName: Eindeutigkeit ueber viele echte Settlement-Bloecke hinweg (Modell mit 40 Settlements)', () => {
-  const { settlementExportBloecke, xlsxBlattName } = loadBuilders();
-  // Ein Modell mit 40 Settlements an 40 verschiedenen Tagen - reicht, um die
-  // Blattnamen-Bildung ueber eine realistische Menge an Detailbloecken zu
-  // pruefen (Zusammenfassung, Zahlungsmittel, Uebersicht + 40 Detailbloecke).
-  const zeilen = [];
-  for (let tag = 1; tag <= 40; tag++) {
-    const datum = `2026-01-${String(tag).padStart(2, '0')}`;
-    zeilen.push(`${datum},SETTLED,${100 + tag},,50161,CHF,Visa,Ecommerce,,`
-      + '10.00000000,10.00000000,0.10000000,9.90000000,1');
-  }
-  const modellWert = modell(...zeilen);
-  const bloecke = settlementExportBloecke(modellWert, { detail: true });
-  assert.strictEqual(bloecke.length, 43, 'Zusammenfassung + Zahlungsmittel + Uebersicht + 40 Settlements');
-  const blattnamen = bloecke.map(b => xlsxBlattName(b.name));
-  blattnamen.forEach(n => assert.ok(n.length <= 31, `"${n}" ueberschreitet 31 Zeichen`));
-  assert.strictEqual(new Set(blattnamen).size, blattnamen.length,
-    `Blattnamen kollidieren im 40-Settlement-Modell: ${JSON.stringify(blattnamen)}`);
-});
-
-// --- Referenz-Spalte + Detail-Hinweis (Task 4) ------------------------------
-
-const ZEILEN_REF = [
-  '2026-01-05,SETTLED,100,,50161,CHF,Visa,Ecommerce,,10.00000000,10.00000000,0.10000000,9.90000000,1,PAYOUT-1',
-  '2026-01-05,SETTLED,200,,50161,CHF,TWINT,Physical Terminal,,20.00000000,20.00000000,0.20000000,19.80000000,1,PAYOUT-1',
-];
-function modellRef(...zeilen) {
-  const { parseSettlementCsv, buildSettlementReportModel } = loadBuilders();
-  const res = parseSettlementCsv([KOPF + ',settlement_reference', ...zeilen].join('\n') + '\n');
-  assert.strictEqual(res.error, null);
-  return buildSettlementReportModel(res.rows, { end: '2026-02-01 00:00:00' });
-}
-
-test('Uebersicht: mit reference-Option zusaetzliche Spalte "Referenz"', () => {
-  const { settlementExportBloecke } = loadBuilders();
-  const b = settlementExportBloecke(modellRef(...ZEILEN_REF), { detail: false, reference: true });
-  const uebersicht = b.find(x => x.name === 'Settlement-Übersicht');
-  assert.deepStrictEqual(plain(uebersicht.header),
-    ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status', 'Referenz']);
-  // Datenzeile traegt die Referenz in der letzten Spalte.
-  assert.strictEqual(uebersicht.rows[0][7], 'PAYOUT-1');
-  // TOTAL-Zeile: Referenz-Spalte leer.
-  assert.strictEqual(uebersicht.rows[uebersicht.rows.length - 1][7], '');
-});
-
-test('Uebersicht: ohne reference-Option unveraendert 7 Spalten', () => {
-  const { settlementExportBloecke } = loadBuilders();
-  const b = settlementExportBloecke(modellRef(...ZEILEN_REF), { detail: false });
-  const uebersicht = b.find(x => x.name === 'Settlement-Übersicht');
-  assert.deepStrictEqual(plain(uebersicht.header),
-    ['#', 'Settlement Datum', 'Tx', 'Brutto', 'Fees', 'Netto', 'Status']);
-});
-
-test('Detailblock: mit reference-Option ein Auszahlungsreferenz-Hinweis', () => {
-  const { settlementExportBloecke } = loadBuilders();
-  const b = settlementExportBloecke(modellRef(...ZEILEN_REF), { detail: true, reference: true });
-  const detail = b.find(x => x.name.startsWith('Settlement 1:'));
-  assert.strictEqual(detail.hinweis, 'Auszahlungsreferenz: PAYOUT-1');
-});
-
 test('formatZahlCH: negativer Betrag (Refund) stimmt mit formatAmountCH ueberein', () => {
   const { formatZahlCH, formatAmountCH } = loadBuilders();
-  // -530000000 in 1e-8-Einheiten entspricht -5.30 CHF.
   assert.strictEqual(formatZahlCH(-5.3), formatAmountCH(-530000000));
   assert.strictEqual(formatZahlCH(-5.3), '-5.30');
 });
@@ -340,82 +374,159 @@ test('berichtsEndeCH: Jahresgrenze', () => {
   assert.strictEqual(berichtsEndeCH('2026-01-01 00:00:00'), '31.12.2025');
 });
 
-// --- PDF-Layout (Task 6) ---------------------------------------------------
+// --- xlsxBlattName ----------------------------------------------------------
+
+const BEKANNTE_BLOCKNAMEN = [
+  'Zusammenfassung',
+  'Aufschlüsselung nach Zahlungsmittel',
+  'Übersicht nach Space',
+  'Bankgutschriften',
+  'Settlement-Übersicht',
+  'Offene Transaktionen',
+  'Transaktionen',
+];
+
+test('xlsxBlattName: alle Blocknamen bleiben innerhalb des 31-Zeichen-Limits', () => {
+  const { xlsxBlattName } = loadBuilders();
+  BEKANNTE_BLOCKNAMEN.forEach(n => {
+    const name = xlsxBlattName(n);
+    assert.ok(name.length <= 31, `"${name}" (${name.length}) aus "${n}" ueberschreitet 31 Zeichen`);
+  });
+});
+
+test('xlsxBlattName: keines der verbotenen Zeichen : \\ / ? * [ ] im Ergebnis', () => {
+  const { xlsxBlattName } = loadBuilders();
+  const verboten = /[:\\/?*[\]]/;
+  BEKANNTE_BLOCKNAMEN.concat(['Sonderfall: a/b*c?d[e]f\\g']).forEach(n => {
+    assert.ok(!verboten.test(xlsxBlattName(n)), `"${n}" enthaelt noch ein verbotenes Zeichen`);
+  });
+});
+
+test('xlsxBlattName: alle Blattnamen eines echten Reports sind eindeutig', () => {
+  const { settlementExportBloecke, xlsxBlattName } = loadBuilders();
+  const m = modellRef(
+    zeile({ id: '1', valuedate: '2026-01-05 09:00:00', ref: 'REF-A' }),
+    zeile({ id: '2', valuedate: '2026-01-06 09:00:00', ref: 'REF-B' }),
+  );
+  const namen = settlementExportBloecke(m, { detail: true, reference: true })
+    .map(b => xlsxBlattName(b.name));
+  namen.forEach(n => assert.ok(n.length <= 31, `"${n}" ueberschreitet 31 Zeichen`));
+  assert.strictEqual(new Set(namen).size, namen.length, `Blattnamen kollidieren: ${JSON.stringify(namen)}`);
+});
+
+test('xlsxBlattName: "Aufschlüsselung nach Zahlungsmittel" wird sprechend gekuerzt', () => {
+  const { xlsxBlattName } = loadBuilders();
+  assert.strictEqual(xlsxBlattName('Aufschlüsselung nach Zahlungsmittel'), 'Zahlungsmittel');
+});
+
+test('xlsxBlattName: wort-bewusstes Kuerzen schneidet nie mitten im Wort ab', () => {
+  const { xlsxBlattName } = loadBuilders();
+  const lang = 'Ein ziemlich langer Blattname mit vielen Woertern';
+  const name = xlsxBlattName(lang);
+  assert.ok(name.length <= 31);
+  const woerter = lang.split(' ');
+  name.split(' ').forEach((wort, i) => assert.strictEqual(wort, woerter[i]));
+});
+
+// --- PDF-Layout (SPEC 4.1, 4.5) ---------------------------------------------
 
 const PDF_OPT = {
-  detail: true,
+  detail: false,
   start: '2026-01-01 00:00:00',
   end: '2026-02-01 00:00:00',
   account: '52238',
 };
 
-test('PDF: Titel und Kopfzeilen nennen Zeitraum und Account', () => {
+test('PDF: bilingualer Titel und Kopfzeilen nach Valutadatum, Spaces und Account', () => {
   const { settlementPdfBloecke } = loadBuilders();
   const p = settlementPdfBloecke(modell(...ZEILEN), PDF_OPT);
-  assert.strictEqual(p.titel, 'SETTLEMENT-REPORT');
+  assert.strictEqual(p.titel, 'SETTLEMENT-REPORT / SETTLEMENT REPORT');
   assert.deepStrictEqual(plain(p.kopfzeilen), [
-    'Zeitraum: 01.01.2026 – 31.01.2026',
+    'Auszahlungen / Valuta: 05.01.2026 – 03.02.2026 (Transaktionen erfasst ab 03.01.2026)',
+    'Space IDs: 50161',
     'Account: 52238',
   ]);
 });
 
-test('PDF: Betraege sind fertig formatierte Strings in CH-Schreibweise', () => {
-  const { settlementPdfBloecke } = loadBuilders();
-  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
-  const uebersicht = p.tabellen.find(t => t.titel === '2. Settlement-Übersicht');
-  assert.deepStrictEqual(plain(uebersicht.rows[0]),
-    ['1', '05.01.2026', '2', "30.00", '0.30', '29.70', 'Settled']);
-});
-
-test('PDF: Zahlenspalten sind rechtsbuendig, Textspalten links', () => {
-  const { settlementPdfBloecke } = loadBuilders();
-  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
-  const uebersicht = p.tabellen.find(t => t.titel === '2. Settlement-Übersicht');
-  assert.deepStrictEqual(plain(uebersicht.ausrichtung),
-    ['left', 'left', 'right', 'right', 'right', 'right', 'left']);
-});
-
-test('PDF: Abschnitt 3 beginnt auf einer neuen Seite, Folgesettlements nicht', () => {
+test('PDF: Abschnittsfolge ohne Referenz - Zusammenfassung, Uebersicht, Space-Kapitel', () => {
   const { settlementPdfBloecke } = loadBuilders();
   const p = settlementPdfBloecke(modell(...ZEILEN), PDF_OPT);
-  const titel = p.tabellen.map(t => t.titel);
-  assert.deepStrictEqual(plain(titel), [
-    '1. Zusammenfassung',
-    'Aufschlüsselung nach Zahlungsmittel',
-    '2. Settlement-Übersicht',
-    '3. Transaktionsdetail pro Settlement',
-    'Settlement 2: 03.02.2026',
-  ]);
-  const umbrueche = p.tabellen.map(t => t.seitenumbruchDavor);
-  assert.deepStrictEqual(plain(umbrueche), [false, false, true, true, false]);
-});
-
-test('PDF: ohne detail fehlen die Detailtabellen ganz', () => {
-  const { settlementPdfBloecke } = loadBuilders();
-  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
   assert.deepStrictEqual(plain(p.tabellen.map(t => t.titel)), [
     '1. Zusammenfassung',
     'Aufschlüsselung nach Zahlungsmittel',
+    'Übersicht nach Space',
     '2. Settlement-Übersicht',
+    'Noch nicht abgerechnete Transaktionen',
+    '3. Detail pro Space — 50161',
+    'Settlements — 50161',
   ]);
 });
 
-test('PDF: der Hinweis auf ausstehende Settlements haengt an der Uebersicht', () => {
+test('PDF: mit Referenz schiebt sich Abschnitt 2 (Bankgutschriften) davor', () => {
   const { settlementPdfBloecke } = loadBuilders();
-  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
-  const uebersicht = p.tabellen.find(t => t.titel === '2. Settlement-Übersicht');
-  assert.match(String(uebersicht.hinweis), /1 Settlement\(s\) mit 1 Transaktionen/);
+  const m = modellRef(zeile({ id: '1', valuedate: '2026-01-05 09:00:00', ref: 'REF-A' }));
+  const p = settlementPdfBloecke(m, { ...PDF_OPT, reference: true });
+  assert.deepStrictEqual(plain(p.tabellen.map(t => t.titel)), [
+    '1. Zusammenfassung',
+    'Aufschlüsselung nach Zahlungsmittel',
+    'Übersicht nach Space',
+    '2. Bankgutschriften',
+    '3. Settlement-Übersicht',
+    'Noch nicht abgerechnete Transaktionen',
+    '4. Detail pro Space — 50161',
+    'Settlements — 50161',
+  ]);
+});
+
+test('PDF: jedes Space-Kapitel beginnt auf einer neuen Seite', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const m = modell(
+    zeile({ id: '1', space: '50161', valuedate: '2026-01-05 09:00:00' }),
+    zeile({ id: '2', space: '97319', valuedate: '2026-01-06 09:00:00' }),
+  );
+  const p = settlementPdfBloecke(m, PDF_OPT);
+  const kapitel = p.tabellen.filter(t => /^\d\. Detail pro Space/.test(t.titel));
+  assert.strictEqual(kapitel.length, 2);
+  kapitel.forEach(k => assert.strictEqual(k.seitenumbruchDavor, true, `${k.titel} braucht Seitenumbruch`));
+  // Die Settlement-Tabelle des Space folgt direkt, ohne weiteren Umbruch.
+  const folge = p.tabellen.filter(t => /^Settlements —/.test(t.titel));
+  folge.forEach(f => assert.strictEqual(f.seitenumbruchDavor, false));
+});
+
+test('PDF: Space-Kapitel traegt KPI-Zeile und Settlement-Tabelle mit voller Referenz', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const m = modellRef(zeile({ id: '1', valuedate: '2026-01-05 09:00:00', ref: 'REF-VOLL-123' }));
+  const p = settlementPdfBloecke(m, { ...PDF_OPT, reference: true });
+  const kapitel = p.tabellen.find(t => /Detail pro Space/.test(t.titel));
+  assert.match(String(kapitel.hinweis), /1 Settlements · 1 Tx · Brutto CHF 10\.00/);
+  const tab = p.tabellen.find(t => /^Settlements —/.test(t.titel));
+  assert.deepStrictEqual(plain(tab.header),
+    ['#', 'Settlement-ID', 'Valuta', 'BG-Nr.', 'Referenz', 'Tx', 'Brutto', 'Fees', 'Netto']);
+  // Referenz vollstaendig, nicht gekuerzt.
+  assert.strictEqual(tab.rows[0][4], 'REF-VOLL-123');
+});
+
+test('PDF: Betraege sind fertig formatierte CH-Strings, Ausrichtung nach Typ', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), PDF_OPT);
+  const ueb = p.tabellen.find(t => t.titel === '2. Settlement-Übersicht');
+  assert.deepStrictEqual(plain(ueb.rows[0]),
+    ['1', '50161-S001', '50161', '05.01.2026 09:00', '2', '30.00', '0.30', '29.70', 'Settled']);
+  assert.deepStrictEqual(plain(ueb.ausrichtung),
+    ['left', 'left', 'left', 'left', 'right', 'right', 'right', 'right', 'left']);
 });
 
 test('PDF: Zusammenfassung respektiert zeilenweise Typen (Zaehler vs. Betrag)', () => {
-  // Ohne zellTyp in pdfTabelle wuerde die Wert-Spalte pauschal ueber
-  // block.typen[1] ('betrag') formatiert - "Anzahl Settlements" kaeme dann
-  // faelschlich als "2.00" statt "2" heraus.
   const { settlementPdfBloecke } = loadBuilders();
-  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: false });
+  const p = settlementPdfBloecke(modell(...ZEILEN), PDF_OPT);
   const zus = p.tabellen.find(t => t.titel === '1. Zusammenfassung');
-  const anzahlSettlements = zus.rows.find(r => r[0] === 'Anzahl Settlements');
-  const bruttoVolumen = zus.rows.find(r => r[0] === 'Brutto Volumen');
-  assert.strictEqual(anzahlSettlements[1], '2');
-  assert.strictEqual(bruttoVolumen[1], '60.00');
+  assert.strictEqual(zus.rows.find(r => r[0] === 'Anzahl Settlements')[1], '2');
+  assert.strictEqual(zus.rows.find(r => r[0] === 'Brutto Volumen')[1], '60.00');
+});
+
+test('PDF: mit detail:true bleibt die Transaktionstabelle aus dem PDF (SPEC 4.6)', () => {
+  const { settlementPdfBloecke } = loadBuilders();
+  const p = settlementPdfBloecke(modell(...ZEILEN), { ...PDF_OPT, detail: true });
+  assert.ok(!p.tabellen.some(t => t.titel === 'Transaktionen'),
+    'Transaktionsdetail gehoert in die Excel-Datei, nicht ins PDF');
 });

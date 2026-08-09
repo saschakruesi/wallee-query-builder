@@ -11,3 +11,9 @@ Terminal-Report-Tool/
 # lokal als Referenz.
 archive/
 *.local.sql
+# Fachliche Vorgabe + Referenzausgaben des Settlement-Reports. Bewusst NICHT
+# getrackt: die Referenzdateien enthalten echte Produktivdaten (rund 69'000
+# Transaktionen mit Bankreferenzen, dazu ein namentlich genannter Haendler) -
+# dieses Repo ist oeffentlich, weil das Self-Update ohne Auth von
+# raw.githubusercontent.com laedt. Der Ordner bleibt lokale Referenz.
+settlement-report-spec/

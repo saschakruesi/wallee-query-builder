@@ -207,9 +207,31 @@ test('Settlement-State: neue Felder mit Defaults, kein STORAGE_KEY-Bump noetig',
   assert.strictEqual(STORAGE_KEY, 'wallee_query_builder_v6', 'Die Aenderung ist additiv - kein Bump');
 });
 
-test('loadState setzt settlementReference-Default false', () => {
+test('loadState setzt settlementReference-Default true', () => {
   const app = loadBuilders();
-  assert.strictEqual(app.getState().settlementReference, false);
+  assert.strictEqual(app.getState().settlementReference, true);
+});
+
+// v5.10: das Feld steuert seit dem Spec-Umbau den gesamten Abschnitt
+// "Bankgutschriften", nicht mehr nur eine Zusatzspalte. Ein aus v5.9
+// uebernommenes false wuerde den Kern des Reports stumm unterdruecken.
+test('v5.10-Migration: ein aus v5.9 uebernommenes settlementReference:false wird einmalig auf true gehoben', () => {
+  const alt = JSON.stringify({ mode: 'settlement', settlementReference: false });
+  const app = loadBuilders({ seedLocalStorage: { wallee_query_builder_v6: alt } });
+  const st = app.getState();
+  assert.strictEqual(st.settlementReference, true, 'Bankgutschriften muessen nach dem Umbau sichtbar sein');
+  assert.strictEqual(st.settlementReferenceV510, true, 'Marker muss gesetzt sein, damit die Migration nur einmal laeuft');
+});
+
+test('v5.10-Migration: ein bewusstes Abschalten nach der Migration bleibt erhalten', () => {
+  // State mit gesetztem Marker = die Migration ist bereits gelaufen, der
+  // Nutzer hat die Option danach selbst abgeschaltet.
+  const nachher = JSON.stringify({
+    mode: 'settlement', settlementReference: false, settlementReferenceV510: true,
+  });
+  const app = loadBuilders({ seedLocalStorage: { wallee_query_builder_v6: nachher } });
+  assert.strictEqual(app.getState().settlementReference, false,
+    'Die Migration darf nur einmal greifen, sonst laesst sich die Option nie abschalten');
 });
 
 test('Settlement-State: alter State ohne die neuen Felder bekommt die Defaults', () => {
