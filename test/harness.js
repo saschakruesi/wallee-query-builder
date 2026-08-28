@@ -117,6 +117,12 @@ const EXPORTED = [
   'KARTEN_BUSINESS_REGEX',
   'ISO_RESPONSE_CODES',
   'FAILURE_REASONS',
+  // Reporting-Report Export-Bloecke (Task 4). Bewusst nur die beiden
+  // Funktionen: die Konstanten (REPORTING_TOP_N, REPORTING_KANAL_LABEL,
+  // REPORTING_TOP_JE_BRAND) haben ausserhalb der App keinen Konsumenten -
+  // Task 5 laeuft im selben Script-Block und sieht sie ohnehin.
+  'reportingExportBloecke',
+  'reportingZellFormat',
   'buildSettlementReportModel',
   'settlementExportBloecke',
   'buildSettlementReportCsv',

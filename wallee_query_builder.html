@@ -3721,6 +3721,11 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   const REPORTING_FUNDING   = ['CREDIT', 'DEBIT', 'UNKNOWN'];
   const REPORTING_TDS       = ['AUTHENTICATED', 'FAILED_OR_ABANDONED', 'WALLET_CRYPTOGRAM', 'NOT_REQUESTED'];
 
+  // SPEC 4.3 E5: "Top 5 je Brand". Die Grenze steht im Modell und nicht in der
+  // Ausgabe, weil sie fachlich vorgegeben ist und nicht vom Platz abhaengt -
+  // anders als die Top-10-Kuerzung der Ablehngruende, die reine Darstellung ist.
+  const REPORTING_TOP_JE_BRAND = 5;
+
   // Haendler-Land, falls keines gesetzt ist (SPEC 6.1). Ohne ein gueltiges
   // Haendler-Land gibt es kein "Inland", und die ganze Herkunfts-Kennzahl
   // fiele auf UNKNOWN zurueck.
@@ -4129,6 +4134,12 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     const panMap = new Map();
     const failureMap = new Map();
     const codeMap = new Map();
+    // E5: dieselben gescheiterten Attempts, zusaetzlich nach Brand getrennt.
+    // Bewusst eine VERSCHACHTELTE Map (Brand -> Grund -> Zaehler) statt eines
+    // zusammengesetzten Schluessels: Brand-Namen tragen Leerzeichen
+    // ("PostFinance Card", "American Express"), ein 'brand + SEP + id' liesse
+    // sich nicht verlaesslich wieder zerlegen. So braucht es gar kein Zerlegen.
+    const brandFailureMap = new Map();
     const terminalMap = new Map();
     // Bezugsgroesse fuer den Betragsanteil in K6: die Betraege der
     // erfolgreichen Karten-Attempts, je Waehrung.
@@ -4163,6 +4174,9 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (z.attemptState === 'FAILED') {
         reportingGruppeZaehle(failureMap, z.failureReasonId, z);
         reportingGruppeZaehle(codeMap, z.authResponseCode, z);
+        let bf = brandFailureMap.get(z.brand);
+        if (!bf) { bf = new Map(); brandFailureMap.set(z.brand, bf); }
+        reportingGruppeZaehle(bf, z.failureReasonId, z);
       }
 
       // Terminal-Zeilen gehoeren nur in den POS-Kanal (SPEC 7). Eine
@@ -4302,6 +4316,34 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         });
     };
 
+    // --- E5: Ablehngruende je Zahlungsmittel (SPEC 4.3) -------------------
+    // Flache Liste mit dem Brand auf jeder Zeile, nicht verschachtelt: die
+    // Ausgabe ist eine Kreuztabelle, und ein Konsument, der nur die Zeilen
+    // eines Brands braucht, filtert billiger als er verschachtelt flach klopft.
+    //
+    // Der Nenner ist NICHT gesamt.fehlgeschlagen wie bei failures[], sondern
+    // die gescheiterten Attempts DIESES Brands: die Frage lautet "woran
+    // scheitert dieses Zahlungsmittel", nicht "welchen Anteil am gesamten
+    // Ausfall hat diese Kombination". Deshalb heisst das Feld wie bei
+    // failures[] 'anteil' - derselbe Nennertyp (nur Gescheiterte), nur enger.
+    //
+    // Reihenfolge der Brands ist die der Brand-Tabelle (nach Betrag), damit
+    // die Kreuztabelle neben ihr lesbar bleibt; je Brand die haeufigsten
+    // REPORTING_TOP_JE_BRAND Gruende. Gekuerzt wird hier - anders als bei
+    // failures[]/laender[], die vollstaendig zurueckkommen - weil die Grenze
+    // aus SPEC 4.3 selbst stammt ("Top 5 je Brand") und nicht eine Frage des
+    // verfuegbaren Platzes ist.
+    const failuresProBrand = [];
+    brands.forEach(b => {
+      const bf = brandFailureMap.get(b.brand);
+      if (!bf) return;
+      sortierteListe(bf, b.fehlgeschlagen, 'id', { anteilName: 'anteil', nurAnzahl: true })
+        .slice(0, REPORTING_TOP_JE_BRAND)
+        .forEach(f => failuresProBrand.push(Object.assign({ brand: b.brand }, f, {
+          name: reportingFailureName(f.id, failureReasons),
+        })));
+    });
+
     // --- Verlauf (TIME) ---------------------------------------------------
     const tagMap = new Map();
     const stundeMap = new Map();
@@ -4408,6 +4450,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       // Attempts - die Frage lautet "warum sind die Ablehnungen passiert".
       failures: sortierteListe(failureMap, gesamt.fehlgeschlagen, 'id', { anteilName: 'anteil', nurAnzahl: true })
         .map(f => Object.assign(f, { name: reportingFailureName(f.id, failureReasons) })),
+      failuresProBrand,
       responseCodes: sortierteListe(codeMap, gesamt.fehlgeschlagen, 'code', { anteilName: 'anteil', nurAnzahl: true })
         .map(c => Object.assign(c, {
           // Fallback ist der ROHE Code, nicht '#code': im E-Commerce ist er
@@ -5201,6 +5244,543 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     });
 
     return { titel: 'SETTLEMENT-REPORT / SETTLEMENT REPORT', kopfzeilen, tabellen };
+  }
+
+  // --- Reporting-Report: Export-Bloecke ------------------------------------
+  // Eine Blockliste, aus der Bildschirm, XLSX, PDF und CSV gleichermassen
+  // gespeist werden - dieselbe Rolle wie settlementExportBloecke beim
+  // Settlement-Report. Task 5 baut die vier Ausgaben ausschliesslich hierauf
+  // auf; wer eine Kennzahl ergaenzt, ergaenzt sie genau einmal.
+  //
+  // Einheiten in zeilen (bewusst ROH, nicht formatiert):
+  //   Betraege     ganzzahlige 1e-8-Einheiten wie im Modell. Erst die Ausgabe
+  //                teilt (unitsZuZahl) und formatiert - XLSX bekommt eine echte
+  //                Zahl plus Zahlformat, kein vorformatiertes Wort. Anders als
+  //                settlementExportBloecke, das schon hier auf Dezimalzahlen
+  //                geht: dort ist die Blockliste die einzige Quelle, hier soll
+  //                der Bildschirm zusaetzlich rechnen koennen (Balken).
+  //   Prozente     Zahlen 0-100 in voller Genauigkeit, null ohne Grundlage.
+  //                Auf eine Nachkommastelle gerundet wird erst in der Ausgabe.
+  //   Faktor       die Retry-Rate (1.3 = 1.3 Versuche je Transaktion).
+  //   gemischt     nur die Wert-Spalte der Kacheln: das echte Format steht je
+  //                Zelle in zellFormate, Zugriff ueber reportingZellFormat().
+  // Deshalb ruft hier NICHTS formatZahlCH/formatAmountCH auf - zweimal runden
+  // ist ein Fehler, der sich erst in der Summe zeigt.
+  //
+  // Blockform: { titel, kanal, kopf:[{label,format}], zeilen:[[..]], typ,
+  //              hinweis, zellFormate? }. Der kopf traegt Beschriftung UND
+  //              Format in EINEM Deskriptor (das Settlement-Pendant fuehrt
+  //              header/typen als zwei Parallel-Arrays - hier zusammengezogen,
+  //              damit eine Spalte nicht halb verschoben werden kann).
+  //              zellFormate hat Vorrang je Zelle, wie zellTypen beim
+  //              Settlement-Report; Zugriff ausschliesslich ueber
+  //              reportingZellFormat().
+  const REPORTING_TOP_N = 10;
+  const REPORTING_KANAL_LABEL = { POS: 'POS', ECOM: 'E-Com', OTHER: 'Andere' };
+
+  // Deutsche Beschriftung der Eimer-Schluessel. Die Schluessel selbst bleiben
+  // im Modell englisch (sie sind Datenwerte, keine Anzeige).
+  const REPORTING_LABEL = {
+    DOMESTIC: 'Domestisch', INTRA: 'Intra (Europa)', INTER: 'Inter',
+    BUSINESS: 'Business', PRIVATE: 'Privat',
+    CREDIT: 'Kredit', DEBIT: 'Debit',
+    AUTHENTICATED: 'Authentifiziert',
+    FAILED_OR_ABANDONED: 'Fehlgeschlagen / abgebrochen',
+    WALLET_CRYPTOGRAM: 'Wallet-Kryptogramm',
+    NOT_REQUESTED: 'Nicht angefordert',
+    UNKNOWN: 'Unbekannt',
+  };
+  function reportingLabel(schluessel) {
+    const k = String(schluessel == null ? '' : schluessel);
+    return Object.prototype.hasOwnProperty.call(REPORTING_LABEL, k) ? REPORTING_LABEL[k] : k;
+  }
+
+  function reportingSpalte(label, format) { return { label, format: format || 'text' }; }
+
+  function reportingBlock(kanal, titel, kopf, zeilen, typ, hinweis, zellFormate) {
+    const block = {
+      titel, kanal: kanal || '', kopf, zeilen,
+      typ: typ || 'tabelle', hinweis: hinweis || '',
+    };
+    if (zellFormate) block.zellFormate = zellFormate;
+    return block;
+  }
+
+  // Format einer einzelnen Zelle. Normalerweise gilt das Format der Spalte;
+  // der Kachel-Block mischt in seiner Wert-Spalte Zaehler, Prozente und
+  // Betraege und traegt dafuer zellFormate (gleiche Form wie zeilen). Exakt
+  // dieselbe Konstruktion wie zellTyp() beim Settlement-Report - dort war der
+  // Anlass die Zusammenfassung, hier sind es die Kacheln.
+  function reportingZellFormat(block, r, c) {
+    const je = block.zellFormate;
+    if (je && je[r] && je[r][c]) return je[r][c];
+    const spalte = block.kopf[c];
+    return spalte ? spalte.format : 'text';
+  }
+
+  // Eine Zeile je (Eintrag, Waehrung). Die waehrungsfreien Zellen stehen NUR in
+  // der ersten Waehrungszeile eines Eintrags, die weiteren bleiben leer -
+  // sonst zaehlte eine Summe ueber die Attempts-Spalte dieselbe Zahl je
+  // Waehrung erneut, und Attempts sind waehrungsuebergreifend. Im Normalfall
+  // einer einzigen Waehrung entsteht genau eine Zeile je Eintrag, also exakt
+  // die Tabelle, die SPEC 4.1 zeichnet.
+  function reportingWaehrungZeilen(basis, waehrungen, betragZellen, leerZellen) {
+    if (!waehrungen || !waehrungen.length) return [basis.concat(leerZellen)];
+    return waehrungen.map((e, i) => (i === 0 ? basis : basis.map(() => '')).concat(betragZellen(e)));
+  }
+
+  // Top-N kuerzen. Gekuerzt wird erst hier, nie im Modell (Task 3): das Modell
+  // liefert vollstaendig sortierte Listen, die Darstellung entscheidet, wie
+  // viele davon Platz haben. Der Hinweis nennt, was fehlt - eine stumm
+  // abgeschnittene Liste liest sich wie eine vollstaendige.
+  function reportingTop(liste, hinweis) {
+    const rest = liste.length - REPORTING_TOP_N;
+    return {
+      liste: liste.slice(0, REPORTING_TOP_N),
+      hinweis: rest > 0
+        ? (hinweis ? hinweis + ' ' : '') + `${rest} weitere Einträge sind nicht dargestellt.`
+        : (hinweis || ''),
+    };
+  }
+
+  // Zeitraum-Angabe des Pickers. Akzeptiert { start, end } (so heisst es in der
+  // App) ebenso wie { von, bis } und einen fertigen String.
+  function reportingZeitraumText(zeitraum) {
+    if (!zeitraum) return '';
+    if (typeof zeitraum === 'string') return zeitraum;
+    const von = String(zeitraum.start || zeitraum.von || '').slice(0, 10);
+    // berichtsEndeTag deutet '… 00:00:00' als exklusive Obergrenze und
+    // '… 23:59:59' als letzten abgedeckten Tag - dieselbe Lesart wie im
+    // Settlement-Report, damit die Kopfzeilen der beiden Reports nicht um
+    // einen Tag auseinanderlaufen.
+    const bis = berichtsEndeTag(zeitraum.end || zeitraum.bis || '');
+    if (!von && !bis) return '';
+    return `${datumCH(von)} – ${datumCH(bis)}`;
+  }
+
+  // Kacheln-Block (SPEC 5): Kennzahl / Wert / Waehrung. Betraege bekommen ihre
+  // Waehrung in der dritten Spalte, statt sie in den Titel zu schreiben -
+  // ueber mehrere Waehrungen entstehen so schlicht mehrere Kacheln, und keine
+  // Zelle mischt je zwei Waehrungen (SPEC 2.7).
+  function reportingKachelBlock(kanal, titel, k, kanalModell) {
+    const zeilen = [];
+    const formate = [];
+    const kachel = (label, wert, format, waehrung) => {
+      zeilen.push([label, wert, waehrung || '']);
+      formate.push(['text', format, 'text']);
+    };
+    kachel('Zahlungsversuche', k.attempts, 'zahl');
+    kachel('Erfolgreich', k.erfolgreich, 'zahl');
+    kachel('Fehlgeschlagen', k.fehlgeschlagen, 'zahl');
+    kachel('Offen (PENDING)', k.offen, 'zahl');
+    kachel('Success Rate', k.successRate, 'pct');
+    kachel('Failure Rate', k.failureRate, 'pct');
+    // Transaktionen/Conversion/Retry stammen aus dem CONV-Block. Fehlt der,
+    // stuende hier eine 0, die wie ein Messwert aussaehe - deshalb nur, wenn
+    // es ihn gibt. Conversion und Retry-Rate sind E-Com-Kennzahlen (E3/E4).
+    if (k.transaktionen > 0) {
+      kachel('Transaktionen', k.transaktionen, 'zahl');
+      if (kanal === 'ECOM') {
+        kachel('Conversion', k.conversion, 'pct');
+        kachel('Retry-Rate', k.retryRate, 'faktor');
+      }
+    }
+    if (kanal === 'ECOM' && kanalModell.tds.basis > 0) {
+      kachel('3DS-Akzeptanz', kanalModell.tds.akzeptanz, 'pct');
+    }
+    if (k.walletAttempts > 0) kachel('Wallet-Anteil', k.walletAnteil, 'pct');
+    // DCC ist eine POS-Kennzahl (P7). Sie steht auch bei 0 % da: dass am
+    // Terminal nicht in Fremdwaehrung abgerechnet wurde, ist selbst eine
+    // Aussage - anders als eine fehlende Kachel, die nach "nicht erhoben"
+    // aussaehe.
+    if (kanal === 'POS' && k.kartenErfolgreich > 0) kachel('DCC-Anteil', k.dccAnteil, 'pct');
+    kanalModell.waehrungen.forEach(w => {
+      kachel('Umsatz', w.betrag, 'betrag', w.waehrung);
+      kachel('Ø-Betrag', w.schnitt, 'betrag', w.waehrung);
+    });
+    return reportingBlock(kanal, titel,
+      // 'gemischt' statt eines plausiblen 'zahl': die Wert-Spalte fuehrt Zaehler,
+      // Prozente UND Betraege, das Format steht je Zelle in zellFormate. Ein
+      // Spaltenformat, das sich rendern liesse, waere eine Falle - wer den
+      // Zugriff ueber reportingZellFormat() vergisst, schriebe 4229859000000
+      // als Anzahl hin. 'gemischt' kann keine Ausgabe versehentlich rendern.
+      [reportingSpalte('Kennzahl'), reportingSpalte('Wert', 'gemischt'), reportingSpalte('Währung')],
+      zeilen, 'kacheln',
+      'Quoten zählen nur Versuche mit Endzustand (erfolgreich oder fehlgeschlagen); '
+      + 'offene Versuche stehen separat.', formate);
+  }
+
+  // Aufschluesselung mit fester Eimer-Reihenfolge (K5, K6, P1, E2). Erfolgs-
+  // und Fehlerquote stehen NUR dort, wo der Eimer auch gescheiterte Attempts
+  // enthaelt: K5/K6/P1 zaehlen per Konstruktion ausschliesslich erfolgreiche
+  // Karten-Attempts, eine Spalte "Erfolg %" waere dort konstant 100 % und
+  // damit eine Tautologie statt einer Messung (dieselbe Ueberlegung wie bei
+  // den Ablehngruenden im Modell).
+  function reportingGruppenBlock(kanal, titel, spaltenName, gruppen, basis, mitErfolg, hinweis) {
+    const kopf = [reportingSpalte(spaltenName), reportingSpalte('Attempts', 'zahl'),
+      reportingSpalte('Anteil %', 'pct')];
+    if (mitErfolg) kopf.push(reportingSpalte('Erfolg %', 'pct'));
+    const zeilen = gruppen.map(g => {
+      const z = [reportingLabel(g.schluessel), g.attempts, g.anteilAttempts];
+      if (mitErfolg) z.push(g.successRate);
+      return z;
+    });
+    const total = ['Total', basis, basis > 0 ? 100 : null];
+    if (mitErfolg) total.push(null);
+    zeilen.push(total);
+    return reportingBlock(kanal, titel, kopf, zeilen, 'tabelle', hinweis);
+  }
+
+  // Ein Block-Satz fuer genau einen Kanal. Die Reihenfolge ist fest (Task 4):
+  // Kacheln, Zahlungsmittel, Wallets, Kartentyp, Kartenherkunft, Laender,
+  // P1 bzw. E1/E2, Ablehngruende, Ablehncodes, E3/E4, PAN-Quelle, Betraege,
+  // Terminals, Verlauf, Stunden. Ein Block, dessen Kennzahl in diesem Kanal
+  // keine Grundlage hat, entfaellt - eine leere Tabelle behauptet, es sei
+  // gemessen worden und nichts gewesen.
+  function reportingKanalBloecke(kanal, kanalModell, lueckenlos) {
+    const label = REPORTING_KANAL_LABEL[kanal] || kanal;
+    const t = name => `${label} · ${name}`;
+    const k = kanalModell.kpi;
+    const bloecke = [];
+
+    // Ein Kanal ohne einen einzigen Zahlungsversuch bekommt EINEN Hinweisblock
+    // statt eines Dutzends leerer Tabellen (SPEC 7). Dass er leer ist, ist die
+    // Aussage - sie braucht keine Tabelle.
+    if (!k.attempts) {
+      return [reportingBlock(kanal, t('Keine Daten'), [], [], 'tabelle',
+        'Kein Zahlungsversuch in diesem Kanal im gewählten Zeitraum.')];
+    }
+
+    bloecke.push(reportingKachelBlock(kanal, t('Kennzahlen'), k, kanalModell));
+
+    // --- K2/K3/K4/K7: Zahlungsmittel --------------------------------------
+    const zmLeer = ['', null, null, null];
+    const zmBetrag = w => [w.waehrung, w.betrag, w.anteilBetrag, w.schnitt];
+    const zmZeilen = [];
+    kanalModell.brands.forEach(b => {
+      reportingWaehrungZeilen(
+        [b.brand, b.attempts, b.anteilAttempts, b.successRate, b.failureRate],
+        b.waehrungen, zmBetrag, zmLeer).forEach(z => zmZeilen.push(z));
+    });
+    reportingWaehrungZeilen(
+      ['Total', k.attempts, k.attempts > 0 ? 100 : null, k.successRate, k.failureRate],
+      kanalModell.waehrungen, w => [w.waehrung, w.betrag, w.betrag ? 100 : null, w.schnitt],
+      zmLeer).forEach(z => zmZeilen.push(z));
+    bloecke.push(reportingBlock(kanal, t('Zahlungsmittel'), [
+      reportingSpalte('Brand'), reportingSpalte('Attempts', 'zahl'),
+      reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
+      reportingSpalte('Failure %', 'pct'), reportingSpalte('Währung'),
+      reportingSpalte('Betrag', 'betrag'), reportingSpalte('Anteil Betrag %', 'pct'),
+      reportingSpalte('Ø-Betrag', 'betrag'),
+    ], zmZeilen, 'tabelle',
+    'Attempts, Anteil und Quoten gelten währungsübergreifend und stehen deshalb nur in '
+    + 'der ersten Währungszeile eines Zahlungsmittels; die Beträge stehen je Währung.'));
+
+    // --- K2: Wallets als eigene Zeilen ------------------------------------
+    // Bewusst ein eigener Block statt zusaetzlicher Zeilen oben: ein Wallet
+    // liegt QUER zu den Brands (Apple Pay auf Visa), zwischen den Brands
+    // stehend wuerde es deren Anteile ueber 100 % treiben.
+    if (kanalModell.wallets.length) {
+      bloecke.push(reportingBlock(kanal, t('Wallets'), [
+        reportingSpalte('Wallet'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
+      ], kanalModell.wallets.map(w => [w.wallet, w.attempts, w.anteilAttempts, w.successRate]),
+      'tabelle',
+      'Wallets liegen quer zu den Zahlungsmitteln (z. B. Apple Pay auf Visa); ihr Anteil '
+      + 'bezieht sich auf alle Zahlungsversuche des Kanals.'));
+    }
+
+    const kartenBasis = kanalModell.kartentyp.basis;
+    const kartenHinweis = `Grundlage: ${formatIntCH(kartenBasis)} erfolgreiche Karten-Attempts. `
+      + 'Zahlungsmittel ohne Karten-Labels (TWINT, PostFinance Card, Lunch Check, Reka, '
+      + 'Rechnung) zählen nicht mit.';
+
+    // --- K5: Business vs. Privat ------------------------------------------
+    if (kartenBasis > 0) {
+      bloecke.push(reportingGruppenBlock(kanal, t('Kartentyp'), 'Kartentyp',
+        kanalModell.kartentyp.gruppen, kartenBasis, false, kartenHinweis));
+    }
+
+    // --- K6: Herkunft der Karten (einzige Aufschluesselung mit Betraegen) --
+    if (kanalModell.herkunft.basis > 0) {
+      const hkLeer = ['', null, null];
+      const hkZeilen = [];
+      kanalModell.herkunft.gruppen.forEach(g => {
+        reportingWaehrungZeilen([reportingLabel(g.schluessel), g.attempts, g.anteilAttempts],
+          g.waehrungen, w => [w.waehrung, w.betrag, w.anteilBetrag], hkLeer)
+          .forEach(z => hkZeilen.push(z));
+      });
+      reportingWaehrungZeilen(['Total', kanalModell.herkunft.basis, 100],
+        kanalModell.herkunft.waehrungen, w => [w.waehrung, w.betrag, w.betrag ? 100 : null], hkLeer)
+        .forEach(z => hkZeilen.push(z));
+      bloecke.push(reportingBlock(kanal, t('Kartenherkunft'), [
+        reportingSpalte('Herkunft'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Anteil %', 'pct'), reportingSpalte('Währung'),
+        reportingSpalte('Umsatz', 'betrag'), reportingSpalte('Anteil Umsatz %', 'pct'),
+      ], hkZeilen, 'tabelle',
+      kartenHinweis + ' Der Betragsanteil bezieht sich auf den Karten-Umsatz je Währung, '
+      + 'nicht auf den Umsatz des ganzen Kanals — sonst summierten die vier Eimer nicht auf 100 %.'));
+
+      // Top-10 Issuer-Laender.
+      if (kanalModell.herkunft.laender.length) {
+        const top = reportingTop(kanalModell.herkunft.laender,
+          'Absteigend nach Anzahl. Karten ohne verwertbaren ISO-2-Ländercode stehen im Eimer '
+          + '„Unbekannt“ der Kartenherkunft, nicht als eigenes Land.');
+        bloecke.push(reportingBlock(kanal, t('Top-10 Länder'), [
+          reportingSpalte('Land'), reportingSpalte('Herkunft'),
+          reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+        ], top.liste.map(l => [l.land, reportingLabel(l.herkunft), l.attempts, l.anteilAttempts]),
+        'tabelle', top.hinweis));
+      }
+    }
+
+    // --- P1 (POS) bzw. E1/E2 (E-Com) --------------------------------------
+    if (kanal === 'POS' && kanalModell.funding.basis > 0) {
+      bloecke.push(reportingGruppenBlock(kanal, t('Debit und Kredit'), 'Art',
+        kanalModell.funding.gruppen, kanalModell.funding.basis, false, kartenHinweis));
+    }
+    if (kanal === 'ECOM' && kanalModell.tds.basis > 0) {
+      const tds = kanalModell.tds;
+      bloecke.push(reportingBlock(kanal, t('3DS-Akzeptanz'), [
+        reportingSpalte('Kennzahl'), reportingSpalte('Wert', 'pct'),
+      ], [
+        ['3DS-Akzeptanz', tds.akzeptanz],
+        ['3DS angefordert (Anteil)', tds.angefordertAnteil],
+        ['Wallet-Kryptogramm (Anteil)', tds.walletAnteil],
+      ], 'tabelle',
+      `Grundlage: ${formatIntCH(tds.basis)} Karten-Attempts mit Endzustand. Die Akzeptanz `
+      + 'misst nur die tatsächlich angeforderten Authentifizierungen (authentifiziert gegen '
+      + 'fehlgeschlagen/abgebrochen). Ein Liability-Shift-Label liefert die API nicht.'));
+      bloecke.push(reportingGruppenBlock(kanal, t('3DS-Status'), 'Status',
+        tds.gruppen, tds.basis, true,
+        'Erfolgsquote je 3DS-Status (E2): zeigt, ob die Authentifizierung die Conversion drückt.'));
+    }
+
+    // --- K8: Ablehngruende -------------------------------------------------
+    if (kanalModell.failures.length) {
+      const top = reportingTop(kanalModell.failures,
+        `Anteil an allen ${formatIntCH(k.fehlgeschlagen)} gescheiterten Zahlungsversuchen `
+        + 'des Kanals. Ohne Klartext-Namen steht die rohe ID.');
+      bloecke.push(reportingBlock(kanal, t('Ablehngründe'), [
+        reportingSpalte('Grund'), reportingSpalte('ID'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+      ], top.liste.map(f => [f.name, f.id, f.attempts, f.anteil]), 'tabelle', top.hinweis));
+    }
+
+    // --- E5: Ablehngruende je Zahlungsmittel (SPEC 4.3) --------------------
+    // Nur, wenn MEHR ALS EIN Brand ueberhaupt gescheiterte Versuche hat: bei
+    // einem einzigen waere die Kreuztabelle Zeile fuer Zeile der K8-Block
+    // darueber, nur mit einer zusaetzlichen Spalte, in der immer dasselbe
+    // steht. Deshalb datengetrieben statt auf E-Commerce festgenagelt - am POS
+    // ist "Visa scheitert an X, TWINT an Y" dieselbe brauchbare Aussage, und wo
+    // sie keine ist, entfaellt der Block von selbst.
+    const e5Brands = new Set(kanalModell.failuresProBrand.map(f => f.brand));
+    if (e5Brands.size > 1) {
+      bloecke.push(reportingBlock(kanal, t('Ablehngründe je Brand'), [
+        reportingSpalte('Brand'), reportingSpalte('Grund'), reportingSpalte('ID'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+      ], kanalModell.failuresProBrand.map(f => [f.brand, f.name, f.id, f.attempts, f.anteil]),
+      'tabelle',
+      `Höchstens ${REPORTING_TOP_JE_BRAND} Gründe je Zahlungsmittel (SPEC 4.3). Der Anteil `
+      + 'bezieht sich auf die gescheiterten Versuche DIESES Zahlungsmittels, nicht auf alle '
+      + 'des Kanals — die Zeilen eines Brands summieren also auf 100 %, sofern er nicht mehr '
+      + `als ${REPORTING_TOP_JE_BRAND} verschiedene Gründe hatte. Die Reihenfolge der Brands `
+      + 'ist die der Zahlungsmittel-Tabelle.'));
+    }
+
+    // --- P6: Ablehncodes des Issuers/Processors ---------------------------
+    // Steht in BEIDEN Kanaelen, obwohl SPEC 4.2 ihn unter POS fuehrt: am POS
+    // ist es der ISO-8583-Code des Issuers, im E-Commerce der Antwortcode des
+    // Processors - in beiden Faellen der feinere Ablehngrund. Er liegt auf einer
+    // ANDEREN Achse als E5 darueber (Code des Issuers gegen Grund je Brand) und
+    // ersetzt ihn nicht - beide stehen nebeneinander.
+    if (kanalModell.responseCodes.length) {
+      const top = reportingTop(kanalModell.responseCodes,
+        'Antwortcode des Issuers (POS, ISO 8583) bzw. des Processors (E-Commerce) — '
+        + 'feiner als der Ablehngrund oben.');
+      bloecke.push(reportingBlock(kanal, t('Ablehncodes'), [
+        reportingSpalte('Code'), reportingSpalte('Bezeichnung'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+      ], top.liste.map(c => [c.code, c.name, c.attempts, c.anteil]), 'tabelle', top.hinweis));
+    }
+
+    // --- E3/E4: Conversion und Retry-Rate ---------------------------------
+    if (kanal === 'ECOM' && k.transaktionen > 0) {
+      const zeilen = kanalModell.brands.filter(b => b.txMitAttempt > 0)
+        .map(b => [b.brand, b.txMitAttempt, b.txErfolgreich, b.conversion, b.attempts, b.retryRate]);
+      zeilen.push(['Total', k.transaktionen, k.txErfolgreich, k.conversion, k.attempts, k.retryRate]);
+      bloecke.push(reportingBlock(kanal, t('Conversion'), [
+        reportingSpalte('Brand'), reportingSpalte('Transaktionen', 'zahl'),
+        reportingSpalte('Erfolgreiche Tx', 'zahl'), reportingSpalte('Conversion %', 'pct'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Retry-Rate', 'faktor'),
+      ], zeilen, 'tabelle',
+      'Conversion zählt Transaktionen, die Success Rate zählt Zahlungsversuche — im '
+      + 'E-Commerce entsteht eine Transaktion bereits beim Befüllen des Warenkorbs. Die '
+      + 'Total-Zeile ist eine Obergrenze des Nenners: eine Transaktion mit Versuchen auf '
+      + 'zwei Zahlungsmitteln steht in beiden Brand-Zeilen. Retry-Rate über 1.3 deutet auf '
+      + 'Reibung im Checkout.'));
+    }
+
+    // --- E6: PAN-Quelle ----------------------------------------------------
+    // Nur, wenn ueberhaupt ein Token-Label vorkommt: eine Tabelle mit der
+    // einzigen Zeile "Unbekannt 100 %" sagt nichts, was nicht schon im
+    // fehlenden Block staende.
+    if (kanal === 'ECOM' && kanalModell.panTypes.some(p => p.panType !== REPORTING_UNBEKANNT)) {
+      bloecke.push(reportingBlock(kanal, t('PAN-Quelle'), [
+        reportingSpalte('PAN-Quelle'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
+      ], kanalModell.panTypes.map(p => [reportingLabel(p.panType), p.attempts,
+        p.anteilAttempts, p.successRate]), 'tabelle',
+      'Klartext-PAN gegen Device-Token (Apple/Google Pay) und Scheme-Token (Click to Pay).'));
+    }
+
+    // --- K7/K9: Betraege je Waehrung ---------------------------------------
+    // Der einzige Block, der Betraege ohne Begleitspalte fuehrt - hier IST die
+    // Waehrung die Zeile, ueber Waehrungen hinweg wird nie summiert (SPEC 2.7).
+    if (kanalModell.waehrungen.length) {
+      bloecke.push(reportingBlock(kanal, t('Beträge je Währung'), [
+        reportingSpalte('Währung'), reportingSpalte('Erfolgreich', 'zahl'),
+        reportingSpalte('Umsatz', 'betrag'), reportingSpalte('Ø-Betrag', 'betrag'),
+        reportingSpalte('Fehlgeschlagen', 'zahl'), reportingSpalte('Betrag fehlgeschlagen', 'betrag'),
+        reportingSpalte('Ø fehlgeschlagen', 'betrag'), reportingSpalte('Rückerstattungen', 'betrag'),
+        reportingSpalte('Refund-Quote %', 'pct'),
+      ], kanalModell.waehrungen.map(w => [w.waehrung, w.anzahlErfolgreich, w.betrag, w.schnitt,
+        w.anzahlFehlgeschlagen, w.betragFailed, w.schnittFailed, w.refund, w.refundQuote]),
+      'tabelle',
+      'Keine Zeile wird mit einer anderen summiert. Die Refund-Quote setzt die '
+      + 'Rückerstattungen ins Verhältnis zum Umsatz derselben Währung.'));
+    }
+
+    // --- P2: Terminals -----------------------------------------------------
+    if (kanal === 'POS' && kanalModell.terminals.length) {
+      const tLeer = ['', null, null];
+      const tBetrag = w => [w.waehrung, w.betrag, w.schnitt];
+      const tZeilen = [];
+      kanalModell.terminals.forEach(term => {
+        reportingWaehrungZeilen(
+          [term.identifier, term.name, term.attempts, term.anteilAttempts, term.successRate],
+          term.waehrungen, tBetrag, tLeer).forEach(z => tZeilen.push(z));
+      });
+      bloecke.push(reportingBlock(kanal, t('Terminals'), [
+        reportingSpalte('Terminal'), reportingSpalte('Name'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+        reportingSpalte('Erfolg %', 'pct'), reportingSpalte('Währung'),
+        reportingSpalte('Umsatz', 'betrag'), reportingSpalte('Ø-Betrag', 'betrag'),
+      ], tZeilen, 'tabelle',
+      'Eine auffällig hohe Failure Rate an einem einzelnen Gerät deutet auf Hardware oder '
+      + 'Netzanbindung, nicht auf die Kartenakzeptanz.'));
+    }
+
+    // --- K10: Verlauf ------------------------------------------------------
+    if (kanalModell.verlauf.some(v => v.attempts > 0)) {
+      const vLeer = ['', null];
+      const vZeilen = [];
+      kanalModell.verlauf.forEach(v => {
+        reportingWaehrungZeilen([v.tag, v.attempts, v.erfolgreich, v.fehlgeschlagen, v.successRate],
+          v.waehrungen, w => [w.waehrung, w.betrag], vLeer).forEach(z => vZeilen.push(z));
+      });
+      // Dieselbe Klausel wie im Kachel-Block: der Verlauf wird in Task 5
+      // eigenstaendig als Balken gezeichnet, und dort faellt sonst auf, dass
+      // Erfolgreich + Fehlgeschlagen < Attempts ist und die Quote trotzdem
+      // 100 % zeigt - weil die offenen Versuche in keiner Quote stecken.
+      let hinweis = 'Tag des Zahlungsversuchs. Tage ohne Versuch stehen mit 0 da — die 0 ist '
+        + 'gemessen, nicht unbekannt. Die Erfolgsquote zählt nur Versuche mit Endzustand; '
+        + 'offene (PENDING) Versuche stecken in „Attempts“, aber in keiner Quote — deshalb '
+        + 'ergeben Erfolgreich und Fehlgeschlagen nicht immer die Attempts.';
+      if (lueckenlos === false) {
+        hinweis += ' Der Zeitraum ist zu lang für eine lückenlose Tagesachse; aufgeführt sind '
+          + 'nur die Tage mit Daten.';
+      }
+      if (k.ohneTag > 0) {
+        hinweis += ` ${formatIntCH(k.ohneTag)} Zahlungsversuche ohne brauchbares Datum sind hier `
+          + 'nicht enthalten.';
+      }
+      bloecke.push(reportingBlock(kanal, t('Verlauf'), [
+        reportingSpalte('Tag'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Erfolgreich', 'zahl'), reportingSpalte('Fehlgeschlagen', 'zahl'),
+        reportingSpalte('Erfolg %', 'pct'), reportingSpalte('Währung'),
+        reportingSpalte('Umsatz', 'betrag'),
+      ], vZeilen, 'balken', hinweis));
+    }
+
+    // --- P4: Stosszeiten ---------------------------------------------------
+    if (kanalModell.stunden.some(s => s.attempts > 0)) {
+      let hinweis = 'Alle 24 Stunden stehen da, auch die leeren — eine fehlende Stunde wäre '
+        + 'von einer Stunde ohne Umsatz nicht zu unterscheiden.';
+      if (k.ohneStunde > 0) {
+        hinweis += ` ${formatIntCH(k.ohneStunde)} Zahlungsversuche ohne brauchbare Stunde sind `
+          + 'hier nicht enthalten.';
+      }
+      bloecke.push(reportingBlock(kanal, t('Stunden'), [
+        reportingSpalte('Stunde', 'zahl'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Erfolgreich', 'zahl'), reportingSpalte('Fehlgeschlagen', 'zahl'),
+        reportingSpalte('Erfolg %', 'pct'),
+      ], kanalModell.stunden.map(s => [s.stunde, s.attempts, s.erfolgreich, s.fehlgeschlagen,
+        s.successRate]), 'balken', hinweis));
+    }
+
+    return bloecke;
+  }
+
+  // Export-Bloecke des Reporting-Reports. optionen: { zeitraum, spaces } aus
+  // dem Picker - das Modell kennt nur den BELEGTEN Zeitraum (Task 3), der
+  // GEWAEHLTE steht ausschliesslich hier zur Verfuegung. Beide stehen im
+  // Titelblock nebeneinander: gehen sie auseinander, sieht der Leser sofort,
+  // dass die Randtage keine Zahlungsversuche trugen.
+  function reportingExportBloecke(modell, optionen) {
+    const opt = optionen || {};
+    const m = (modell && modell.kanaele) ? modell : {
+      merchantCountry: REPORTING_DEFAULT_LAND, kanaele: {}, kanalListe: [],
+      zeitraum: { von: '', bis: '', tage: 0, lueckenlos: true },
+      spaces: [], waehrungen: [], hatDaten: false, hatTerminals: false, fremdeKanaele: 0,
+    };
+    const zr = m.zeitraum || { von: '', bis: '', tage: 0, lueckenlos: true };
+    const spaces = (Array.isArray(opt.spaces) && opt.spaces.length) ? opt.spaces : m.spaces;
+
+    const kopfZeilen = [
+      ['Bericht', 'Zahlungsversuche (Charge Attempts)'],
+      ['Zeitraum (Auswahl)', reportingZeitraumText(opt.zeitraum) || '—'],
+      // Bewusst OHNE formatIntCH: das Schweizer Tausenderzeichen gehoert in die
+      // Ausgabe, nicht in eine Zelle. Ein langer Zeitraum ergaebe sonst
+      // "2’193 Tage" - genau der formatierte String, den diese Schicht nirgends
+      // liefern darf.
+      ['Zeitraum (Daten)', zr.von
+        ? `${datumCH(zr.von)} – ${datumCH(zr.bis)} (${zr.tage} Tage)` : '—'],
+      ['Spaces', spaces.join(', ') || '—'],
+      ['Händler-Land', m.merchantCountry],
+      ['Kanäle', m.kanalListe.map(k => REPORTING_KANAL_LABEL[k] || k).join(', ') || '—'],
+      ['Währungen', m.waehrungen.join(', ') || '—'],
+    ];
+    let kopfHinweis = 'Der Zeitraum bezieht sich auf den Zeitpunkt des Zahlungsversuchs, nicht '
+      + 'auf den Abschluss der Transaktion. Gezählt wird der Zahlungsversuch (Charge Attempt), '
+      + 'nicht die Transaktion. Quoten zählen nur Versuche mit Endzustand; offene (PENDING) '
+      + 'Versuche stehen separat. Beträge werden je Währung geführt und nie addiert.';
+    if (m.fremdeKanaele > 0) {
+      kopfHinweis += ` ${formatIntCH(m.fremdeKanaele)} Zeilen tragen einen unbekannten Kanal und `
+        + 'stehen in keinem Abschnitt.';
+    }
+    const bloecke = [reportingBlock('', 'Reporting',
+      [reportingSpalte('Angabe'), reportingSpalte('Wert')], kopfZeilen, 'tabelle', kopfHinweis)];
+
+    if (!m.hatDaten) {
+      bloecke.push(reportingBlock('', 'Keine Daten', [], [], 'tabelle',
+        'Im gewählten Zeitraum gibt es keinen Zahlungsversuch.'));
+      return bloecke;
+    }
+
+    // Der Deckel des Verlaufs (Task 3) gilt fuer alle Kanaele gemeinsam,
+    // deshalb wird lueckenlos von hier durchgereicht statt im Kanal-Modell
+    // nachgeschlagen - der Kanal weiss davon nichts.
+    m.kanalListe.forEach(kanal => {
+      const km = m.kanaele[kanal];
+      // Aus buildReportingModel unerreichbar (kanalListe wird erst nach
+      // kanaele[k] befuellt). Der Zweig steht fuer von Hand gebaute Modelle -
+      // Tests reichen solche herein, und eine Ausgabe, die daran wirft, waere
+      // eine schlechtere Antwort als ein fehlender Kanal-Satz.
+      if (!km) return;
+      reportingKanalBloecke(kanal, km, zr.lueckenlos).forEach(b => bloecke.push(b));
+    });
+    return bloecke;
   }
 
   // --- Settlement-Report: Ansicht ------------------------------------------
