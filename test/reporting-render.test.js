@@ -202,6 +202,20 @@ test('reportingZellText unterscheidet "keine Grundlage" von "gehoert zur Zeile d
   assert.strictEqual(f('', 'zahl'), '');
 });
 
+test('Eine Zahl mit unbekanntem Format wird sichtbar falsch, nicht still falsch', () => {
+  const { app } = starte();
+  // Genau der Fall, den Task 4 mit dem Sentinel 'gemischt' provoziert: wer den
+  // Umweg ueber reportingZellFormat() vergisst, darf keine rohe 1e-8-Einheit
+  // hinschreiben, die wie ein Messwert aussieht.
+  assert.strictEqual(app.reportingZellText(4229859000000, 'gemischt'), '—');
+  assert.strictEqual(app.reportingZellText(1403, 'nochnichterfunden'), '—');
+  // In den maschinenlesbaren Ausgaben ist die leere Zelle der sichtbare Fehler -
+  // eine Zahl liesse sich weiterverrechnen.
+  assert.strictEqual(app.reportingZellZahl(4229859000000, 'gemischt'), '');
+  // Text bleibt Text: das Format ist dort ohnehin nur eine Ausrichtungsfrage.
+  assert.strictEqual(app.reportingZellText('Visa', 'gemischt'), 'Visa');
+});
+
 // --- Bildschirm-Render -----------------------------------------------------
 
 test('Der Render gliedert nach Kanal und zeigt jeden Block', () => {
@@ -281,6 +295,11 @@ test('Balken-Bloecke zeichnen ein inline-SVG neben ihrer Tabelle', () => {
   assert.match(html, /POS · Verlauf/);
   assert.match(html, /<svg\b/, 'Balken als inline-SVG, kein Chart-Vendor');
   assert.match(html, /<rect\b/);
+  // Die Bildunterschrift sagt, worauf der Balken skaliert - ohne sie laesst
+  // sich seine Hoehe nicht lesen. Der Zaehler auf sein eigenes Maximum, die
+  // Quote auf die feste 0-100-Achse.
+  assert.match(html, /Attempts · Maximum 217/);
+  assert.match(html, /Erfolg % · Skala 0–100 %/);
   // Die Tabelle bleibt daneben stehen - das SVG ist die Zugabe, nicht der Ersatz.
   assert.match(html, /2026-07-01/);
 });
@@ -419,13 +438,34 @@ test('Die Verlaufszeile im Reporting-Modus bietet nur die Roh-CSV', () => {
   assert.doesNotMatch(html, />reporting</, 'nicht der rohe Schluessel');
 });
 
+function verlaufZeile(mode) {
+  const { app, el } = starte({
+    wallee_query_builder_v6: JSON.stringify({ mode }),
+    wallee_query_history_v1: VERLAUF(mode),
+  });
+  app.renderHistory();
+  const zeilen = el('queryHistoryBody').children;
+  assert.strictEqual(zeilen.length, 1, `Kein Verlaufseintrag im Modus ${mode}`);
+  return zeilen[0].innerHTML;
+}
+
 test('Die uebrigen Modi behalten ihren Excel-Knopf', () => {
   // Gegenprobe: sonst waere der Test oben auch dann gruen, wenn der
   // Excel-Knopf ueberall verschwunden ist.
-  const { app, el } = starte({
-    wallee_query_builder_v6: JSON.stringify({ mode: 'brand' }),
-    wallee_query_history_v1: VERLAUF('brand'),
+  ['brand', 'export', 'card'].forEach(mode => {
+    assert.match(verlaufZeile(mode), /data-act="xlsx"/, `Modus ${mode} ohne Excel-Knopf`);
   });
-  app.renderHistory();
-  assert.match(el('queryHistoryBody').children[0].innerHTML, /data-act="xlsx"/);
+});
+
+test('Terminal und Settlement bleiben ohne Excel-Knopf', () => {
+  // MODI_MIT_REPORT_PANEL ist die EINZIGE Zeile dieses Schritts, die einen
+  // ausgelieferten Modus beruehrt. Ohne diese beiden Faelle koennte jemand
+  // 'terminal'/'settlement' aus der Liste nehmen - der Excel-Knopf kaeme in
+  // zwei fertigen Modi zurueck (echte Verhaltensaenderung), und die Suite
+  // bliebe gruen: der Test darueber deckt nur 'reporting' ab, der daneben nur
+  // die Modi, die den Knopf haben SOLLEN.
+  ['terminal', 'settlement'].forEach(mode => {
+    assert.doesNotMatch(verlaufZeile(mode), /data-act="xlsx"/,
+      `Modus ${mode} darf den Excel-Knopf nicht zurueckbekommen`);
+  });
 });

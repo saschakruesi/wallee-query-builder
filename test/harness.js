@@ -141,6 +141,7 @@ const EXPORTED = [
   // geladen (Muster test/report-xlsx.test.js).
   'formatProzentCH',
   'reportingZellText',
+  'reportingZellZahl',
   'svgBalken',
   'reportingBalkenSerien',
   'buildReportingReportCsv',

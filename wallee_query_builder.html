@@ -6042,6 +6042,16 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (format === 'betrag') return formatAmountCH(wert);
       if (format === 'pct') return formatProzentCH(wert) + ' %';
       if (format === 'faktor') return formatZahlCH(wert);
+      // Unbekanntes Format an einer ZAHL. Das passiert genau dann, wenn ein
+      // Aufrufer den Umweg ueber reportingZellFormat() vergisst und das
+      // Sentinel 'gemischt' der Kachel-Wertspalte bis hierher kommt. Ein
+      // String(wert) gaebe dort "4229859000000" aus - eine Zahl, die wie ein
+      // Messwert aussieht. Der Strich ist die schlechtere Aussage, aber der
+      // bessere Fehler: eine ganze Spalte voller "—" ist unuebersehbar kaputt,
+      // ein rohes 1e-8-Wort nicht. Preis: er ist von einem echten "kein
+      // Nenner" nicht zu unterscheiden - deshalb faengt der Sentinel den Fall
+      // im Test ab, statt sich auf die Anzeige zu verlassen.
+      return REPORTING_OHNE_GRUNDLAGE;
     }
     return String(wert);
   }
@@ -6061,7 +6071,13 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // dieselbe Zahl zeigen - eine CSV mit 1.105793450881612 neben einem PDF
     // mit 1.11 laesst den Leser raten, welche der beiden gilt.
     if (format === 'faktor') return Math.round(wert * 100) / 100;
-    return wert;
+    // Der Zaehler geht ungerundet durch - explizit, damit der Zweig darunter
+    // wirklich nur unbekannte Formate faengt.
+    if (format === 'zahl') return wert;
+    // Unbekanntes Format an einer Zahl: gleiche Lage wie in reportingZellText
+    // (siehe dort). Eine leere Zelle ist in CSV/Excel der sichtbare Fehler -
+    // die rohe 1e-8-Einheit waere eine Zahl, mit der jemand weiterrechnet.
+    return '';
   }
 
   // --- Balken als inline-SVG ------------------------------------------------
@@ -8060,9 +8076,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (!svg) return '';
       // Ohne feste Obergrenze skaliert die Reihe auf ihr eigenes Maximum - das
       // gehoert dazugeschrieben, sonst laesst sich die Balkenhoehe nicht lesen.
+      // s.max setzt reportingBalkenSerien ausschliesslich an der pct-Serie
+      // (feste 0-100-Achse), deshalb ist der Skala-Zweig immer der Prozentfall.
       const spitze = s.max
-        ? `Skala 0–${reportingZellText(s.max, s.format === 'pct' ? 'zahl' : s.format)}`
-          + (s.format === 'pct' ? ' %' : '')
+        ? `Skala 0–${reportingZellText(s.max, 'zahl')} %`
         : `Maximum ${reportingZellText(Math.max(...s.werte.map(v => (typeof v === 'number' ? v : 0))), s.format)}`;
       return '<figure class="balken-block">'
         + `<figcaption>${escapeHtml(s.label)} · ${escapeHtml(spitze)}</figcaption>${svg}`
@@ -8298,7 +8315,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (!tab.nurHinweis) {
         const spalten = {};
         tab.ausrichtung.forEach((a, i) => { spalten[i] = { halign: a }; });
-        // Breite Tabellen (Zahlungsmittel mit neun Spalten, Beztraege je
+        // Breite Tabellen (Zahlungsmittel mit neun Spalten, Betraege je
         // Waehrung mit elf) sprengen bei Schriftgroesse 8 die nutzbaren 515pt.
         const schrift = tab.header.length >= 9 ? 7 : 8;
         doc.autoTable({
