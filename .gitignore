@@ -17,3 +17,6 @@ archive/
 # dieses Repo ist oeffentlich, weil das Self-Update ohne Auth von
 # raw.githubusercontent.com laedt. Der Ordner bleibt lokale Referenz.
 settlement-report-spec/
+
+# Reporting-Modus: Discovery- und Referenzlaeufe mit Produktivdaten (siehe dashboard/README.md)
+dashboard/discovery-results/

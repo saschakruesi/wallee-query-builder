@@ -1652,6 +1652,33 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const DESC_MASKED_CARD = '1456765125779';
   const DESC_AUTH_CODE   = '1579287795628';
 
+  // --- Reporting-Modus: Kanaele, Label-Descriptors, Umgebung --------------
+  // Sales-Channel-IDs (chargeattempt.saleschannel bzw.
+  // transaction.authorizationsaleschannel).
+  const SALES_CHANNEL_ECOM = '1582816223150';
+  const SALES_CHANNEL_POS  = '1582819151330';
+
+  // Nur echte Zahlungen zaehlen - Testtransaktionen verfaelschen jede Quote.
+  const ATTEMPT_ENVIRONMENT = 'PRODUCTION';
+
+  // Descriptor-IDs fuer den Reporting-Modus. Alle an Produktivdaten ermittelt
+  // (Task 0, dashboard/discovery-results/DESCRIPTORS.md) - NICHT raten: welche
+  // Labels ein Connector schreibt, ist connectorabhaengig, und ein falscher
+  // Descriptor liefert stumm NULL statt eines Fehlers. Der Map-Key ist
+  // ebenfalls descriptorabhaengig und steht als Kommentar dabei.
+  const DESC_ISSUER_COUNTRY     = '1474552618629'; // Issuer Country, countryContent (ISO-2)
+  const DESC_CARD_TYPE          = '1474552618699'; // Issuer Card type, CREDIT/DEBIT
+  const DESC_CARD_CATEGORY      = '1474552618999'; // Issuer Card category, Produktname (Business/Privat)
+  const DESC_AUTH_RESPONSE_POS  = '1579287790513'; // Authorization Response Code (ISO-8583, POS)
+  const DESC_AUTH_RESPONSE_ECOM = '15537739985478'; // Response Code des Processors (E-Commerce)
+  const DESC_DCC_CURRENCY       = '1695119783358'; // DCC Cardholder Currency (nur Existenz)
+  const DESC_PAN_TYPE           = '1634723429555'; // Pan Type (Klartext-PAN / Device-/Scheme-Token)
+  const DESC_TDS_STARTED        = '1568637480278'; // 3-D Secure Process Started, dateTimeContent
+  const DESC_TDS_CAVV           = '1569496536590'; // 3-D Secure CAVV, longTextContent - NUR Existenz, nie der Wert
+  const DESC_ECI                = '1634723429552'; // Cryptogram Eci (02/05/06/07)
+  // Bewusst NICHT im Reporting-Modus verwendet (PII-Sperrliste, SPEC 9):
+  // 1456765000789 (Card Holder Name) und DESC_MASKED_CARD (Masked Card Number).
+
   // Line-Item-Typ fuer Trinkgeld (lineitem.type). Trinkgeld wird von wallee nicht
   // als Feld auf transaction gefuehrt, sondern als eigene Line-Item-Position.
   const TIP_LINEITEM_TYPE = 'TIP';
@@ -3084,6 +3111,253 @@ LEFT JOIN paymentterminal pt
        ON pt.id       = t.terminal_id
       AND pt.spaceid  = t.spaceid
 ORDER BY settlement_valuedate, space_id, transaction_id;`;
+  }
+
+  // --- SQL Generation: Reporting -----------------------------------------
+  // Haendler-KPIs (Success Rate, Zahlungsmittel-Mix, Karten-Herkunft, 3DS) auf
+  // Basis der CHARGE ATTEMPTS - nie der Transaktionen: im E-Commerce entsteht
+  // eine Transaktion schon beim Befuellen des Warenkorbs, eine Erfolgsquote auf
+  // Transaktionen waere systematisch falsch (SPEC 2.1). Aus demselben Grund
+  // filtert der Zeitraum auf ca.createdon statt wie in allen uebrigen Modi auf
+  // t.completedon - ein gescheiterter Attempt hat gar kein completedon.
+  //
+  // Ausgabe ist EIN CSV mit drei Bloecken (Spalte block, SPEC 3.2):
+  //   DIM  - Zaehlwerte pro Dimensions-Tupel (Brand, Karte, 3DS, ...)
+  //   TIME - Zaehlwerte pro Tag und Stunde (Verlauf, Stosszeiten)
+  //   CONV - Transaktions-Conversion; eigener Block, weil COUNT(DISTINCT) ueber
+  //          DIM-Tupel hinweg nicht summierbar ist (eine Transaktion kann beim
+  //          Retry die Brand wechseln).
+  // Die Bloecke haengen per UNION ALL aneinander und haben deshalb dieselbe
+  // Spaltenliste in derselben Reihenfolge. Athena/PrestoDB verlangt zusaetzlich
+  // gleiche TYPEN je Position - darum sind alle Platzhalter typisiert
+  // (CAST(NULL AS ...)) und die Betragssummen explizit auf decimal(38,8)
+  // gecastet, statt sich auf die Typ-Herleitung des Optimizers zu verlassen.
+
+  // Label-Zugriff wie im cardCte: ca.labels ist array<map<string,string>>.
+  // Der Map-Key ist descriptorabhaengig (shortTextContent, countryContent,
+  // dateTimeContent, longTextContent) - deshalb explizit uebergebbar.
+  function labelExpr(id, key) {
+    return `element_at(filter(ca.labels, l -> l['descriptor'] = '${id}'), 1)['${key || 'shortTextContent'}']`;
+  }
+
+  // Reine Existenzpruefung auf ein Label, ohne Map-Key: fuer DCC ist der Key in
+  // Task 0 nicht verifiziert, und ein falscher Key ergaebe stumm immer false
+  // (element_at liefert dann NULL statt eines Fehlers). element_at auf ein
+  // leeres Array liefert ebenfalls NULL - anders als der []-Subscript, der
+  // werfen wuerde.
+  function labelVorhanden(id) {
+    return `element_at(filter(ca.labels, l -> l['descriptor'] = '${id}'), 1) IS NOT NULL`;
+  }
+
+  function buildReportingQuery({ spaceIds, start, end, channels, byTerminal, terminalIds }) {
+    const spaces    = spaceIds || [];
+    const terminals = terminalIds || [];
+    const mitTerminal = !!byTerminal;
+
+    // Leere/fehlende Kanalwahl heisst "alle Kanaele" - dann bewusst GAR KEIN
+    // Filter, damit Attempts mit einem dritten saleschannel als 'OTHER'
+    // sichtbar bleiben (SPEC 7) statt still herauszufallen.
+    const kanalIds = (channels || [])
+      .map(c => (c === 'POS' ? SALES_CHANNEL_POS : c === 'ECOM' ? SALES_CHANNEL_ECOM : null))
+      .filter(Boolean);
+    const kanalFilter = kanalIds.length > 0
+      ? `\n      AND ca.saleschannel IN (${kanalIds.join(', ')})`
+      : '';
+
+    // Der paymentterminal-Join haengt an zwei Beduerfnissen: der
+    // Terminal-Aufschluesselung im DIM-Block und dem optionalen
+    // Terminal-Filter. Ohne beides bleibt er weg - wie die needs*-Flags im
+    // Transaktions-Export nur die tatsaechlich gebrauchten Joins einbauen.
+    const terminalJoin = (mitTerminal || terminals.length > 0) ? `
+    LEFT JOIN paymentterminal pt
+           ON pt.id      = ca.terminal_id
+          AND pt.spaceid = ca.spaceid` : '';
+    const idListe = terminals.map(id => `'${escapeSql(id)}'`).join(', ');
+    const terminalFilter = terminals.length === 0
+      ? ''
+      : terminals.length === 1
+        ? `\n      AND pt.identifier = ${idListe}`
+        : `\n      AND pt.identifier IN (${idListe})`;
+    const attTerminal = mitTerminal ? `,
+        pt.identifier                                   AS terminal_identifier,
+        pt.name                                         AS terminal_name` : '';
+    const dimTerminal = mitTerminal ? `
+    terminal_identifier,
+    terminal_name,` : '';
+    const nullTerminal = mitTerminal ? `
+    CAST(NULL AS varchar)                           AS terminal_identifier,
+    CAST(NULL AS varchar)                           AS terminal_name,` : '';
+    const gruppeTerminal = mitTerminal ? `, terminal_identifier, terminal_name` : '';
+
+    return `WITH att AS (
+    -- Eine Zeile pro Charge Attempt. Alle abgeleiteten Spalten entstehen hier
+    -- einmal, die drei Bloecke unten aggregieren nur noch darueber.
+    SELECT
+        ca.spaceid                                      AS space_id,
+        CASE ca.saleschannel
+            WHEN ${SALES_CHANNEL_POS} THEN 'POS'
+            WHEN ${SALES_CHANNEL_ECOM} THEN 'ECOM'
+            ELSE 'OTHER'
+        END                                             AS channel,
+        -- Brand ueber ca.connectorconfiguration (die Konfiguration DIESES
+        -- Versuchs), NICHT ueber die Konfiguration der Transaktion wie in den
+        -- Modi brand/terminal: bei einem Retry mit anderer Zahlungsmethode
+        -- waere der Attempt sonst der falschen Brand zugeordnet.
+        COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN') AS brand,
+        COALESCE(wt.name['en-US'], '-')                 AS wallet,
+        t.currency                                      AS waehrung,
+        ca.state                                        AS attempt_state,
+        ca.failurereason                                AS failure_reason_id,
+        -- Feinerer Ablehngrund als failurereason: am POS der ISO-8583-Code des
+        -- Issuers, im E-Commerce der Response Code des Processors. Ein Attempt
+        -- traegt immer nur eines der beiden Labels.
+        COALESCE(${labelExpr(DESC_AUTH_RESPONSE_POS)},
+                 ${labelExpr(DESC_AUTH_RESPONSE_ECOM)}) AS auth_response_code,
+        ${labelExpr(DESC_ISSUER_COUNTRY, 'countryContent')} AS issuer_country,
+        ${labelExpr(DESC_CARD_CATEGORY)} AS card_category,
+        ${labelExpr(DESC_CARD_TYPE)} AS funding,
+        ${labelExpr(DESC_PAN_TYPE)} AS pan_type,
+        ${labelVorhanden(DESC_DCC_CURRENCY)} AS dcc,
+        ${labelExpr(DESC_TDS_STARTED, 'dateTimeContent')} IS NOT NULL AS tds_started,
+        -- CAVV nur als Existenzpruefung: das Kryptogramm selbst ist ein
+        -- Sicherheitsmerkmal und darf nie in eine Ausgabespalte geraten.
+        ${labelExpr(DESC_TDS_CAVV, 'longTextContent')} IS NOT NULL AS tds_cavv,
+        ${labelExpr(DESC_ECI)} AS eci,
+        -- Betrag nur bei erfolgreichen Attempts (bei FAILED ist completedamount
+        -- 0); der abgelehnte Betrag kommt aus authorizationamount, das auch bei
+        -- FAILED gefuellt ist (Task 0, Q6).
+        CASE WHEN ca.state = 'SUCCESSFUL' THEN t.completedamount     END AS amount,
+        CASE WHEN ca.state = 'FAILED'     THEN t.authorizationamount END AS amount_failed,
+        CASE WHEN ca.state = 'SUCCESSFUL' THEN t.refundedamount      END AS refund,
+        t.id                                            AS transaction_id,
+        ca.createdon                                    AS created_on${attTerminal}
+    FROM chargeattempt ca
+    JOIN charge c
+      ON c.id      = ca.charge_id
+    JOIN transaction t
+      ON t.id      = c.transaction_id
+     AND t.spaceid = ca.spaceid
+    LEFT JOIN paymentconnectorconfiguration pcc
+           ON pcc.id      = ca.connectorconfiguration
+          AND pcc.spaceid = ca.spaceid
+    LEFT JOIN paymentconnector pc
+           ON pc.id       = pcc.connector
+    LEFT JOIN wallettype wt
+           ON wt.id       = ca.wallet${terminalJoin}
+    WHERE ${spaceInClause(spaces, 'ca.spaceid')}
+      AND ca.createdon >= TIMESTAMP '${start}'
+      AND ca.createdon <  TIMESTAMP '${end}'
+      AND ca.environment = '${ATTEMPT_ENVIRONMENT}'${kanalFilter}${terminalFilter}
+)
+SELECT
+    'DIM'                                           AS block,
+    space_id,
+    channel,
+    brand,
+    wallet,
+    waehrung,
+    attempt_state,
+    failure_reason_id,
+    auth_response_code,
+    issuer_country,
+    card_category,
+    funding,
+    pan_type,
+    dcc,
+    tds_started,
+    tds_cavv,
+    eci,${dimTerminal}
+    CAST(NULL AS date)                              AS tag,
+    CAST(NULL AS integer)                           AS stunde,
+    COUNT(*)                                        AS anzahl_attempts,
+    COUNT(DISTINCT transaction_id)                  AS anzahl_transaktionen,
+    CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
+    CAST(SUM(amount_failed) AS decimal(38,8))       AS summe_betrag_failed,
+    -- Bewusst in Kauf genommene Ungenauigkeit (SPEC 3.2): refundedamount haengt
+    -- an der TRANSAKTION, nicht am Attempt. Fallen mehrere erfolgreiche
+    -- Attempts derselben Transaktion in dasselbe DIM-Tupel, zaehlt der Refund
+    -- mehrfach. Die Refund-Quote ist damit eine Obergrenze - am POS praktisch
+    -- exakt (Task 0: 12'507 von 12'522 Transaktionen mit genau einem Attempt).
+    CAST(SUM(refund) AS decimal(38,8))              AS summe_refund,
+    CAST(NULL AS bigint)                            AS tx_mit_attempt,
+    CAST(NULL AS bigint)                            AS tx_erfolgreich
+FROM att
+GROUP BY
+    space_id, channel, brand, wallet, waehrung, attempt_state,
+    failure_reason_id, auth_response_code, issuer_country, card_category,
+    funding, pan_type, dcc, tds_started, tds_cavv, eci${gruppeTerminal}
+
+UNION ALL
+
+SELECT
+    'TIME'                                          AS block,
+    space_id,
+    channel,
+    brand,
+    CAST(NULL AS varchar)                           AS wallet,
+    waehrung,
+    attempt_state,
+    CAST(NULL AS bigint)                            AS failure_reason_id,
+    CAST(NULL AS varchar)                           AS auth_response_code,
+    CAST(NULL AS varchar)                           AS issuer_country,
+    CAST(NULL AS varchar)                           AS card_category,
+    CAST(NULL AS varchar)                           AS funding,
+    CAST(NULL AS varchar)                           AS pan_type,
+    CAST(NULL AS boolean)                           AS dcc,
+    CAST(NULL AS boolean)                           AS tds_started,
+    CAST(NULL AS boolean)                           AS tds_cavv,
+    CAST(NULL AS varchar)                           AS eci,${nullTerminal}
+    date(created_on)                                AS tag,
+    CAST(hour(created_on) AS integer)               AS stunde,
+    COUNT(*)                                        AS anzahl_attempts,
+    CAST(NULL AS bigint)                            AS anzahl_transaktionen,
+    CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
+    CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
+    CAST(NULL AS decimal(38,8))                     AS summe_refund,
+    CAST(NULL AS bigint)                            AS tx_mit_attempt,
+    CAST(NULL AS bigint)                            AS tx_erfolgreich
+FROM att
+GROUP BY
+    space_id, channel, brand, waehrung, attempt_state,
+    date(created_on), CAST(hour(created_on) AS integer)
+
+UNION ALL
+
+SELECT
+    'CONV'                                          AS block,
+    space_id,
+    channel,
+    brand,
+    CAST(NULL AS varchar)                           AS wallet,
+    waehrung,
+    CAST(NULL AS varchar)                           AS attempt_state,
+    CAST(NULL AS bigint)                            AS failure_reason_id,
+    CAST(NULL AS varchar)                           AS auth_response_code,
+    CAST(NULL AS varchar)                           AS issuer_country,
+    CAST(NULL AS varchar)                           AS card_category,
+    CAST(NULL AS varchar)                           AS funding,
+    CAST(NULL AS varchar)                           AS pan_type,
+    CAST(NULL AS boolean)                           AS dcc,
+    CAST(NULL AS boolean)                           AS tds_started,
+    CAST(NULL AS boolean)                           AS tds_cavv,
+    CAST(NULL AS varchar)                           AS eci,${nullTerminal}
+    CAST(NULL AS date)                              AS tag,
+    CAST(NULL AS integer)                           AS stunde,
+    CAST(NULL AS bigint)                            AS anzahl_attempts,
+    CAST(NULL AS bigint)                            AS anzahl_transaktionen,
+    CAST(NULL AS decimal(38,8))                     AS summe_betrag,
+    CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
+    CAST(NULL AS decimal(38,8))                     AS summe_refund,
+    -- COUNT(DISTINCT) gehoert in einen eigenen Block: ueber DIM-Tupel hinweg
+    -- ist er nicht summierbar, weil dieselbe Transaktion in mehreren Tupeln
+    -- steckt (Retry mit anderer Zahlungsmethode).
+    COUNT(DISTINCT transaction_id)                  AS tx_mit_attempt,
+    COUNT(DISTINCT CASE WHEN attempt_state = 'SUCCESSFUL' THEN transaction_id END) AS tx_erfolgreich
+FROM att
+GROUP BY
+    space_id, channel, brand, waehrung
+
+ORDER BY block, channel, anzahl_attempts DESC;`;
   }
 
   // --- Terminal-Report: CSV-Parser ----------------------------------------
