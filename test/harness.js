@@ -123,6 +123,15 @@ const EXPORTED = [
   // Task 5 laeuft im selben Script-Block und sieht sie ohnehin.
   'reportingExportBloecke',
   'reportingZellFormat',
+  // Reporting-Verdrahtung (Task 5): zwei reine Regeln plus der Ingest-Pfad.
+  // reportingModellAktuell() ist die Testnaht auf das zuletzt gebaute Modell -
+  // gleiche Rolle wie getState() beim State.
+  'reportingKanalFilter',
+  'reportingTerminalPanelSichtbar',
+  'ingestReportingCsv',
+  'uebergibReportingCsv',
+  'renderReportingReport',
+  'reportingModellAktuell',
   'buildSettlementReportModel',
   'settlementExportBloecke',
   'buildSettlementReportCsv',

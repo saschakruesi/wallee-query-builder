@@ -533,6 +533,14 @@
   }
   .check-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
   .check-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  /* Kanal-Wahl im Reporting-Modus - die einzige Radio-Gruppe der App. */
+  .radio-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .radio-row label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 14px; }
+  .radio-row input[type="radio"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  /* Bewusst nur auf die eine neue Statuszeile gemuenzt: die Statuszeilen von
+     Terminal- und Settlement-Report sollen sich nicht mit aendern. */
+  #reportingStatus[data-art="fehler"] { color: var(--danger); }
+  #reportingStatus[data-art="erfolg"] { color: var(--accent-dark); }
   .item-info {
     flex: 1;
     display: flex;
@@ -756,6 +764,7 @@
       <button class="mode-btn" data-mode="export">Transaktions-Export</button>
       <button class="mode-btn" data-mode="card">Kartensuche</button>
       <button class="mode-btn" data-mode="settlement">Settlement / Auszahlung</button>
+      <button class="mode-btn" data-mode="reporting">Reporting</button>
     </div>
     <p class="hint cond-section" id="tipUnsettledHint" style="margin-top:8px;margin-bottom:0;">
       <code>tip_total</code>: Trinkgeld-Anteil der Transaktionen (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.
@@ -1009,6 +1018,41 @@
     <p class="hint" style="margin-top:6px;margin-bottom:0;">Führt je Settlement die Auszahlungsreferenz (wie auf dem Bank Statement) mit und gruppiert die Settlements zu <strong>Bankgutschriften</strong> für den Kontoauszug-Abgleich. Braucht einen teureren Join auf die Auszahlungen — bei Bedarf abschaltbar. Wirksam ab der nächsten Abfrage.</p>
   </div>
 
+  <!-- Reporting (v5.11): Kennzahlen auf Basis der Zahlungsversuche
+       (Charge Attempts), nicht der Transaktionen. Space-Panel und
+       Zeitraum-Picker gelten wie im brand-Modus. -->
+  <div class="panel cond-section" id="reportingSection">
+    <h2>Reporting</h2>
+    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Gezählt wird der <strong>Zahlungsversuch</strong> (Charge Attempt), nicht die Transaktion: im E-Commerce entsteht eine Transaktion schon beim Befüllen des Warenkorbs, eine Erfolgsquote auf Transaktionen wäre systematisch falsch. Ausgewertet werden nur produktive Versuche (<code>environment = PRODUCTION</code>). Die Query liefert bereits verdichtete Zählwerte — keine personenbezogenen Daten, deshalb lässt sich das Ergebnis im Kopieren-Modus auch als CSV importieren.</p>
+
+    <div class="field">
+      <label class="feld-label">Kanal</label>
+      <div class="radio-row">
+        <label><input type="radio" name="reportingChannel" id="reportingChannelPos" value="POS" /><span>POS (Terminal)</span></label>
+        <label><input type="radio" name="reportingChannel" id="reportingChannelEcom" value="ECOM" /><span>E-Commerce</span></label>
+        <label><input type="radio" name="reportingChannel" id="reportingChannelBoth" value="BOTH" checked /><span>Beide</span></label>
+      </div>
+      <p class="hint" style="margin-top:6px;margin-bottom:0;">Bei <em>Beide</em> filtert die Query bewusst gar nicht nach Kanal — so bleibt ein Versuch mit einem dritten Verkaufskanal als eigener Abschnitt <em>Andere</em> sichtbar, statt still herauszufallen.</p>
+    </div>
+
+    <div class="field" style="max-width:220px;">
+      <label class="feld-label" for="reportingMerchantCountry">Händler-Land (ISO-2)</label>
+      <input id="reportingMerchantCountry" type="text" maxlength="2" placeholder="CH"
+             title="Zweibuchstabiger Ländercode des Händlers. Bestimmt, ob ein Kartenversuch als inländisch, europäisch oder international zählt." />
+    </div>
+    <p class="hint" style="margin-top:6px;">Grundlage der Herkunfts-Auswertung: Issuer-Land gleich Händler-Land = <em>Inländisch</em>, Issuer-Land in der Europa-Region = <em>Intra</em>, sonst <em>International</em>. Ohne Issuer-Label bleibt der Versuch <em>Unbekannt</em>.</p>
+
+    <hr class="section-divider" />
+
+    <label class="check-row">
+      <input type="checkbox" id="reportingByTerminal" />
+      <span>Terminal-Aufschlüsselung</span>
+    </label>
+    <p class="hint" style="margin-top:6px;margin-bottom:0;">Schlüsselt die Kennzahlen zusätzlich nach Terminal auf und blendet dafür das Terminal-Panel oben ein (dort lässt sich die Auswahl auch als Filter nutzen). Betrifft nur den POS-Anteil — E-Commerce-Versuche haben kein Terminal; bei Kanal <em>E-Commerce</em> ist die Option deshalb wirkungslos.</p>
+
+    <p class="hint" style="margin-top:14px;margin-bottom:0;"><strong>Zeitraum:</strong> Anders als in den übrigen Modi bezieht sich der Zeitraum hier auf den <strong>Zeitpunkt des Zahlungsversuchs</strong>, nicht auf den Abschluss der Transaktion — gescheiterte Versuche haben gar keinen Abschluss.</p>
+  </div>
+
   <div class="panel" id="sqlPanel">
     <div class="output-header">
       <span class="output-title">Abfrage <span class="badge" id="modeBadge">Brand</span></span>
@@ -1110,6 +1154,29 @@
     </div>
 
     <div id="settlementReportOutput" class="report-output"></div>
+  </div>
+
+  <!-- Ausgabe des reporting-Modus. Der CSV-Import steht bewusst AUSSERHALB von
+       reportingReportActions: die Aktionen erscheinen erst mit einem Modell,
+       der Import ist aber genau der Weg, ohne API zu einem Modell zu kommen
+       (Kopieren-Modus, SPEC 5 - unbedenklich, weil das Aggregat keine
+       personenbezogenen Daten traegt). -->
+  <div class="panel cond-section" id="reportingReportSection">
+    <h2>Reporting-Report</h2>
+    <p class="hint" id="reportingStatus" style="margin-bottom:0;"></p>
+
+    <div class="list-actions" style="margin-top:14px;">
+      <label class="btn" for="reportingCsvImport" title="Ergebnis-CSV aus dem Portal laden (Kopieren-Modus)">CSV importieren</label>
+      <input type="file" id="reportingCsvImport" accept=".csv,text/csv" class="hidden">
+    </div>
+
+    <div id="reportingReportActions" class="list-actions hidden" style="margin-top:8px;">
+      <button class="btn" id="reportingCsvBtn" title="Report als CSV herunterladen">CSV</button>
+      <button class="btn" id="reportingXlsxBtn" title="Report als Excel-Datei herunterladen">Excel</button>
+      <button class="btn btn-primary" id="reportingPdfBtn" title="Report als PDF herunterladen">PDF</button>
+    </div>
+
+    <div id="reportingReportOutput" class="report-output"></div>
   </div>
 
 </div>
@@ -1730,6 +1797,21 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const settlementCsvBtn          = document.getElementById('settlementCsvBtn');
   const settlementXlsxBtn         = document.getElementById('settlementXlsxBtn');
   const settlementPdfBtn          = document.getElementById('settlementPdfBtn');
+
+  const reportingSection          = document.getElementById('reportingSection');
+  const reportingChannelPos       = document.getElementById('reportingChannelPos');
+  const reportingChannelEcom      = document.getElementById('reportingChannelEcom');
+  const reportingChannelBoth      = document.getElementById('reportingChannelBoth');
+  const reportingMerchantCountryEl = document.getElementById('reportingMerchantCountry');
+  const reportingByTerminalToggle = document.getElementById('reportingByTerminal');
+  const reportingReportSection    = document.getElementById('reportingReportSection');
+  const reportingStatus           = document.getElementById('reportingStatus');
+  const reportingReportActions    = document.getElementById('reportingReportActions');
+  const reportingReportOutput     = document.getElementById('reportingReportOutput');
+  const reportingCsvBtn           = document.getElementById('reportingCsvBtn');
+  const reportingXlsxBtn          = document.getElementById('reportingXlsxBtn');
+  const reportingPdfBtn           = document.getElementById('reportingPdfBtn');
+  const reportingCsvImport        = document.getElementById('reportingCsvImport');
   const terminalModeHint= document.getElementById('terminalModeHint');
   const tipUnsettledHint= document.getElementById('tipUnsettledHint');
   const reportSection   = document.getElementById('reportSection');
@@ -1861,6 +1943,13 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     // die Migration gar nicht erst durchlaeuft - sonst wuerde ein bewusstes
     // Abschalten beim naechsten Laden wieder ueberschrieben.
     settlementReferenceV510: true,
+    // Reporting (v5.11). 'BOTH' heisst bewusst "gar kein Kanalfilter", damit
+    // ein dritter Verkaufskanal als OTHER sichtbar bleibt (SPEC 7) - siehe
+    // reportingKanalFilter(). Das Haendler-Land treibt die Herkunfts-Einstufung
+    // (inlaendisch / Europa / international) und ist deshalb ein ISO-2-Code.
+    reportingChannel: 'BOTH',
+    reportingMerchantCountry: 'CH',
+    reportingByTerminal: false,
     userPresets: [],
     // Betriebsmodus (v4). Default ist bewusst der Kopieren-Modus: er braucht
     // keine Installation und ist damit das, was ohne Zutun funktioniert.
@@ -1909,6 +1998,15 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
           state.settlementReferenceV510 = true;
         }
         delete state.settlementByTerminal;
+        // Reporting (v5.11): rein additiv, kein STORAGE_KEY-Bump. Beide Werte
+        // werden nicht nur auf Vorhandensein, sondern auf Gueltigkeit geprueft:
+        // ein unbekannter Kanal wuerde in generate() still zum Vollfilter, und
+        // ein Land wie 'Schweiz' wuerde im Modell jede Karte auf UNKNOWN werfen
+        // (normLand akzeptiert nur ISO-2).
+        if (!REPORTING_KANAL_WAHL.includes(state.reportingChannel)) state.reportingChannel = 'BOTH';
+        state.reportingMerchantCountry =
+          normLand(state.reportingMerchantCountry) || REPORTING_DEFAULT_LAND;
+        state.reportingByTerminal = !!state.reportingByTerminal;
         // Migration: altes Einzelfeld spaceId -> spaces[]
         if ((!state.spaces || !state.spaces.length) && parsed.spaceId) {
           state.spaces = [{ id: String(parsed.spaceId), label: '', selected: true }];
@@ -1944,7 +2042,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         // deshalb gezielt dorthin statt auf brand zurueckzufallen.
         if (state.mode === 'report') state.mode = 'terminal';
         // Unbekannter Modus (z. B. aus einer aelteren Version) faellt auf brand zurueck.
-        if (!['brand','terminal','export','card','settlement'].includes(state.mode)) {
+        if (!['brand','terminal','export','card','settlement','reporting'].includes(state.mode)) {
           state.mode = 'brand';
         }
       }
@@ -6510,6 +6608,14 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
           ? 'Ergebnis geladen – Settlement-Report erstellt.'
           : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
           ok ? 'erfolg' : 'fehler');
+      } else if (state.mode === 'reporting') {
+        const r = await holeErgebnisText(token, account);
+        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
+        const ok = uebergibReportingCsv(r.text);
+        zeigeFortschritt(ok
+          ? 'Ergebnis geladen – Reporting-Report erstellt.'
+          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
+          ok ? 'erfolg' : 'fehler');
       } else {
         zeigeFortschritt('Fertig — Ergebnis unten im Verlauf als CSV oder Excel herunterladen.', 'erfolg');
       }
@@ -6689,6 +6795,14 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         const ok = uebergibSettlementCsv(r.text);
         zeigeFortschritt(ok
           ? 'Ergebnis geladen – Settlement-Report erstellt.'
+          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
+          ok ? 'erfolg' : 'fehler');
+      } else if (state.mode === 'reporting') {
+        const r = await holeErgebnisText(token, account);
+        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
+        const ok = uebergibReportingCsv(r.text);
+        zeigeFortschritt(ok
+          ? 'Ergebnis geladen – Reporting-Report erstellt.'
           : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
           ok ? 'erfolg' : 'fehler');
       } else {
@@ -7411,6 +7525,30 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     return div;
   }
 
+  // --- Reporting: die beiden Regeln der Verdrahtung ------------------------
+  // Bewusst reine Funktionen und nicht inline in setMode/generate: beide Regeln
+  // haengen an State-Feldern, die sich WAEHREND des Modus aendern (Radio,
+  // Checkbox), nicht nur am Modus selbst - und beide waeren sonst nur ueber den
+  // Umweg des gerenderten DOM pruefbar.
+  const REPORTING_KANAL_WAHL = ['POS', 'ECOM', 'BOTH'];
+
+  // 'BOTH' ergibt eine LEERE Liste, nicht ['POS','ECOM']: leer heisst fuer
+  // buildReportingQuery "gar kein saleschannel-Filter", und nur so bleibt ein
+  // Versuch mit einem dritten Verkaufskanal als OTHER sichtbar (SPEC 7).
+  // ['POS','ECOM'] wuerde ihn dagegen still herausfiltern.
+  function reportingKanalFilter(wahl) {
+    if (wahl === 'POS')  return ['POS'];
+    if (wahl === 'ECOM') return ['ECOM'];
+    return [];
+  }
+
+  // Das Terminal-Panel gehoert nur dann zum Reporting-Modus, wenn die
+  // Aufschluesselung gewaehlt ist UND der Kanal ueberhaupt Terminals kennt -
+  // E-Commerce-Versuche haben keines (SPEC 7).
+  function reportingTerminalPanelSichtbar(kanal, byTerminal) {
+    return !!byTerminal && kanal !== 'ECOM';
+  }
+
   function generate() {
     const start = `${state.startDate} ${state.startTime}`;
     const end   = `${state.endDate} ${state.endTime}`;
@@ -7427,6 +7565,19 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       sql = buildCardQuery({ spaceIds, start, end, terminalIds: ids, last4: state.cardLast4 || '' });
     } else if (state.mode === 'settlement') {
       sql = buildSettlementQuery({ start, end, reference: state.settlementReference });
+    } else if (state.mode === 'reporting') {
+      // Terminals nur mitgeben, wenn das Terminal-Panel im Reporting-Modus
+      // ueberhaupt gilt. Sonst filterte eine aus einem anderen Modus
+      // stehengebliebene Auswahl unsichtbar mit - das Panel ist dann ja gar
+      // nicht eingeblendet.
+      const mitTerminal = reportingTerminalPanelSichtbar(state.reportingChannel, state.reportingByTerminal);
+      const ids = mitTerminal ? state.terminals.filter(t => t.selected).map(t => t.id) : [];
+      sql = buildReportingQuery({
+        spaceIds, start, end,
+        channels: reportingKanalFilter(state.reportingChannel),
+        byTerminal: mitTerminal,
+        terminalIds: ids,
+      });
     } else {
       sql = buildBrandQuery({ spaceIds, start, end });
     }
@@ -7469,7 +7620,12 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     state.mode = mode;
     modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     // Settlement ist seit v5.8 account-basiert: weder Space- noch Terminal-Filter.
-    const showTerminal = (mode === 'terminal' || mode === 'export' || mode === 'card');
+    // Reporting filtert dagegen wie brand/terminal nach Space; sein
+    // Terminal-Panel haengt zusaetzlich an zwei eigenen Feldern (siehe
+    // reportingTerminalPanelSichtbar).
+    const showTerminal = (mode === 'terminal' || mode === 'export' || mode === 'card')
+      || (mode === 'reporting'
+        && reportingTerminalPanelSichtbar(state.reportingChannel, state.reportingByTerminal));
     spaceSection.classList.toggle('hidden', mode === 'settlement');
     terminalSection.classList.toggle('active', showTerminal);
     exportSection.classList.toggle('active', mode === 'export');
@@ -7478,6 +7634,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // Terminal-Report ist die Ausgabe von 'terminal': Filter oben, Report unten.
     reportSection.classList.toggle('active', mode === 'terminal');
     settlementReportSection.classList.toggle('active', mode === 'settlement');
+    // Reporting: Filter-Panel oben, Report-Panel unten - dasselbe Muster wie
+    // Terminal- und Settlement-Report.
+    reportingSection.classList.toggle('active', mode === 'reporting');
+    reportingReportSection.classList.toggle('active', mode === 'reporting');
     // tip_total/unsettled_anzahl erscheinen nur in brand/terminal;
     // der Settlement-Modus (seit v5.8 account-basiert) liefert kein tip_total mehr
     // und hat dafuer keinen eigenen Hinweis.
@@ -7493,6 +7653,9 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl wird über alle Terminals der gewählten Spaces gesucht.';
     } else if (mode === 'settlement') {
       modeBadge.textContent = 'Settlement';
+    } else if (mode === 'reporting') {
+      modeBadge.textContent = 'Reporting';
+      terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl werden alle Terminals der gewählten Spaces aufgeschlüsselt. Betrifft nur den POS-Anteil.';
     } else {
       modeBadge.textContent = 'Brand';
     }
@@ -7565,6 +7728,194 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       const { status, daten } = await leseCredentials();
       if (status === 200 && daten && daten.accountId) settlementAccountInput.value = String(daten.accountId);
     } catch (e) { /* Kopieren-Modus oder Proxy nicht erreichbar - Feld bleibt leer */ }
+  }
+
+  // --- Reporting-Report: Ansicht und Ingest --------------------------------
+  // Aufbau wie beim Settlement-Report: ein Modell im Modul-Scope, ein Ingest,
+  // der Parser -> Modell -> Status -> Render verkettet, und eine duenne
+  // UI-Schicht darueber. Anders als der Terminal-/Settlement-Report kennt
+  // dieser Modus zusaetzlich einen CSV-Import (SPEC 5): das Ergebnis ist
+  // vor-aggregiert und traegt keine personenbezogenen Daten.
+  let reportingModell = null;
+  // Die geparsten Zeilen bleiben liegen: das Haendler-Land aendert nur die
+  // Einstufung, nicht die Daten. Statt das Ergebnis erneut abzurufen (bei
+  // wallee zaehlt jeder Abruf als Download) wird das Modell daraus neu gebaut.
+  let reportingRohzeilen = null;
+  let reportingZeitraum = { start: '', end: '', spaces: [] };
+
+  // Lesezugriff auf das zuletzt gebaute Modell - Testnaht wie getState().
+  function reportingModellAktuell() { return reportingModell; }
+
+  // Modell aus den bereits geparsten Zeilen neu bauen (Haendler-Land geaendert).
+  function reportingModellNeuBauen() {
+    if (!reportingRohzeilen) return;
+    reportingModell = buildReportingModel(reportingRohzeilen, {
+      merchantCountry: state.reportingMerchantCountry,
+    });
+    renderReportingReport();
+  }
+
+  function reportingZeigeStatus(text, art) {
+    reportingStatus.textContent = text;
+    reportingStatus.dataset.art = art || '';
+  }
+
+  function reportingExportOptionen() {
+    return {
+      zeitraum: { start: reportingZeitraum.start, end: reportingZeitraum.end },
+      spaces: reportingZeitraum.spaces,
+    };
+  }
+
+  // PLATZHALTER. Die eigentliche Ausgabe (Kacheln, Tabellen, Balken als
+  // inline-SVG) folgt im naechsten Schritt; hier steht vorerst nur die
+  // Gliederung der Bloecke, damit der Ingest-Pfad end-to-end sichtbar ist.
+  // Vertrag fuer den Ersatz: reportingExportBloecke(modell, optionen) liefert
+  // die Bloecke, reportingZellFormat(block, r, c) das Format je Zelle.
+  function renderReportingReport() {
+    if (!reportingModell) {
+      reportingReportOutput.innerHTML = '';
+      reportingReportActions.classList.add('hidden');
+      return;
+    }
+    const bloecke = reportingExportBloecke(reportingModell, reportingExportOptionen());
+    reportingReportOutput.innerHTML = bloecke.map(b =>
+      `<h3>${escapeHtml(b.titel)}</h3>`
+      + `<p class="hint">${escapeHtml(b.kanal ? REPORTING_KANAL_LABEL[b.kanal] || b.kanal : 'gesamt')}`
+      + ` · ${formatIntCH(b.zeilen.length)} Zeilen · ${escapeHtml(b.typ)}</p>`).join('');
+    reportingReportActions.classList.remove('hidden');
+  }
+
+  // Die Failure-Reason-Namen kommen aus der statischen Tabelle FAILURE_REASONS
+  // im Modell selbst - die wallee-Web-Service-API kennt keinen Dienst, der die
+  // IDs aufloest (vollstaendig geprueft, siehe Kommentar an der Konstante).
+  // Deshalb wird hier bewusst KEINE Namenstabelle durchgereicht.
+  function ingestReportingCsv(text) {
+    const res = parseReportingCsv(text);
+    if (res.error) {
+      reportingModell = null;
+      reportingRohzeilen = null;
+      renderReportingReport();
+      reportingZeigeStatus(res.error.message, 'fehler');
+      return false;
+    }
+    reportingRohzeilen = res.rows;
+
+    // Zeitraum genau so zusammensetzen wie generate() es fuer die Query tut -
+    // state haelt Datum und Uhrzeit getrennt.
+    reportingZeitraum = {
+      start: `${state.startDate} ${state.startTime}`,
+      end: `${state.endDate} ${state.endTime}`,
+      spaces: selectedSpaceIds(),
+    };
+    reportingModell = buildReportingModel(res.rows, {
+      merchantCountry: state.reportingMerchantCountry,
+    });
+    renderReportingReport();
+
+    if (!reportingModell.hatDaten) {
+      reportingZeigeStatus('Keine Zahlungsversuche im gewählten Zeitraum.', 'info');
+      return true;
+    }
+    const attempts = reportingModell.kanalListe
+      .reduce((s, k) => s + reportingModell.kanaele[k].kpi.attempts, 0);
+    const kanaele = reportingModell.kanalListe
+      .map(k => REPORTING_KANAL_LABEL[k] || k).join(', ');
+    let zeile = `${formatIntCH(attempts)} Zahlungsversuche · ${kanaele}`;
+    if (res.unbekannteBloecke > 0) {
+      zeile += ` · ${formatIntCH(res.unbekannteBloecke)} Zeilen mit unbekanntem Block übersprungen`;
+    }
+    reportingZeigeStatus(zeile, 'erfolg');
+    return true;
+  }
+
+  // Wie uebergibReportCsv/uebergibSettlementCsv: der Report ist die Ausgabe des
+  // Modus, kein eigener Tab - setMode frischt die Ansicht auf.
+  function uebergibReportingCsv(csv) {
+    const ok = ingestReportingCsv(csv);
+    if (ok) setMode('reporting');
+    return ok;
+  }
+
+  // PLATZHALTER. Die drei Exporte (CSV roh, Excel je Kanal, PDF) folgen im
+  // naechsten Schritt und sitzen dann - wie beim Settlement-Report - auf
+  // reportingExportBloecke() auf. Bis dahin sagt der Knopf ehrlich, dass er
+  // noch nichts liefert, statt still nichts zu tun.
+  function reportingExportNochNicht(was) {
+    showToast(`${was}-Export für den Reporting-Report folgt noch.`, true);
+  }
+  function exportReportingCsv()  { reportingExportNochNicht('CSV'); }
+  function exportReportingXlsx() { reportingExportNochNicht('Excel'); }
+  function exportReportingPdf()  { reportingExportNochNicht('PDF'); }
+
+  // --- Event bindings: Reporting -------------------------------------------
+  function reportingKanalSetzen(wahl) {
+    state.reportingChannel = wahl;
+    saveState();
+    aktualisiereReportingInputs();
+    // Der Kanal entscheidet mit, ob das Terminal-Panel gilt - und er aendert
+    // die Query. Deshalb beides nachziehen.
+    aktualisiereReportingTerminalPanel();
+    generate();
+  }
+
+  [[reportingChannelPos, 'POS'], [reportingChannelEcom, 'ECOM'], [reportingChannelBoth, 'BOTH']]
+    .forEach(([el, wahl]) => el.addEventListener('change', () => {
+      if (el.checked) reportingKanalSetzen(wahl);
+    }));
+
+  reportingMerchantCountryEl.addEventListener('input', () => {
+    // Nur Buchstaben, hoechstens zwei, immer gross - normLand im Modell
+    // akzeptiert ausschliesslich ISO-2, alles andere waere UNKNOWN.
+    const wert = String(reportingMerchantCountryEl.value || '')
+      .replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 2);
+    reportingMerchantCountryEl.value = wert;
+    // Waehrend des Tippens ist der Wert einen Anschlag lang einbuchstabig -
+    // ein solcher Rumpf wuerde im Modell jede Karte auf UNKNOWN werfen. Bis
+    // zwei Buchstaben stehen, gilt deshalb der Vorgabewert.
+    state.reportingMerchantCountry = wert.length === 2 ? wert : REPORTING_DEFAULT_LAND;
+    saveState();
+    // Reine Auswertungsgroesse: sie steckt nicht in der Query, sondern im
+    // Modell - deshalb neu rechnen statt generate().
+    reportingModellNeuBauen();
+  });
+
+  reportingByTerminalToggle.addEventListener('change', () => {
+    state.reportingByTerminal = reportingByTerminalToggle.checked;
+    saveState();
+    aktualisiereReportingTerminalPanel();
+    generate();
+  });
+
+  reportingCsvImport.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) {
+      const reader = new FileReader();
+      reader.onload = () => uebergibReportingCsv(String(reader.result || ''));
+      // Bewusst nicht ueber leseDatei(): dessen Fehlerpfad schreibt in die
+      // Statuszeile des Terminal-Reports.
+      reader.onerror = () => reportingZeigeStatus('Die Datei konnte nicht gelesen werden.', 'fehler');
+      reader.readAsText(f, 'utf-8');
+    }
+    reportingCsvImport.value = '';
+  });
+
+  reportingCsvBtn.addEventListener('click', () => exportReportingCsv());
+  reportingXlsxBtn.addEventListener('click', () => exportReportingXlsx());
+  reportingPdfBtn.addEventListener('click', () => exportReportingPdf());
+
+  function aktualisiereReportingTerminalPanel() {
+    if (state.mode !== 'reporting') return;
+    terminalSection.classList.toggle('active',
+      reportingTerminalPanelSichtbar(state.reportingChannel, state.reportingByTerminal));
+  }
+
+  function aktualisiereReportingInputs() {
+    reportingChannelPos.checked  = state.reportingChannel === 'POS';
+    reportingChannelEcom.checked = state.reportingChannel === 'ECOM';
+    reportingChannelBoth.checked = state.reportingChannel === 'BOTH';
+    reportingMerchantCountryEl.value = state.reportingMerchantCountry || REPORTING_DEFAULT_LAND;
+    reportingByTerminalToggle.checked = !!state.reportingByTerminal;
   }
 
   // --- Event bindings: Einstellungs-Dialog ---------------------------------
@@ -8074,6 +8425,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   renderColumns();
   renderUserPresets();
   aktualisiereSettlementAccount();
+  aktualisiereReportingInputs();
   // Ausgangszustand des Dialogs bewusst im Code setzen und nicht nur ueber die
   // Klasse im Markup: faellt die dort mal weg, stuende der Dialog beim Laden offen.
   settingsZustandZu();
