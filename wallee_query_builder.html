@@ -3929,6 +3929,17 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
 
   // Betraege werden strikt je Waehrung gefuehrt (SPEC 2.7) - es gibt bewusst
   // keine Gesamtsumme ueber Waehrungen hinweg, auch nicht als Bequemlichkeit.
+  //
+  // Diese Funktion bekommt Zeilen aus ZWEI Bloecken: DIM (alle Betragsfelder)
+  // und TIME (nur summe_betrag - refund und betragFailed existieren dort gar
+  // nicht, weil sie in der Query typisierte NULL-Platzhalter sind). Ein
+  // ungeschuetztes `+= undefined` macht die Summe still zu NaN, und NaN
+  // vererbt sich durch jede weitere Rechnung bis in die Anzeige. Deshalb
+  // laufen ALLE Betragsfelder ueber betragOderNull - lieber eine belegbare 0
+  // als eine Zahl, die keine ist.
+  function betragOderNull(wert) {
+    return typeof wert === 'number' && Number.isFinite(wert) ? wert : 0;
+  }
   function reportingWaehrungAdd(map, zeile) {
     const w = zeile.waehrung;
     let e = map.get(w);
@@ -3938,11 +3949,11 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     }
     if (zeile.attemptState === 'SUCCESSFUL') {
       e.anzahlErfolgreich += zeile.attempts;
-      e.betrag += zeile.betrag;
-      e.refund += zeile.refund;
+      e.betrag += betragOderNull(zeile.betrag);
+      e.refund += betragOderNull(zeile.refund);
     } else if (zeile.attemptState === 'FAILED') {
       e.anzahlFehlgeschlagen += zeile.attempts;
-      e.betragFailed += zeile.betragFailed;
+      e.betragFailed += betragOderNull(zeile.betragFailed);
     }
   }
 
@@ -3969,18 +3980,39 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
 
   // Eimer-Aufschluesselung mit fester Reihenfolge (Kartentyp, Funding,
   // Herkunft, 3DS): jeder Schluessel erscheint, auch mit 0.
-  function reportingGruppen(map, reihenfolge, basis) {
+  //
+  // gesamtProWaehrung ist optional und nur fuer K6 gesetzt: die Herkunft ist
+  // die einzige Aufschluesselung, die laut SPEC 4.1 "Anteil Anzahl UND Betrag"
+  // verlangt. Die uebrigen bekommen deshalb keine leere waehrungen-Liste
+  // angehaengt, die nichts aussagt. Die Felder werden einzeln aufgezaehlt
+  // statt z auszubreiten - sonst rutschte die interne waehrungMap mit in die
+  // Ausgabe.
+  function reportingGruppen(map, reihenfolge, basis, gesamtProWaehrung) {
     return reihenfolge.map(schluessel => {
       const z = map.get(schluessel) || reportingLeerZaehler();
-      return Object.assign({ schluessel }, z, reportingQuoten(z), {
+      const eintrag = Object.assign({ schluessel }, {
+        attempts: z.attempts, erfolgreich: z.erfolgreich, fehlgeschlagen: z.fehlgeschlagen,
+        offen: z.offen, sonstige: z.sonstige,
+      }, reportingQuoten(z), {
         anteilAttempts: reportingAnteil(z.attempts, basis),
       });
+      if (gesamtProWaehrung) {
+        eintrag.waehrungen = reportingWaehrungListe(z.waehrungMap || new Map(), gesamtProWaehrung);
+      }
+      return eintrag;
     });
   }
   function reportingGruppeZaehle(map, schluessel, zeile) {
     let z = map.get(schluessel);
     if (!z) { z = reportingLeerZaehler(); map.set(schluessel, z); }
     reportingZaehle(z, zeile);
+  }
+  // Variante mit Betraegen je Waehrung - nur fuer die Herkunft (K6).
+  function reportingGruppeZaehleMitBetrag(map, schluessel, zeile) {
+    let z = map.get(schluessel);
+    if (!z) { z = Object.assign({ waehrungMap: new Map() }, reportingLeerZaehler()); map.set(schluessel, z); }
+    reportingZaehle(z, zeile);
+    reportingWaehrungAdd(z.waehrungMap, zeile);
   }
 
   function reportingFailureName(id, tabelle) {
@@ -4002,8 +4034,8 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   }
   // Sicherheitsnetz gegen einen einzelnen kaputten Datumswert: ohne Deckel
   // wuerde ein Ausreisser (z. B. '2999-01-01') Hunderttausende Leerzeilen
-  // erzeugen und den Report zum Stillstand bringen. Oberhalb der Grenze
-  // erscheinen nur die Tage, die wirklich Daten tragen.
+  // erzeugen und den Report zum Stillstand bringen. Der Deckel begrenzt das
+  // AUFFUELLEN, nie die Daten - siehe reportingTagesbereich.
   const REPORTING_VERLAUF_MAX_TAGE = 400;
 
   // Der Tagesbereich stammt AUS DEN DATEN, nicht aus dem Zeitraum-Picker: das
@@ -4013,20 +4045,31 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // Anfang und Ende; Luecken INNERHALB des Bereichs werden mit 0 gefuellt,
   // denn dort ist die 0 gemessen und nicht bloss unbekannt.
   function reportingTagesbereich(timeRows) {
-    let von = '', bis = '';
+    const vorhanden = new Set();
     timeRows.forEach(z => {
-      if (!REPORTING_TAG_REGEX.test(String(z.tag))) return;
-      if (!von || z.tag < von) von = z.tag;
-      if (!bis || z.tag > bis) bis = z.tag;
+      if (REPORTING_TAG_REGEX.test(String(z.tag))) vorhanden.add(z.tag);
     });
-    if (!von) return { von: '', bis: '', tage: [] };
-    const tage = [];
-    for (let t = von; t <= bis; t = reportingTagPlus(t, 1)) {
-      tage.push(t);
-      if (tage.length >= REPORTING_VERLAUF_MAX_TAGE) break;
+    if (!vorhanden.size) return { von: '', bis: '', tage: [], spanne: 0, lueckenlos: true };
+    const sortiert = [...vorhanden].sort(strCmp);
+    const von = sortiert[0];
+    const bis = sortiert[sortiert.length - 1];
+    // Echte Spanne des Berichts, unabhaengig davon, wie viele Tage der Verlauf
+    // am Ende auffuellt.
+    const spanne = Math.round(
+      (Date.parse(bis + 'T00:00:00Z') - Date.parse(von + 'T00:00:00Z')) / 86400000) + 1;
+    // Ueber dem Deckel wird NICHT abgeschnitten: das Ende der Liste
+    // abzuschneiden wuerde gemessene Tage samt ihren Attempts stillschweigend
+    // verlieren - genau der Fehler, den die Luecken-Auffuellung verhindern
+    // soll. Stattdessen faellt der Verlauf auf die Tage zurueck, die wirklich
+    // Zeilen tragen: vollstaendig, aber nicht mehr lueckenlos. lueckenlos =
+    // false sagt der Ausgabe, dass die x-Achse dann keine gleichmaessige
+    // Tagesskala ist.
+    if (spanne > REPORTING_VERLAUF_MAX_TAGE) {
+      return { von, bis, tage: sortiert, spanne, lueckenlos: false };
     }
-    if (tage[tage.length - 1] !== bis) tage.push(bis);
-    return { von, bis, tage };
+    const tage = [];
+    for (let t = von; t <= bis; t = reportingTagPlus(t, 1)) tage.push(t);
+    return { von, bis, tage, spanne, lueckenlos: true };
   }
 
   // Ein Kanal (POS / ECOM / OTHER). Bekommt nur die Zeilen dieses Kanals; die
@@ -4049,6 +4092,9 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     const failureMap = new Map();
     const codeMap = new Map();
     const terminalMap = new Map();
+    // Bezugsgroesse fuer den Betragsanteil in K6: die Betraege der
+    // erfolgreichen Karten-Attempts, je Waehrung.
+    const kartenWaehrungMap = new Map();
     const spaces = new Set();
 
     let kartenAttempts = 0, kartenErfolgreich = 0;
@@ -4110,11 +4156,13 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       }
       if (z.attemptState !== 'SUCCESSFUL') return;
       kartenErfolgreich += z.attempts;
+      reportingWaehrungAdd(kartenWaehrungMap, z);
       if (z.dcc === true) dccAttempts += z.attempts;
       reportingGruppeZaehle(kartentypMap, klassifiziereKartentyp(z.cardCategory), z);
       reportingGruppeZaehle(fundingMap, normFunding(z.funding), z);
       const herkunft = klassifiziereHerkunft(z.issuerCountry, merchantCountry);
-      reportingGruppeZaehle(herkunftMap, herkunft, z);
+      // K6 als einzige Aufschluesselung mit Betraegen (SPEC 4.1).
+      reportingGruppeZaehleMitBetrag(herkunftMap, herkunft, z);
       // Die Laenderliste fuehrt nur verwertbare ISO-2-Codes; ein 'CHE' oder ein
       // fehlendes Label steckt im UNKNOWN-Eimer der Gruppen, nicht hier - sonst
       // stuende ein Formatfehler als eigenes "Land" in der Tabelle.
@@ -4147,6 +4195,11 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // Betragsanteile der Brands.
     const gesamtProWaehrung = new Map();
     waehrungMap.forEach((e, w) => gesamtProWaehrung.set(w, e.betrag));
+    // Eigener Nenner fuer K6: der Betragsanteil einer Herkunft bezieht sich auf
+    // die Karten-Umsaetze, nicht auf den ganzen Kanal - sonst summierten die
+    // vier Eimer nicht auf 100 %, weil TWINT & Co. im Nenner staenden.
+    const kartenProWaehrung = new Map();
+    kartenWaehrungMap.forEach((e, w) => kartenProWaehrung.set(w, e.betrag));
 
     // K2 sortiert nach Betrag. Ueber mehrere Waehrungen hinweg gibt es keinen
     // gemeinsamen Betrag, deshalb entscheidet der Betrag in der Leitwaehrung
@@ -4189,12 +4242,27 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // ist: bei Brands/Wallets/PAN-Typen sind es alle Attempts des Kanals, bei
     // Ablehngruenden und -codes nur die gescheiterten. Ein einheitliches
     // 'anteilAttempts' wuerde dort das Falsche versprechen.
-    const sortierteListe = (map, basis, schluesselName, anteilName = 'anteilAttempts') =>
-      [...map.entries()]
+    // opt.nurAnzahl fuer Listen, die per Konstruktion nur gescheiterte
+    // Attempts enthalten (Ablehngruende, Ablehncodes): dort waeren
+    // successRate 0 % und failureRate 100 % keine Messung, sondern eine
+    // Tautologie - und eine Ausgabe, die erfolgreich/successRate blind
+    // rendert, schriebe "0 %" an jeden Ablehngrund.
+    const sortierteListe = (map, basis, schluesselName, opt = {}) => {
+      const anteilName = opt.anteilName || 'anteilAttempts';
+      return [...map.entries()]
         .sort((a, b) => b[1].attempts - a[1].attempts || strCmp(a[0], b[0]))
-        .map(([k, z]) => Object.assign({ [schluesselName]: k }, z, reportingQuoten(z), {
-          [anteilName]: reportingAnteil(z.attempts, basis),
-        }));
+        .map(([k, z]) => {
+          const eintrag = { [schluesselName]: k, attempts: z.attempts };
+          if (!opt.nurAnzahl) {
+            Object.assign(eintrag, {
+              erfolgreich: z.erfolgreich, fehlgeschlagen: z.fehlgeschlagen,
+              offen: z.offen, sonstige: z.sonstige,
+            }, reportingQuoten(z));
+          }
+          eintrag[anteilName] = reportingAnteil(z.attempts, basis);
+          return eintrag;
+        });
+    };
 
     // --- Verlauf (TIME) ---------------------------------------------------
     const tagMap = new Map();
@@ -4274,7 +4342,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       wallets: sortierteListe(walletMap, gesamt.attempts, 'wallet'),
       herkunft: {
         basis: kartenErfolgreich,
-        gruppen: reportingGruppen(herkunftMap, REPORTING_HERKUNFT, kartenErfolgreich),
+        gruppen: reportingGruppen(herkunftMap, REPORTING_HERKUNFT, kartenErfolgreich, kartenProWaehrung),
+        // Karten-Umsaetze je Waehrung - die Bezugsgroesse der anteilBetrag-Werte
+        // in den Gruppen, damit die Ausgabe sie nicht neu zusammenrechnen muss.
+        waehrungen: reportingWaehrungListe(kartenWaehrungMap, null),
         // Vollstaendig sortiert; auf Top-10 gekuerzt wird erst in der Ausgabe -
         // dasselbe Prinzip wie beim Runden.
         laender: sortierteListe(laenderMap, kartenErfolgreich, 'land')
@@ -4297,9 +4368,9 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       },
       // Anteil je an ALLEN gescheiterten Attempts des Kanals, nicht an allen
       // Attempts - die Frage lautet "warum sind die Ablehnungen passiert".
-      failures: sortierteListe(failureMap, gesamt.fehlgeschlagen, 'id', 'anteil')
+      failures: sortierteListe(failureMap, gesamt.fehlgeschlagen, 'id', { anteilName: 'anteil', nurAnzahl: true })
         .map(f => Object.assign(f, { name: reportingFailureName(f.id, failureReasons) })),
-      responseCodes: sortierteListe(codeMap, gesamt.fehlgeschlagen, 'code', 'anteil')
+      responseCodes: sortierteListe(codeMap, gesamt.fehlgeschlagen, 'code', { anteilName: 'anteil', nurAnzahl: true })
         .map(c => Object.assign(c, {
           // Fallback ist der ROHE Code, nicht '#code': im E-Commerce ist er
           // bereits sprechend (AUTHORIZATION_DECLINED), nur am POS ist er
@@ -4364,11 +4435,21 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       merchantCountry,
       kanaele,
       kanalListe,
-      zeitraum: { von: bereich.von, bis: bereich.bis, tage: bereich.tage.length },
+      // tage ist die ECHTE Spanne von..bis, nicht die Laenge des Verlaufs:
+      // oberhalb des Deckels enthaelt der Verlauf nur die belegten Tage, der
+      // Bericht deckt aber trotzdem die volle Spanne ab. lueckenlos sagt der
+      // Ausgabe, welcher der beiden Faelle vorliegt.
+      zeitraum: {
+        von: bereich.von, bis: bereich.bis,
+        tage: bereich.spanne, lueckenlos: bereich.lueckenlos,
+      },
       spaces: [...spaces].sort(strCmp),
       waehrungen: [...waehrungen].sort(strCmp),
       hatDaten: kanalListe.length > 0,
-      hatTerminals: dim.some(z => z.terminalIdentifier !== REPORTING_UNBEKANNT),
+      // Nur POS zaehlt: ausgewiesen werden Terminals ausschliesslich dort
+      // (SPEC 7). Eine Terminal-Kennung an einer E-Com-Zeile wuerde sonst einen
+      // Abschnitt ankuendigen, der in jedem Kanal leer bliebe.
+      hatTerminals: dim.some(z => z.channel === 'POS' && z.terminalIdentifier !== REPORTING_UNBEKANNT),
       fremdeKanaele,
     };
   }

@@ -678,7 +678,8 @@ test('K10: Verlauf ohne Luecken, Stunden immer 0-23', () => {
   assert.strictEqual(kanal.stunden[23].attempts, 3);
   assert.strictEqual(kanal.stunden[0].attempts, 0);
   assert.strictEqual(kanal.stunden[0].successRate, null);
-  assert.deepStrictEqual(plain(m.zeitraum), { von: '2026-07-01', bis: '2026-07-03', tage: 3 });
+  assert.deepStrictEqual(plain(m.zeitraum),
+    { von: '2026-07-01', bis: '2026-07-03', tage: 3, lueckenlos: true });
 });
 
 test('K10: der Tagesbereich gilt fuer alle Kanaele gleich', () => {
@@ -710,7 +711,7 @@ test('Leeres Ergebnis ergibt ein leeres Modell statt eines Wurfs', () => {
   assert.strictEqual(m.hatDaten, false);
   assert.deepStrictEqual(plain(m.kanalListe), []);
   assert.deepStrictEqual(plain([m.kanaele.POS, m.kanaele.ECOM, m.kanaele.OTHER]), [null, null, null]);
-  assert.deepStrictEqual(plain(m.zeitraum), { von: '', bis: '', tage: 0 });
+  assert.deepStrictEqual(plain(m.zeitraum), { von: '', bis: '', tage: 0, lueckenlos: true });
 });
 
 test('Unbekannter attempt_state landet in "sonstige", nicht in einer Quote', () => {
@@ -757,7 +758,8 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   assert.deepStrictEqual(plain(m.kanalListe), ['POS', 'ECOM', 'OTHER']);
   assert.deepStrictEqual(plain(m.spaces), ['90001', '90002']);
   assert.deepStrictEqual(plain(m.waehrungen), ['CHF', 'EUR']);
-  assert.deepStrictEqual(plain(m.zeitraum), { von: '2026-07-01', bis: '2026-07-02', tage: 2 });
+  assert.deepStrictEqual(plain(m.zeitraum),
+    { von: '2026-07-01', bis: '2026-07-02', tage: 2, lueckenlos: true });
 
   // Attempts der DIM-Zeilen verteilen sich restlos auf die drei Kanaele.
   const summeDim = p.rows.dim.reduce((a, z) => a + z.attempts, 0);
@@ -799,4 +801,156 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
     assert.deepStrictEqual(plain(m.kanaele[k].terminals), []);
   });
   assert.strictEqual(m.hatTerminals, false);
+});
+
+// ---------------------------------------------------------------------------
+// Task 3, Fix-Runde 1: Regressionen aus dem Review.
+
+test('C1: TIME-Zeilen erzeugen kein NaN im Verlauf', () => {
+  // TIME-Zeilen fuehren weder refund noch betragFailed - der gemeinsame
+  // Waehrungs-Akkumulator darf daraus keine NaN-Summe machen. Bewusst OHNE
+  // plain(): der JSON-Umweg wuerde NaN in null verwandeln und den Fehler
+  // genau hier verstecken.
+  const m = modell({ time: [
+    timeZeile({ tag: '2026-07-01', attempts: 5, betrag: 50 * E8 }),
+    timeZeile({ tag: '2026-07-01', attemptState: 'FAILED', attempts: 2 }),
+  ] });
+  const w = m.kanaele.POS.verlauf[0].waehrungen[0];
+  ['betrag', 'betragFailed', 'refund', 'schnitt', 'schnittFailed', 'refundQuote', 'anteilBetrag']
+    .forEach(feld => {
+      assert.ok(!Number.isNaN(w[feld]), 'verlauf-Waehrung ' + feld + ' ist NaN');
+    });
+  assert.strictEqual(w.betrag, 50 * E8);
+  assert.strictEqual(w.betragFailed, 0);
+  assert.strictEqual(w.refund, 0);
+  assert.strictEqual(w.refundQuote, 0);
+  assert.strictEqual(w.schnittFailed, 0);
+  // Gegenprobe ueber die ganze Fixture: nirgends im Modell steckt ein NaN.
+  const { parseReportingCsv, buildReportingModel } = loadBuilders();
+  const text = fs.readFileSync(path.join(__dirname, 'fixtures', 'reporting-beispiel.csv'), 'utf8');
+  const voll = buildReportingModel(parseReportingCsv(text).rows, { merchantCountry: 'CH' });
+  const suche = (wert, pfad) => {
+    if (typeof wert === 'number') {
+      assert.ok(!Number.isNaN(wert), 'NaN unter ' + pfad);
+    } else if (Array.isArray(wert)) {
+      wert.forEach((x, i) => suche(x, pfad + '[' + i + ']'));
+    } else if (wert && typeof wert === 'object') {
+      Object.keys(wert).forEach(k => suche(wert[k], pfad + '.' + k));
+    }
+  };
+  suche(voll, 'modell');
+});
+
+test('C2: der Deckel verliert keine gemessenen Tage', () => {
+  // 500 Tage mit je 7 Attempts: der Verlauf darf nicht bei 400 abschneiden.
+  const zeilen = [];
+  let tag = '2026-01-01';
+  for (let i = 0; i < 500; i++) {
+    zeilen.push(timeZeile({ tag, attempts: 7 }));
+    const d = new Date(tag + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 1);
+    tag = d.toISOString().slice(0, 10);
+  }
+  const m = modell({ time: zeilen });
+  const kanal = m.kanaele.POS;
+  assert.strictEqual(kanal.verlauf.reduce((a, v) => a + v.attempts, 0), 3500);
+  assert.strictEqual(kanal.verlauf.length, 500);
+  assert.strictEqual(kanal.kpi.ohneTag, 0);
+  // Die Spanne bleibt die echte, und die Ausgabe erfaehrt, dass der Verlauf
+  // oberhalb des Deckels nur die belegten Tage zeigt.
+  assert.strictEqual(m.zeitraum.tage, 500);
+  assert.strictEqual(m.zeitraum.lueckenlos, false);
+  assert.strictEqual(m.zeitraum.von, '2026-01-01');
+
+  // Der Deckel greift genau dort, wo er soll: ein einzelner Ausreisser weit in
+  // der Zukunft blaeht den Verlauf nicht auf, kostet aber auch keine Zeile.
+  const ausreisser = modell({ time: [
+    timeZeile({ tag: '2026-07-01', attempts: 4 }),
+    timeZeile({ tag: '2999-01-01', attempts: 1 }),
+  ] });
+  assert.deepStrictEqual(plain(ausreisser.kanaele.POS.verlauf.map(v => [v.tag, v.attempts])),
+    [['2026-07-01', 4], ['2999-01-01', 1]]);
+  assert.strictEqual(ausreisser.zeitraum.lueckenlos, false);
+});
+
+test('C3: K6 weist auch den Betragsanteil aus, je Waehrung', () => {
+  const m = modell({ dim: [
+    dimZeile({ brand: 'Visa', issuerCountry: 'CH', attempts: 6, betrag: 600 * E8 }),
+    dimZeile({ brand: 'Visa', issuerCountry: 'DE', attempts: 2, betrag: 300 * E8 }),
+    dimZeile({ brand: 'Visa', issuerCountry: 'US', attempts: 2, betrag: 100 * E8 }),
+    dimZeile({ brand: 'Visa', issuerCountry: 'CH', waehrung: 'EUR', attempts: 4, betrag: 80 * E8 }),
+    // TWINT steht weder im Anzahl- noch im Betragsnenner der Karten.
+    dimZeile({ brand: 'TWINT', issuerCountry: 'UNKNOWN', attempts: 50, betrag: 5000 * E8 }),
+  ] });
+  const g = m.kanaele.POS.herkunft.gruppen;
+  const chf = s => (g.find(x => x.schluessel === s).waehrungen.find(w => w.waehrung === 'CHF') || {});
+  assert.strictEqual(chf('DOMESTIC').betrag, 600 * E8);
+  assert.strictEqual(chf('DOMESTIC').anteilBetrag, 60);
+  assert.strictEqual(chf('INTRA').anteilBetrag, 30);
+  assert.strictEqual(chf('INTER').anteilBetrag, 10);
+  // Je Waehrung auf 100 % - nie ueber Waehrungen hinweg addiert.
+  assert.strictEqual(['DOMESTIC', 'INTRA', 'INTER', 'UNKNOWN']
+    .reduce((a, s) => a + (chf(s).anteilBetrag || 0), 0), 100);
+  const eur = g.find(x => x.schluessel === 'DOMESTIC').waehrungen.find(w => w.waehrung === 'EUR');
+  assert.strictEqual(eur.betrag, 80 * E8);
+  assert.strictEqual(eur.anteilBetrag, 100);
+  // Der Nenner steht daneben, damit die Ausgabe ihn nicht neu bilden muss.
+  assert.deepStrictEqual(plain(m.kanaele.POS.herkunft.waehrungen.map(w => [w.waehrung, w.betrag])),
+    [['CHF', 1000 * E8], ['EUR', 80 * E8]]);
+});
+
+test('C4: hatTerminals meldet nur POS-Terminals', () => {
+  const nurEcom = modell({ dim: [
+    dimZeile({ channel: 'ECOM', terminalIdentifier: 'T-9', terminalName: 'Geist', attempts: 5 }),
+  ] });
+  assert.strictEqual(nurEcom.hatTerminals, false);
+  assert.deepStrictEqual(plain(nurEcom.kanaele.ECOM.terminals), []);
+  const mitPos = modell({ dim: [
+    dimZeile({ channel: 'POS', terminalIdentifier: 'T-1', attempts: 5 }),
+  ] });
+  assert.strictEqual(mitPos.hatTerminals, true);
+});
+
+test('C5: Ablehngruende tragen keine Erfolgsquote', () => {
+  const m = modell({ dim: [
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '1579281555663', authResponseCode: '51', attempts: 4 }),
+    dimZeile({ attemptState: 'SUCCESSFUL', attempts: 96 }),
+  ] });
+  const f = m.kanaele.POS.failures[0];
+  const c = m.kanaele.POS.responseCodes[0];
+  // Diese Listen bestehen per Konstruktion nur aus FAILED - eine successRate
+  // waere dort keine Messung, sondern eine Tautologie.
+  ['successRate', 'failureRate', 'abgeschlossen', 'erfolgreich', 'offen', 'sonstige']
+    .forEach(feld => {
+      assert.strictEqual(f[feld], undefined, 'failures.' + feld + ' sollte fehlen');
+      assert.strictEqual(c[feld], undefined, 'responseCodes.' + feld + ' sollte fehlen');
+    });
+  assert.deepStrictEqual(plain([f.id, f.attempts, f.anteil]), ['1579281555663', 4, 100]);
+  assert.deepStrictEqual(plain([c.code, c.attempts, c.anteil]), ['51', 4, 100]);
+});
+
+test('C6: Zeilen mit fremdem Kanal werden gezaehlt, nicht stumm verworfen', () => {
+  const m = modell({
+    dim: [dimZeile({ channel: 'POS', attempts: 3 }), dimZeile({ channel: 'MOTO', attempts: 9 })],
+    time: [timeZeile({ channel: 'MOTO' })],
+  });
+  assert.strictEqual(m.fremdeKanaele, 2);
+  assert.deepStrictEqual(plain(m.kanalListe), ['POS']);
+  assert.strictEqual(m.kanaele.POS.kpi.attempts, 3);
+  // Ohne fremde Kanaele bleibt der Zaehler bei 0.
+  assert.strictEqual(modell({ dim: [dimZeile({})] }).fremdeKanaele, 0);
+});
+
+test('C7: Haendler-Land wird normalisiert, ungueltiges faellt auf CH zurueck', () => {
+  const zeilen = [dimZeile({ brand: 'Visa', issuerCountry: 'CH', attempts: 5 })];
+  const gross = modell({ dim: zeilen }, { merchantCountry: 'de' });
+  assert.strictEqual(gross.merchantCountry, 'DE');
+  assert.strictEqual(gross.kanaele.POS.herkunft.gruppen.find(g => g.schluessel === 'INTRA').attempts, 5);
+  // Ungueltig (ISO-3, leer, fehlend) -> Vorgabe CH, sonst waere jede Karte
+  // unbekannter Herkunft.
+  ['CHE', '', undefined, 'Schweiz'].forEach(wert => {
+    const m = modell({ dim: zeilen }, { merchantCountry: wert });
+    assert.strictEqual(m.merchantCountry, 'CH', 'Rueckfall fuer ' + String(wert));
+    assert.strictEqual(m.kanaele.POS.herkunft.gruppen.find(g => g.schluessel === 'DOMESTIC').attempts, 5);
+  });
 });
