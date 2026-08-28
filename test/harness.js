@@ -106,6 +106,17 @@ const EXPORTED = [
   // Reporting-Modus (v5.11), reine Funktionen
   'parseReportingCsv',
   'REPORTING_PFLICHT',
+  // Reporting-Modell (Task 3)
+  'buildReportingModel',
+  'klassifiziereHerkunft',
+  'klassifiziereKartentyp',
+  'klassifiziereTds',
+  'istKartenBrand',
+  'EUROPA_REGION',
+  'KARTEN_BRANDS',
+  'KARTEN_BUSINESS_REGEX',
+  'ISO_RESPONSE_CODES',
+  'FAILURE_REASONS',
   'buildSettlementReportModel',
   'settlementExportBloecke',
   'buildSettlementReportCsv',

@@ -355,3 +355,448 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
   assert.ok(r.rows.dim.some(z => z.issuerCountry === 'CHE'),
     'ISO-3-Landescode fehlt');
 });
+
+// ---------------------------------------------------------------------------
+// Task 3 — Modell: buildReportingModel und die Klassifikations-Funktionen.
+//
+// Die Rechenfaelle laufen bewusst ueber handgerechnete Mini-Zeilen und nicht
+// ueber die grosse Fixture: eine Quote von 80.0 % ist nur dann eine Aussage
+// ueber den Code, wenn der Sollwert von Hand nachvollziehbar ist. Die Fixture
+// prueft am Schluss die Struktur im Grossen.
+//
+// Einheiten: Betraege sind ganzzahlige 1e-8-Einheiten (100.00 = 10000000000),
+// Prozentwerte sind Zahlen von 0 bis 100 in voller Genauigkeit.
+
+const E8 = 100000000; // eine Waehrungseinheit in 1e-8-Einheiten
+
+// Eine DIM-Zeile in der Form, die parseReportingCsv liefert. Alles nicht
+// Genannte traegt einen unauffaelligen Vorgabewert, damit jeder Test nur die
+// Felder nennt, um die es ihm geht.
+function dimZeile(over) {
+  return Object.assign({
+    spaceId: '90001', channel: 'POS', brand: 'Visa', wallet: '-', waehrung: 'CHF',
+    attemptState: 'SUCCESSFUL', failureReasonId: 'UNKNOWN', authResponseCode: 'UNKNOWN',
+    issuerCountry: 'CH', cardCategory: 'CLASSIC', funding: 'DEBIT', panType: 'UNKNOWN',
+    eci: 'UNKNOWN', dcc: false, tdsStarted: false, tdsCavv: false,
+    terminalIdentifier: 'UNKNOWN', terminalName: 'UNKNOWN',
+    attempts: 1, transaktionen: 1, betrag: 0, betragFailed: 0, refund: 0,
+  }, over);
+}
+function timeZeile(over) {
+  return Object.assign({
+    spaceId: '90001', channel: 'POS', brand: 'Visa', waehrung: 'CHF',
+    attemptState: 'SUCCESSFUL', tag: '2026-07-01', stunde: 8,
+    attempts: 1, betrag: 0,
+  }, over);
+}
+function convZeile(over) {
+  return Object.assign({
+    spaceId: '90001', channel: 'POS', brand: 'Visa', waehrung: 'CHF',
+    txMitAttempt: 1, txErfolgreich: 1,
+  }, over);
+}
+function modell(rows, optionen) {
+  const { buildReportingModel } = loadBuilders();
+  return buildReportingModel(
+    Object.assign({ dim: [], time: [], conv: [] }, rows),
+    Object.assign({ merchantCountry: 'CH' }, optionen));
+}
+
+test('K1: Success Rate zaehlt PENDING als offen und laesst es aus der Quote', () => {
+  const m = modell({ dim: [
+    dimZeile({ attemptState: 'SUCCESSFUL', attempts: 8 }),
+    dimZeile({ attemptState: 'FAILED', attempts: 2 }),
+    dimZeile({ attemptState: 'PENDING', attempts: 1 }),
+  ] });
+  const k = m.kanaele.POS.kpi;
+  assert.strictEqual(k.attempts, 11);
+  assert.strictEqual(k.erfolgreich, 8);
+  assert.strictEqual(k.fehlgeschlagen, 2);
+  assert.strictEqual(k.offen, 1);
+  assert.strictEqual(k.abgeschlossen, 10);
+  assert.strictEqual(k.successRate, 80);
+  assert.strictEqual(k.failureRate, 20);
+});
+
+test('Kanal ohne Zeilen ist null, nicht ein leeres Objekt', () => {
+  const m = modell({ dim: [dimZeile({ channel: 'POS' })] });
+  assert.ok(m.kanaele.POS);
+  assert.strictEqual(m.kanaele.ECOM, null);
+  assert.strictEqual(m.kanaele.OTHER, null);
+  assert.deepStrictEqual(plain(m.kanalListe), ['POS']);
+});
+
+test('K2: Brand-Anteile nach Anzahl und Betrag summieren auf 100 %, Wallet eigene Zeile', () => {
+  const m = modell({ dim: [
+    dimZeile({ channel: 'ECOM', brand: 'Visa', attempts: 60, betrag: 600 * E8 }),
+    dimZeile({ channel: 'ECOM', brand: 'Mastercard', attempts: 30, betrag: 300 * E8 }),
+    dimZeile({ channel: 'ECOM', brand: 'Visa', wallet: 'Apple Pay', attempts: 10, betrag: 100 * E8 }),
+  ] });
+  const kanal = m.kanaele.ECOM;
+  const namen = kanal.brands.map(b => b.brand);
+  assert.deepStrictEqual(plain(namen), ['Visa', 'Mastercard']);
+  const visa = kanal.brands[0];
+  assert.strictEqual(visa.attempts, 70);
+  assert.strictEqual(visa.anteilAttempts, 70);
+  assert.strictEqual(kanal.brands[1].anteilAttempts, 30);
+  assert.strictEqual(kanal.brands.reduce((a, b) => a + b.anteilAttempts, 0), 100);
+  // Betragsanteil je Waehrung - nie ueber Waehrungen hinweg summiert.
+  const anteile = kanal.brands.map(b => b.waehrungen[0].anteilBetrag);
+  assert.deepStrictEqual(plain(anteile), [70, 30]);
+  assert.strictEqual(anteile.reduce((a, x) => a + x, 0), 100);
+  // Wallet ist eine eigene Zeile, nicht ein weiterer Brand.
+  assert.deepStrictEqual(plain(kanal.wallets.map(w => [w.wallet, w.attempts, w.anteilAttempts])),
+    [['Apple Pay', 10, 10]]);
+  assert.strictEqual(kanal.kpi.walletAnteil, 10);
+});
+
+test('klassifiziereHerkunft: Inland, Europa, Rest, Unbekannt', () => {
+  const { klassifiziereHerkunft } = loadBuilders();
+  assert.strictEqual(klassifiziereHerkunft('CH', 'CH'), 'DOMESTIC');
+  assert.strictEqual(klassifiziereHerkunft('DE', 'CH'), 'INTRA');
+  assert.strictEqual(klassifiziereHerkunft('GB', 'CH'), 'INTRA');
+  assert.strictEqual(klassifiziereHerkunft('US', 'CH'), 'INTER');
+  assert.strictEqual(klassifiziereHerkunft('UNKNOWN', 'CH'), 'UNKNOWN');
+  assert.strictEqual(klassifiziereHerkunft('ch', 'CH'), 'DOMESTIC');
+  // SPEC 7: ISO-3 oder Klarname sind kein Ausland, sondern unbekannt.
+  assert.strictEqual(klassifiziereHerkunft('DEU', 'CH'), 'UNKNOWN');
+  assert.strictEqual(klassifiziereHerkunft('', 'CH'), 'UNKNOWN');
+  assert.strictEqual(klassifiziereHerkunft('Schweiz', 'CH'), 'UNKNOWN');
+  // Haendler-Land in DE: dann ist DE das Inland und CH die Nachbarschaft.
+  assert.strictEqual(klassifiziereHerkunft('DE', 'DE'), 'DOMESTIC');
+  assert.strictEqual(klassifiziereHerkunft('CH', 'DE'), 'INTRA');
+});
+
+test('istKartenBrand trennt Scheme-Karten von TWINT und PostFinance', () => {
+  const { istKartenBrand } = loadBuilders();
+  ['Visa', 'Mastercard', 'Mastercard Maestro', 'Visa V PAY', 'American Express',
+    'Diners Club', 'JCB', 'UnionPay', 'Discover'].forEach(b => {
+    assert.ok(istKartenBrand(b), b + ' sollte als Karte gelten');
+  });
+  ['TWINT', 'PostFinance Card', 'Lunch Check', 'Reka', 'PowerPay Invoice',
+    'UNKNOWN', ''].forEach(b => {
+    assert.ok(!istKartenBrand(b), b + ' sollte NICHT als Karte gelten');
+  });
+});
+
+test('klassifiziereKartentyp: NOT_SPECIFIED ist UNKNOWN, nie PRIVATE', () => {
+  const { klassifiziereKartentyp } = loadBuilders();
+  assert.strictEqual(klassifiziereKartentyp('NOT_SPECIFIED'), 'UNKNOWN');
+  assert.strictEqual(klassifiziereKartentyp('WORLD_ELITE_BUSINESS'), 'BUSINESS');
+  assert.strictEqual(klassifiziereKartentyp('CLASSIC'), 'PRIVATE');
+  assert.strictEqual(klassifiziereKartentyp('CORPORATE_T_E'), 'BUSINESS');
+  assert.strictEqual(klassifiziereKartentyp('PREPAID_PURCHASING'), 'BUSINESS');
+  assert.strictEqual(klassifiziereKartentyp('FLEET'), 'BUSINESS');
+  assert.strictEqual(klassifiziereKartentyp('COMMERCIAL'), 'BUSINESS');
+  assert.strictEqual(klassifiziereKartentyp(''), 'UNKNOWN');
+  assert.strictEqual(klassifiziereKartentyp('UNKNOWN'), 'UNKNOWN');
+});
+
+test('K5/K6: nur Karten-Brands zaehlen, TWINT beeinflusst die Quoten nicht', () => {
+  const karten = [
+    dimZeile({ brand: 'Visa', cardCategory: 'CLASSIC', attempts: 6, issuerCountry: 'CH' }),
+    dimZeile({ brand: 'Visa', cardCategory: 'WORLD_ELITE_BUSINESS', attempts: 2, issuerCountry: 'DE' }),
+    dimZeile({ brand: 'Visa', cardCategory: 'NOT_SPECIFIED', attempts: 2, issuerCountry: 'US' }),
+  ];
+  const ohne = modell({ dim: karten });
+  const mit = modell({ dim: karten.concat([
+    dimZeile({ brand: 'TWINT', cardCategory: 'UNKNOWN', issuerCountry: 'UNKNOWN', attempts: 90 }),
+  ]) });
+  assert.strictEqual(ohne.kanaele.POS.kartentyp.basis, 10);
+  assert.strictEqual(mit.kanaele.POS.kartentyp.basis, 10);
+  assert.deepStrictEqual(plain(mit.kanaele.POS.kartentyp.gruppen.map(g => [g.schluessel, g.attempts, g.anteilAttempts])),
+    [['BUSINESS', 2, 20], ['PRIVATE', 6, 60], ['UNKNOWN', 2, 20]]);
+  // K6 haengt am selben Nenner - TWINT hat kein Issuer-Land und faellt nicht
+  // in den UNKNOWN-Eimer der Karten.
+  assert.strictEqual(mit.kanaele.POS.herkunft.basis, 10);
+  assert.deepStrictEqual(plain(mit.kanaele.POS.herkunft.gruppen.map(g => [g.schluessel, g.attempts])),
+    [['DOMESTIC', 6], ['INTRA', 2], ['INTER', 2], ['UNKNOWN', 0]]);
+  // SPEC 8, Check 4: die Eimer summieren auf 100 % der erfolgreichen Karten.
+  assert.strictEqual(mit.kanaele.POS.herkunft.gruppen.reduce((a, g) => a + g.anteilAttempts, 0), 100);
+  // Top-Laender: sortiert, mit ihrer Einstufung.
+  assert.deepStrictEqual(plain(mit.kanaele.POS.herkunft.laender.map(l => [l.land, l.attempts, l.herkunft])),
+    [['CH', 6, 'DOMESTIC'], ['DE', 2, 'INTRA'], ['US', 2, 'INTER']]);
+});
+
+test('P1: Debit/Credit ebenfalls nur ueber Karten-Attempts', () => {
+  const m = modell({ dim: [
+    dimZeile({ brand: 'Visa', funding: 'DEBIT', attempts: 7 }),
+    dimZeile({ brand: 'Visa', funding: 'CREDIT', attempts: 3 }),
+    dimZeile({ brand: 'TWINT', funding: 'UNKNOWN', attempts: 40 }),
+  ] });
+  assert.deepStrictEqual(plain(m.kanaele.POS.funding.gruppen.map(g => [g.schluessel, g.attempts, g.anteilAttempts])),
+    [['CREDIT', 3, 30], ['DEBIT', 7, 70], ['UNKNOWN', 0, 0]]);
+  assert.strictEqual(m.kanaele.POS.funding.basis, 10);
+});
+
+test('K7/K9: Ø-Betrag und Refund-Quote je Waehrung, nie gemischt', () => {
+  const m = modell({ dim: [
+    dimZeile({ waehrung: 'CHF', attempts: 4, betrag: 100 * E8, refund: 10 * E8 }),
+    dimZeile({ waehrung: 'EUR', attempts: 5, betrag: 50 * E8 }),
+    dimZeile({ waehrung: 'CHF', attemptState: 'FAILED', attempts: 2, betragFailed: 30 * E8 }),
+  ] });
+  const w = m.kanaele.POS.waehrungen;
+  assert.deepStrictEqual(plain(w.map(x => x.waehrung)), ['CHF', 'EUR']);
+  assert.strictEqual(w[0].schnitt, 25 * E8);
+  assert.strictEqual(w[1].schnitt, 10 * E8);
+  assert.strictEqual(w[0].refundQuote, 10);
+  // EUR hat Umsatz, aber keine Rueckerstattung: 0 % ist hier ein gemessener
+  // Wert, kein fehlender - null gaebe es nur ohne jeden Umsatz.
+  assert.strictEqual(w[1].refundQuote, 0);
+  assert.strictEqual(w[0].schnittFailed, 15 * E8);
+  assert.strictEqual(w[1].schnittFailed, null);
+  // Der Kanal fasst NIE ueber Waehrungen zusammen - es gibt kein kpi.betrag.
+  assert.strictEqual(m.kanaele.POS.kpi.betrag, undefined);
+});
+
+test('klassifiziereTds unterscheidet die vier Auspraegungen', () => {
+  const { klassifiziereTds } = loadBuilders();
+  assert.strictEqual(klassifiziereTds({ started: true, cavv: true }), 'AUTHENTICATED');
+  assert.strictEqual(klassifiziereTds({ started: true, cavv: false }), 'FAILED_OR_ABANDONED');
+  assert.strictEqual(klassifiziereTds({ started: true, cavv: null }), 'FAILED_OR_ABANDONED');
+  assert.strictEqual(klassifiziereTds({ started: false, eci: '07' }), 'WALLET_CRYPTOGRAM');
+  assert.strictEqual(klassifiziereTds({ started: false, eci: 'UNKNOWN' }), 'NOT_REQUESTED');
+  assert.strictEqual(klassifiziereTds({ started: false, eci: '' }), 'NOT_REQUESTED');
+  assert.strictEqual(klassifiziereTds({}), 'NOT_REQUESTED');
+  // Wallet-Kryptogramm nur ohne 3DS-Start: mit Start gewinnt das echte 3DS.
+  assert.strictEqual(klassifiziereTds({ started: true, cavv: true, eci: '05' }), 'AUTHENTICATED');
+});
+
+test('E1: 3DS-Akzeptanz 70.0 % und Angefordert-Anteil 66.7 %', () => {
+  const m = modell({ dim: [
+    dimZeile({ channel: 'ECOM', attempts: 7, tdsStarted: true, tdsCavv: true, eci: '05' }),
+    dimZeile({ channel: 'ECOM', attempts: 3, tdsStarted: true, tdsCavv: false }),
+    dimZeile({ channel: 'ECOM', attempts: 2, tdsStarted: false, eci: '07' }),
+    dimZeile({ channel: 'ECOM', attempts: 3, tdsStarted: false }),
+  ] });
+  const tds = m.kanaele.ECOM.tds;
+  assert.strictEqual(tds.basis, 15);
+  assert.strictEqual(tds.akzeptanz, 70);
+  assert.strictEqual(Math.round(tds.angefordertAnteil * 10) / 10, 66.7);
+  assert.strictEqual(Math.round(tds.walletAnteil * 1000) / 1000, 13.333);
+  assert.deepStrictEqual(plain(tds.gruppen.map(g => [g.schluessel, g.attempts])),
+    [['AUTHENTICATED', 7], ['FAILED_OR_ABANDONED', 3], ['WALLET_CRYPTOGRAM', 2], ['NOT_REQUESTED', 3]]);
+});
+
+test('E2: Success Rate je 3DS-Status', () => {
+  const m = modell({ dim: [
+    dimZeile({ channel: 'ECOM', attempts: 8, tdsStarted: true, tdsCavv: true }),
+    dimZeile({ channel: 'ECOM', attempts: 2, attemptState: 'FAILED', tdsStarted: true, tdsCavv: true }),
+    dimZeile({ channel: 'ECOM', attempts: 5, attemptState: 'FAILED', tdsStarted: true, tdsCavv: false }),
+  ] });
+  const nach = {};
+  m.kanaele.ECOM.tds.gruppen.forEach(g => { nach[g.schluessel] = g.successRate; });
+  assert.strictEqual(nach.AUTHENTICATED, 80);
+  assert.strictEqual(nach.FAILED_OR_ABANDONED, 0);
+  assert.strictEqual(nach.NOT_REQUESTED, null);
+});
+
+test('E3/E4: Conversion aus CONV, Retry-Rate als Faktor', () => {
+  const m = modell({
+    dim: [
+      dimZeile({ channel: 'ECOM', brand: 'Visa', attempts: 80 }),
+      dimZeile({ channel: 'ECOM', brand: 'Visa', attemptState: 'FAILED', attempts: 50 }),
+    ],
+    conv: [convZeile({ channel: 'ECOM', brand: 'Visa', txMitAttempt: 100, txErfolgreich: 80 })],
+  });
+  const kanal = m.kanaele.ECOM;
+  assert.strictEqual(kanal.kpi.transaktionen, 100);
+  assert.strictEqual(kanal.kpi.txErfolgreich, 80);
+  assert.strictEqual(kanal.kpi.conversion, 80);
+  // Retry-Rate ist ein Faktor (Attempts je Transaktion), kein Prozentwert.
+  assert.strictEqual(kanal.kpi.retryRate, 1.3);
+  assert.strictEqual(kanal.brands[0].conversion, 80);
+  assert.strictEqual(kanal.brands[0].retryRate, 1.3);
+});
+
+test('K8: Ablehngruende sortiert, Name aus der Tabelle, Fallback #id', () => {
+  const m = modell({
+    dim: [
+      dimZeile({ attemptState: 'FAILED', failureReasonId: '1579281555663', attempts: 10 }),
+      dimZeile({ attemptState: 'FAILED', failureReasonId: '1460695272591', attempts: 7 }),
+      dimZeile({ attemptState: 'FAILED', failureReasonId: '999', attempts: 5 }),
+      dimZeile({ attemptState: 'FAILED', failureReasonId: '12345', attempts: 1 }),
+      dimZeile({ attemptState: 'SUCCESSFUL', attempts: 100 }),
+    ],
+  }, { failureReasons: { 999: 'Eigener Name' } });
+  const f = m.kanaele.POS.failures;
+  assert.deepStrictEqual(plain(f.map(x => [x.id, x.name, x.attempts])), [
+    ['1579281555663', 'Transaction declined', 10],
+    ['1460695272591', 'Cancellation Initiated by User', 7],
+    ['999', 'Eigener Name', 5],
+    ['12345', '#12345', 1],
+  ]);
+  // Anteil an ALLEN gescheiterten Attempts, nicht an allen Attempts - deshalb
+  // heisst das Feld hier 'anteil' und nicht 'anteilAttempts' wie bei den
+  // Verteilungen, deren Nenner der ganze Kanal ist.
+  assert.strictEqual(f[3].anteil, 100 / 23);
+  assert.strictEqual(f[3].anteilAttempts, undefined);
+  assert.strictEqual(f.reduce((a, x) => a + x.attempts, 0), 23);
+});
+
+test('P6: Ablehncodes mit ISO_RESPONSE_CODES, unbekannter Code bleibt roh', () => {
+  const { ISO_RESPONSE_CODES } = loadBuilders();
+  assert.strictEqual(ISO_RESPONSE_CODES['00'], 'Genehmigt');
+  assert.ok(/Deckung/.test(ISO_RESPONSE_CODES['51']));
+  const m = modell({ dim: [
+    dimZeile({ attemptState: 'FAILED', authResponseCode: '51', attempts: 9 }),
+    dimZeile({ channel: 'ECOM', attemptState: 'FAILED', authResponseCode: 'AUTHORIZATION_DECLINED', attempts: 4 }),
+  ] });
+  assert.deepStrictEqual(plain(m.kanaele.POS.responseCodes.map(c => [c.code, c.name, c.attempts])),
+    [['51', ISO_RESPONSE_CODES['51'], 9]]);
+  assert.deepStrictEqual(plain(m.kanaele.ECOM.responseCodes.map(c => [c.code, c.name])),
+    [['AUTHORIZATION_DECLINED', 'AUTHORIZATION_DECLINED']]);
+});
+
+test('FAILURE_REASONS traegt die an echten Daten belegten IDs', () => {
+  const { FAILURE_REASONS } = loadBuilders();
+  assert.strictEqual(FAILURE_REASONS['1579281555663'], 'Transaction declined');
+  assert.strictEqual(FAILURE_REASONS['1579281542342'], 'Automatically cancelled');
+  assert.strictEqual(FAILURE_REASONS['1568360440179'], '3-D Secure Failure');
+  assert.strictEqual(FAILURE_REASONS['1000009999999'], 'Authorization Canceled by Scheme');
+  // Nicht belegte IDs stehen bewusst NICHT drin - erfundene Namen waeren
+  // schlimmer als die rohe ID.
+  assert.strictEqual(FAILURE_REASONS['1758896189449'], undefined);
+});
+
+test('K10: Verlauf ohne Luecken, Stunden immer 0-23', () => {
+  const m = modell({ time: [
+    timeZeile({ tag: '2026-07-01', stunde: 8, attempts: 5, betrag: 50 * E8 }),
+    timeZeile({ tag: '2026-07-03', stunde: 23, attempts: 3, attemptState: 'FAILED' }),
+  ] });
+  const kanal = m.kanaele.POS;
+  assert.deepStrictEqual(plain(kanal.verlauf.map(v => [v.tag, v.attempts])),
+    [['2026-07-01', 5], ['2026-07-02', 0], ['2026-07-03', 3]]);
+  assert.strictEqual(kanal.verlauf[0].successRate, 100);
+  assert.strictEqual(kanal.verlauf[1].successRate, null);
+  assert.strictEqual(kanal.verlauf[2].successRate, 0);
+  assert.strictEqual(kanal.verlauf[0].waehrungen[0].betrag, 50 * E8);
+  assert.strictEqual(kanal.stunden.length, 24);
+  assert.deepStrictEqual(plain(kanal.stunden.map(s => s.stunde)),
+    Array.from({ length: 24 }, (_, i) => i));
+  assert.strictEqual(kanal.stunden[8].attempts, 5);
+  assert.strictEqual(kanal.stunden[23].attempts, 3);
+  assert.strictEqual(kanal.stunden[0].attempts, 0);
+  assert.strictEqual(kanal.stunden[0].successRate, null);
+  assert.deepStrictEqual(plain(m.zeitraum), { von: '2026-07-01', bis: '2026-07-03', tage: 3 });
+});
+
+test('K10: der Tagesbereich gilt fuer alle Kanaele gleich', () => {
+  const m = modell({ time: [
+    timeZeile({ channel: 'POS', tag: '2026-07-01', attempts: 4 }),
+    timeZeile({ channel: 'ECOM', tag: '2026-07-02', attempts: 6 }),
+  ] });
+  assert.deepStrictEqual(plain(m.kanaele.POS.verlauf.map(v => [v.tag, v.attempts])),
+    [['2026-07-01', 4], ['2026-07-02', 0]]);
+  assert.deepStrictEqual(plain(m.kanaele.ECOM.verlauf.map(v => [v.tag, v.attempts])),
+    [['2026-07-01', 0], ['2026-07-02', 6]]);
+});
+
+test('P2: Terminal-Zeilen gibt es nur im POS-Kanal', () => {
+  const m = modell({ dim: [
+    dimZeile({ channel: 'POS', terminalIdentifier: 'T-1', terminalName: 'Kasse 1', attempts: 12 }),
+    dimZeile({ channel: 'POS', terminalIdentifier: 'T-1', terminalName: 'Kasse 1', attemptState: 'FAILED', attempts: 4 }),
+    dimZeile({ channel: 'POS', terminalIdentifier: 'UNKNOWN', attempts: 3 }),
+    dimZeile({ channel: 'ECOM', terminalIdentifier: 'T-9', terminalName: 'Geist', attempts: 5 }),
+  ] });
+  assert.deepStrictEqual(plain(m.kanaele.POS.terminals.map(t => [t.identifier, t.name, t.attempts, t.successRate])),
+    [['T-1', 'Kasse 1', 16, 75]]);
+  assert.deepStrictEqual(plain(m.kanaele.ECOM.terminals), []);
+  assert.strictEqual(m.hatTerminals, true);
+});
+
+test('Leeres Ergebnis ergibt ein leeres Modell statt eines Wurfs', () => {
+  const m = modell({});
+  assert.strictEqual(m.hatDaten, false);
+  assert.deepStrictEqual(plain(m.kanalListe), []);
+  assert.deepStrictEqual(plain([m.kanaele.POS, m.kanaele.ECOM, m.kanaele.OTHER]), [null, null, null]);
+  assert.deepStrictEqual(plain(m.zeitraum), { von: '', bis: '', tage: 0 });
+});
+
+test('Unbekannter attempt_state landet in "sonstige", nicht in einer Quote', () => {
+  const m = modell({ dim: [
+    dimZeile({ attemptState: 'SUCCESSFUL', attempts: 8 }),
+    dimZeile({ attemptState: 'FAILED', attempts: 2 }),
+    dimZeile({ attemptState: 'IRGENDWAS', attempts: 5 }),
+  ] });
+  const k = m.kanaele.POS.kpi;
+  assert.strictEqual(k.sonstige, 5);
+  assert.strictEqual(k.attempts, 15);
+  assert.strictEqual(k.abgeschlossen, 10);
+  assert.strictEqual(k.successRate, 80);
+});
+
+test('P7: DCC-Anteil an erfolgreichen Karten-Attempts', () => {
+  const m = modell({ dim: [
+    dimZeile({ brand: 'Visa', dcc: true, attempts: 2 }),
+    dimZeile({ brand: 'Visa', dcc: false, attempts: 98 }),
+    dimZeile({ brand: 'TWINT', dcc: false, attempts: 500 }),
+  ] });
+  assert.strictEqual(m.kanaele.POS.kpi.dccAttempts, 2);
+  assert.strictEqual(m.kanaele.POS.kpi.dccAnteil, 2);
+});
+
+test('E6: PAN-Quelle mit Success Rate je Typ', () => {
+  const m = modell({ dim: [
+    dimZeile({ channel: 'ECOM', panType: 'DEVICE_TOKEN_APPLE_PAY', attempts: 9 }),
+    dimZeile({ channel: 'ECOM', panType: 'DEVICE_TOKEN_APPLE_PAY', attemptState: 'FAILED', attempts: 1 }),
+    dimZeile({ channel: 'ECOM', panType: 'UNKNOWN', attempts: 10 }),
+  ] });
+  assert.deepStrictEqual(plain(m.kanaele.ECOM.panTypes.map(p => [p.panType, p.attempts, p.successRate])),
+    [['DEVICE_TOKEN_APPLE_PAY', 10, 90], ['UNKNOWN', 10, 100]]);
+});
+
+test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
+  const { parseReportingCsv, buildReportingModel } = loadBuilders();
+  const text = fs.readFileSync(path.join(__dirname, 'fixtures', 'reporting-beispiel.csv'), 'utf8');
+  const p = parseReportingCsv(text);
+  assert.strictEqual(p.error, null);
+  const m = buildReportingModel(p.rows, { merchantCountry: 'CH' });
+
+  assert.strictEqual(m.hatDaten, true);
+  assert.deepStrictEqual(plain(m.kanalListe), ['POS', 'ECOM', 'OTHER']);
+  assert.deepStrictEqual(plain(m.spaces), ['90001', '90002']);
+  assert.deepStrictEqual(plain(m.waehrungen), ['CHF', 'EUR']);
+  assert.deepStrictEqual(plain(m.zeitraum), { von: '2026-07-01', bis: '2026-07-02', tage: 2 });
+
+  // Attempts der DIM-Zeilen verteilen sich restlos auf die drei Kanaele.
+  const summeDim = p.rows.dim.reduce((a, z) => a + z.attempts, 0);
+  const summeKanal = m.kanalListe.reduce((a, k) => a + m.kanaele[k].kpi.attempts, 0);
+  assert.strictEqual(summeKanal, summeDim);
+  assert.strictEqual(summeDim, 1854);
+
+  const pos = m.kanaele.POS;
+  assert.strictEqual(pos.kpi.attempts, 1403);
+  assert.strictEqual(pos.kpi.erfolgreich, 1380);
+  assert.strictEqual(pos.kpi.fehlgeschlagen, 23);
+  assert.strictEqual(pos.kpi.offen, 0);
+  assert.strictEqual(Math.round(pos.kpi.successRate * 10) / 10, 98.4);
+  // Karten-Attempts: Visa/Mastercard, ohne TWINT (137) und PostFinance (96).
+  assert.strictEqual(pos.kartentyp.basis, 1147);
+  assert.strictEqual(pos.herkunft.basis, 1147);
+  // SPEC 7: der ISO-3-Wert CHE ist unbekannt, nie INTER.
+  const chE = pos.herkunft.laender.find(l => l.land === 'CHE');
+  assert.strictEqual(chE, undefined);
+  const unbekannt = pos.herkunft.gruppen.find(g => g.schluessel === 'UNKNOWN');
+  assert.strictEqual(unbekannt.attempts, 34);
+  assert.ok(!pos.herkunft.gruppen.some(g => g.schluessel === 'INTER' && g.attempts > 0));
+
+  const ecom = m.kanaele.ECOM;
+  assert.strictEqual(ecom.kpi.offen, 9);
+  assert.strictEqual(ecom.kpi.attempts, 439);
+  assert.strictEqual(ecom.kpi.abgeschlossen, 430);
+  // Die Quoten lassen PENDING draussen, die Anteile decken alles ab.
+  assert.strictEqual(ecom.brands.reduce((a, b) => a + b.anteilAttempts, 0), 100);
+  assert.deepStrictEqual(plain(ecom.waehrungen.map(w => w.waehrung)), ['CHF', 'EUR']);
+  assert.ok(ecom.tds.basis > 0);
+  assert.ok(ecom.wallets.some(w => w.wallet === 'Apple Pay'));
+
+  // Alle drei Kanaele bekommen denselben, lueckenlosen Tagesbereich.
+  m.kanalListe.forEach(k => {
+    assert.deepStrictEqual(plain(m.kanaele[k].verlauf.map(v => v.tag)),
+      ['2026-07-01', '2026-07-02']);
+    assert.strictEqual(m.kanaele[k].stunden.length, 24);
+    assert.deepStrictEqual(plain(m.kanaele[k].terminals), []);
+  });
+  assert.strictEqual(m.hatTerminals, false);
+});
