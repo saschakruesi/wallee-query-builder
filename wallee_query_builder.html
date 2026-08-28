@@ -3140,15 +3140,6 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     return `element_at(filter(ca.labels, l -> l['descriptor'] = '${id}'), 1)['${key || 'shortTextContent'}']`;
   }
 
-  // Reine Existenzpruefung auf ein Label, ohne Map-Key: fuer DCC ist der Key in
-  // Task 0 nicht verifiziert, und ein falscher Key ergaebe stumm immer false
-  // (element_at liefert dann NULL statt eines Fehlers). element_at auf ein
-  // leeres Array liefert ebenfalls NULL - anders als der []-Subscript, der
-  // werfen wuerde.
-  function labelVorhanden(id) {
-    return `element_at(filter(ca.labels, l -> l['descriptor'] = '${id}'), 1) IS NOT NULL`;
-  }
-
   function buildReportingQuery({ spaceIds, start, end, channels, byTerminal, terminalIds }) {
     const spaces    = spaceIds || [];
     const terminals = terminalIds || [];
@@ -3173,11 +3164,17 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
            ON pt.id      = ca.terminal_id
           AND pt.spaceid = ca.spaceid` : '';
     const idListe = terminals.map(id => `'${escapeSql(id)}'`).join(', ');
+    // Der Filter steht in der WHERE-Klausel und wuerde den LEFT JOIN zu einem
+    // INNER JOIN degradieren - damit fielen bei Kanal "Beide" saemtliche
+    // E-Commerce- und OTHER-Attempts still heraus (sie haben kein Terminal).
+    // Deshalb Attempts ohne Terminal explizit durchlassen: die
+    // Terminal-Aufschluesselung betrifft nur den POS-Teil (SPEC 7).
+    const terminalWert = terminals.length === 1
+      ? `pt.identifier = ${idListe}`
+      : `pt.identifier IN (${idListe})`;
     const terminalFilter = terminals.length === 0
       ? ''
-      : terminals.length === 1
-        ? `\n      AND pt.identifier = ${idListe}`
-        : `\n      AND pt.identifier IN (${idListe})`;
+      : `\n      AND (ca.terminal_id IS NULL OR ${terminalWert})`;
     const attTerminal = mitTerminal ? `,
         pt.identifier                                   AS terminal_identifier,
         pt.name                                         AS terminal_name` : '';
@@ -3217,7 +3214,7 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
         ${labelExpr(DESC_CARD_CATEGORY)} AS card_category,
         ${labelExpr(DESC_CARD_TYPE)} AS funding,
         ${labelExpr(DESC_PAN_TYPE)} AS pan_type,
-        ${labelVorhanden(DESC_DCC_CURRENCY)} AS dcc,
+        ${labelExpr(DESC_DCC_CURRENCY)} IS NOT NULL AS dcc,
         ${labelExpr(DESC_TDS_STARTED, 'dateTimeContent')} IS NOT NULL AS tds_started,
         -- CAVV nur als Existenzpruefung: das Kryptogramm selbst ist ein
         -- Sicherheitsmerkmal und darf nie in eine Ausgabespalte geraten.
@@ -3257,7 +3254,13 @@ SELECT
     wallet,
     waehrung,
     attempt_state,
-    failure_reason_id,
+    -- Explizit auf varchar: der Typ von chargeattempt.failurereason ist nicht
+    -- belegt (Task 0 las ihn aus CSV, das beweist nichts). Bliebe er der
+    -- Herleitung ueberlassen und waere varchar, faende Presto gegen die
+    -- bigint-Platzhalter der anderen Bloecke keinen gemeinsamen Supertyp und
+    -- die GANZE Query scheiterte. Die ID ist ohnehin nur ein Nachschlage-
+    -- schluessel (SPEC 6.4), nie ein Rechenwert.
+    CAST(failure_reason_id AS varchar)              AS failure_reason_id,
     auth_response_code,
     issuer_country,
     card_category,
@@ -3278,6 +3281,10 @@ SELECT
     -- Attempts derselben Transaktion in dasselbe DIM-Tupel, zaehlt der Refund
     -- mehrfach. Die Refund-Quote ist damit eine Obergrenze - am POS praktisch
     -- exakt (Task 0: 12'507 von 12'522 Transaktionen mit genau einem Attempt).
+    -- Dasselbe gilt fuer summe_betrag_failed: jeder gescheiterte Versuch
+    -- derselben Transaktion addiert authorizationamount erneut, und genau das
+    -- ist im E-Commerce mit Retries der Normalfall. Nur summe_betrag ist exakt
+    -- (pro Transaktion gibt es hoechstens einen erfolgreichen Attempt).
     CAST(SUM(refund) AS decimal(38,8))              AS summe_refund,
     CAST(NULL AS bigint)                            AS tx_mit_attempt,
     CAST(NULL AS bigint)                            AS tx_erfolgreich
@@ -3297,7 +3304,7 @@ SELECT
     CAST(NULL AS varchar)                           AS wallet,
     waehrung,
     attempt_state,
-    CAST(NULL AS bigint)                            AS failure_reason_id,
+    CAST(NULL AS varchar)                           AS failure_reason_id,
     CAST(NULL AS varchar)                           AS auth_response_code,
     CAST(NULL AS varchar)                           AS issuer_country,
     CAST(NULL AS varchar)                           AS card_category,
@@ -3331,7 +3338,7 @@ SELECT
     CAST(NULL AS varchar)                           AS wallet,
     waehrung,
     CAST(NULL AS varchar)                           AS attempt_state,
-    CAST(NULL AS bigint)                            AS failure_reason_id,
+    CAST(NULL AS varchar)                           AS failure_reason_id,
     CAST(NULL AS varchar)                           AS auth_response_code,
     CAST(NULL AS varchar)                           AS issuer_country,
     CAST(NULL AS varchar)                           AS card_category,

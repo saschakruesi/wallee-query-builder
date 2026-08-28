@@ -75,7 +75,6 @@ const EXPORTED = [
   // Reporting-Modus (v5.11), reine Funktionen
   'buildReportingQuery',
   'labelExpr',
-  'labelVorhanden',
   'SALES_CHANNEL_POS',
   'SALES_CHANNEL_ECOM',
   'ATTEMPT_ENVIRONMENT',

@@ -1,23 +1,23 @@
 -- =============================================================================
--- Reporting-Modus · Task 1: Referenz-Query (buildReportingQuery)
+-- Reporting-Modus · Task 1: Referenz-Query mit Terminal-Aufschluesselung
 --
--- Generiert aus wallee_query_builder.html (buildReportingQuery) mit:
---   spaceIds   = ['40402', '12622']   (POS-Referenz-Space + E-Commerce-Space)
+-- Zweite Form derselben Query (buildReportingQuery), generiert mit:
+--   spaceIds   = ['40402']            (POS-Referenz-Space - nur dort gibt es Terminals)
 --   start      = 2026-07-01 00:00:00
 --   end        = 2026-08-01 00:00:00  (exklusiv)
---   channels   = []                   (keine Kanalwahl = alle, kein saleschannel-Filter,
---                                      damit ein dritter Kanal als 'OTHER' sichtbar bleibt)
---   byTerminal = false                (kein paymentterminal-Join, keine Terminal-Spalten)
+--   channels   = []                   (keine Kanalwahl = alle)
+--   byTerminal = true                 (LEFT JOIN paymentterminal, Terminal-Spalten im DIM-Block)
 --   terminalIds= []                   (kein Terminal-Filter)
 --
--- Zweck: EINMAL im Portal unter Account > Analytics > Submit Query ausfuehren,
--- um die Query gegen echte Daten zu validieren (Typen im UNION ALL,
--- Label-Syntax, Laufzeit). Nicht von Hand editieren - bei Aenderungen am
--- Builder neu generieren.
+-- Zweck: EINMAL im Portal ausfuehren, zusammen mit 01_reporting_reference.sql.
+-- Diese Variante deckt ab, was die erste nicht kann: den Join ueber
+-- ca.terminal_id (die Spalte steht in SPEC 3.1, ist aber in Task 0 in keiner
+-- Query vorgekommen - die uebrigen Modi joinen t.terminal_id auf transaction)
+-- sowie die beiden zusaetzlichen DIM-Spalten im UNION ALL.
 --
--- Erwartet werden drei Bloecke in der Spalte "block": DIM, TIME und CONV.
--- Die Terminal-Variante steht in 01b_reporting_reference_terminal.sql - beide
--- Dateien ausfuehren, sonst bleibt der paymentterminal-Join ungetestet.
+-- Erwartet: dieselben drei Bloecke, im DIM-Block zusaetzlich
+-- terminal_identifier / terminal_name (nur bei POS-Zeilen gefuellt).
+-- Nicht von Hand editieren - bei Aenderungen am Builder neu generieren.
 -- =============================================================================
 
 WITH att AS (
@@ -61,7 +61,9 @@ WITH att AS (
         CASE WHEN ca.state = 'FAILED'     THEN t.authorizationamount END AS amount_failed,
         CASE WHEN ca.state = 'SUCCESSFUL' THEN t.refundedamount      END AS refund,
         t.id                                            AS transaction_id,
-        ca.createdon                                    AS created_on
+        ca.createdon                                    AS created_on,
+        pt.identifier                                   AS terminal_identifier,
+        pt.name                                         AS terminal_name
     FROM chargeattempt ca
     JOIN charge c
       ON c.id      = ca.charge_id
@@ -75,7 +77,10 @@ WITH att AS (
            ON pc.id       = pcc.connector
     LEFT JOIN wallettype wt
            ON wt.id       = ca.wallet
-    WHERE ca.spaceid IN (40402, 12622)
+    LEFT JOIN paymentterminal pt
+           ON pt.id      = ca.terminal_id
+          AND pt.spaceid = ca.spaceid
+    WHERE ca.spaceid = 40402
       AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
       AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
       AND ca.environment = 'PRODUCTION'
@@ -104,6 +109,8 @@ SELECT
     tds_started,
     tds_cavv,
     eci,
+    terminal_identifier,
+    terminal_name,
     CAST(NULL AS date)                              AS tag,
     CAST(NULL AS integer)                           AS stunde,
     COUNT(*)                                        AS anzahl_attempts,
@@ -126,7 +133,7 @@ FROM att
 GROUP BY
     space_id, channel, brand, wallet, waehrung, attempt_state,
     failure_reason_id, auth_response_code, issuer_country, card_category,
-    funding, pan_type, dcc, tds_started, tds_cavv, eci
+    funding, pan_type, dcc, tds_started, tds_cavv, eci, terminal_identifier, terminal_name
 
 UNION ALL
 
@@ -148,6 +155,8 @@ SELECT
     CAST(NULL AS boolean)                           AS tds_started,
     CAST(NULL AS boolean)                           AS tds_cavv,
     CAST(NULL AS varchar)                           AS eci,
+    CAST(NULL AS varchar)                           AS terminal_identifier,
+    CAST(NULL AS varchar)                           AS terminal_name,
     date(created_on)                                AS tag,
     CAST(hour(created_on) AS integer)               AS stunde,
     COUNT(*)                                        AS anzahl_attempts,
@@ -182,6 +191,8 @@ SELECT
     CAST(NULL AS boolean)                           AS tds_started,
     CAST(NULL AS boolean)                           AS tds_cavv,
     CAST(NULL AS varchar)                           AS eci,
+    CAST(NULL AS varchar)                           AS terminal_identifier,
+    CAST(NULL AS varchar)                           AS terminal_name,
     CAST(NULL AS date)                              AS tag,
     CAST(NULL AS integer)                           AS stunde,
     CAST(NULL AS bigint)                            AS anzahl_attempts,

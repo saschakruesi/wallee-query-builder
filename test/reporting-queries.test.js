@@ -28,6 +28,17 @@ function block(text, name) {
   return naechster === -1 ? rest : rest.slice(0, naechster);
 }
 
+// Die GROUP-BY-Klausel eines Blocks als flache Liste der Gruppierungsschluessel.
+function groupBy(text, name) {
+  const b = block(text, name);
+  const ab = b.indexOf('GROUP BY');
+  assert.notStrictEqual(ab, -1, `GROUP BY in Block ${name} fehlt`);
+  const rest = b.slice(ab + 'GROUP BY'.length);
+  const ende = rest.search(/\n\s*\n|ORDER BY/);
+  return (ende === -1 ? rest : rest.slice(0, ende))
+    .split(',').map(t => t.trim()).filter(Boolean);
+}
+
 test('Harness laedt buildReportingQuery', () => {
   assert.strictEqual(typeof B.buildReportingQuery, 'function');
   assert.strictEqual(typeof B.labelExpr, 'function');
@@ -90,15 +101,35 @@ test('PII-Sperrliste: weder Card Holder Name noch Masked Card im SQL', () => {
   assert.ok(!s.includes('1456765125779'), 'Masked Card Number darf nicht vorkommen');
 });
 
+// Die Werte stammen aus dashboard/SPEC.md 6.3 (an Produktivdaten ermittelt,
+// Task 0). Bewusst als Literale festgenagelt und NICHT aus B.DESC_* abgeleitet:
+// eine Pruefung gegen die eigene Konstante wuerde eine vertauschte Ziffer nie
+// bemerken - die Query bliebe gruen und die zugehoerige KPI dauerhaft leer.
+const DESCRIPTOREN = {
+  DESC_ISSUER_COUNTRY:     '1474552618629',
+  DESC_CARD_TYPE:          '1474552618699',
+  DESC_CARD_CATEGORY:      '1474552618999',
+  DESC_AUTH_RESPONSE_POS:  '1579287790513',
+  DESC_AUTH_RESPONSE_ECOM: '15537739985478',
+  DESC_DCC_CURRENCY:       '1695119783358',
+  DESC_PAN_TYPE:           '1634723429555',
+  DESC_TDS_STARTED:        '1568637480278',
+  DESC_TDS_CAVV:           '1569496536590',
+  DESC_ECI:                '1634723429552',
+};
+
+test('Descriptor-Konstanten tragen exakt die in SPEC 6.3 belegten IDs', () => {
+  for (const [name, id] of Object.entries(DESCRIPTOREN)) {
+    assert.strictEqual(B[name], id, `${name} weicht von SPEC 6.3 ab`);
+  }
+  assert.strictEqual(B.SALES_CHANNEL_POS,  '1582819151330');
+  assert.strictEqual(B.SALES_CHANNEL_ECOM, '1582816223150');
+  assert.strictEqual(B.ATTEMPT_ENVIRONMENT, 'PRODUCTION');
+});
+
 test('Alle Descriptor-IDs aus SPEC 6.3 stehen im filter(ca.labels, ...)-Muster', () => {
   const s = sql();
-  const ids = [
-    B.DESC_ISSUER_COUNTRY, B.DESC_CARD_TYPE, B.DESC_CARD_CATEGORY,
-    B.DESC_AUTH_RESPONSE_POS, B.DESC_AUTH_RESPONSE_ECOM, B.DESC_DCC_CURRENCY,
-    B.DESC_PAN_TYPE, B.DESC_TDS_STARTED, B.DESC_TDS_CAVV, B.DESC_ECI,
-  ];
-  for (const id of ids) {
-    assert.ok(typeof id === 'string' && /^\d+$/.test(id), `Konstante fehlt: ${id}`);
+  for (const id of Object.values(DESCRIPTOREN)) {
     assert.match(s, new RegExp(`filter\\(ca\\.labels, l -> l\\['descriptor'\\] = '${id}'\\)`),
       `Descriptor ${id} nicht im filter-Muster`);
   }
@@ -173,6 +204,49 @@ test('Terminal-Filter schraenkt wie im Terminal-Modus ein', () => {
   assert.match(mehrere, /pt\.identifier IN \('T-1', 'O''Brien'\)/);
 });
 
+test('Terminal-Filter schluckt keine Attempts ohne Terminal (SPEC 7)', () => {
+  // Der Filter steht ueber einem LEFT JOIN in der WHERE-Klausel und wuerde ihn
+  // sonst zu einem INNER JOIN degradieren: bei Kanal "Beide" fielen alle
+  // E-Commerce- und OTHER-Attempts still heraus.
+  for (const channels of [[], ['POS', 'ECOM']]) {
+    const s = sql({ channels, terminalIds: ['T-1'] });
+    assert.match(s, /AND \(ca\.terminal_id IS NULL OR pt\.identifier = 'T-1'\)/);
+  }
+  const mehrere = sql({ channels: ['POS', 'ECOM'], terminalIds: ['T-1', 'T-2'] });
+  assert.match(mehrere, /AND \(ca\.terminal_id IS NULL OR pt\.identifier IN \('T-1', 'T-2'\)\)/);
+});
+
+test('DIM gruppiert nach genau den nicht-aggregierten DIM-Spalten', () => {
+  const erwartet = [
+    'space_id', 'channel', 'brand', 'wallet', 'waehrung', 'attempt_state',
+    'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
+    'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci',
+  ];
+  assert.deepStrictEqual(groupBy(sql(), 'DIM'), erwartet);
+  assert.deepStrictEqual(groupBy(sql({ byTerminal: true }), 'DIM'),
+    erwartet.concat(['terminal_identifier', 'terminal_name']));
+});
+
+test('TIME und CONV gruppieren nach ihren eigenen Dimensionen', () => {
+  assert.deepStrictEqual(groupBy(sql(), 'TIME'), [
+    'space_id', 'channel', 'brand', 'waehrung', 'attempt_state',
+    'date(created_on)', 'CAST(hour(created_on) AS integer)',
+  ]);
+  // Terminal-Spalten sind im TIME/CONV-Block NULL-Platzhalter und duerfen
+  // deshalb nie in deren GROUP BY auftauchen.
+  const mitTerminal = sql({ byTerminal: true });
+  assert.ok(!groupBy(mitTerminal, 'TIME').includes('terminal_identifier'));
+  assert.deepStrictEqual(groupBy(mitTerminal, 'CONV'),
+    ['space_id', 'channel', 'brand', 'waehrung']);
+});
+
+test('failure_reason_id ist in allen Bloecken varchar (Typ unbelegt, SPEC 6.4)', () => {
+  const s = sql();
+  assert.match(s, /CAST\(failure_reason_id AS varchar\)\s+AS failure_reason_id/);
+  assert.strictEqual(s.split('CAST(NULL AS varchar)                           AS failure_reason_id').length - 1, 2);
+  assert.doesNotMatch(s, /CAST\(NULL AS bigint\)\s+AS failure_reason_id/);
+});
+
 test('Kein direkter lineitem-Join', () => {
   const s = sql({ byTerminal: true, terminalIds: ['T-1'] });
   assert.doesNotMatch(s, /lineitem/);
@@ -186,6 +260,14 @@ test('NULL-Platzhalter sind typisiert (Athena verlangt gleiche UNION-Typen)', ()
   assert.match(s, /CAST\(NULL AS bigint\)/);
   assert.match(s, /CAST\(NULL AS decimal\(38,\s?8\)\)/);
   assert.doesNotMatch(s, /,\s*NULL\s+AS /);
+});
+
+test('Alle drei Existenz-Flags entstehen gleich (labelExpr + IS NOT NULL)', () => {
+  const s = sql();
+  // DCC-Key shortTextContent ist an Produktivdaten belegt (Task 0, Q2:
+  // ohne_shorttext = 0, Werte EUR/SEK) - kein Sonderweg noetig.
+  assert.match(s, new RegExp(`'${DESCRIPTOREN.DESC_DCC_CURRENCY}'\\), 1\\)\\['shortTextContent'\\] IS NOT NULL AS dcc`));
+  assert.strictEqual(s.split(/\] IS NOT NULL AS /).length - 1, 3);
 });
 
 test('labelExpr baut das cardCte-Muster, Default-Key shortTextContent', () => {
