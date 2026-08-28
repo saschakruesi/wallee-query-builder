@@ -217,3 +217,101 @@ test('CSV-Import im Kopieren-Modus laeuft ueber denselben Ingest', () => {
   assert.ok(sichtbar(el('reportingReportActions')));
   assert.strictEqual(app.getState().mode, 'reporting', 'Der Ingest schaltet in den eigenen Modus');
 });
+
+// --- Account-Override greift nur im Settlement-Modus -----------------------
+// Der Super-User-Flip steht im Settlement-Panel und meint den Account, in dem
+// der SETTLEMENT-Report laufen soll. Reporting filtert wie brand/terminal nach
+// spaceid: ein fremder Account kennt diese Spaces nicht, die Query liefe im
+// falschen Kontext und kaeme leer zurueck - genau die Regression aus v5.10.0,
+// die damals monatelang unbemerkt blieb, weil kein Test "Flip an UND anderer
+// Modus" abdeckte. Die bestehenden Schleifen in api-anbindung/history decken
+// die vier alten Modi ab; reporting wird hier nachgezogen.
+test('Super-User-Override greift im Reporting-Modus nicht', () => {
+  const { app } = starte({
+    wallee_query_builder_v6: JSON.stringify({
+      mode: 'reporting', settlementSuperUser: true, settlementAccountId: '99999',
+    }),
+  });
+  assert.strictEqual(app.aktiverAccount(), '',
+    'Ein fremder Account wuerde die Space-Filter der Reporting-Query ins Leere laufen lassen');
+  assert.strictEqual(
+    app.historyEintragBauen('reporting', 'tok', app.getState(), '2026-01-01T00:00:00Z', 'SUCCESS').account,
+    '',
+    'Sonst liefe der spaetere Download-by-Token im falschen Account');
+});
+
+test('Im Settlement-Modus gilt der Override weiterhin', () => {
+  // Gegenprobe: der Test oben darf nicht dadurch gruen sein, dass der Override
+  // ueberhaupt nicht mehr wirkt.
+  const { app } = starte({
+    wallee_query_builder_v6: JSON.stringify({
+      mode: 'settlement', settlementSuperUser: true, settlementAccountId: '99999',
+    }),
+  });
+  assert.strictEqual(app.aktiverAccount(), '99999');
+});
+
+// --- CSV-Import ist mit der Tastatur erreichbar ----------------------------
+test('Der CSV-Import laeuft ueber einen echten Button, nicht ueber ein <label>', () => {
+  // Ein <label for> ist nicht fokussierbar, und der versteckte File-Input steht
+  // in keiner Tab-Reihenfolge: der Import waere nur mit der Maus erreichbar -
+  // im Kopieren-Modus (dem Default) der einzige Weg zu Daten.
+  const { el } = starte({ wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }) });
+  let geklickt = 0;
+  el('reportingCsvImport').click = () => { geklickt++; };
+  el('reportingCsvImportBtn').dispatch('click');
+  assert.strictEqual(geklickt, 1, 'Der Button muss den File-Dialog oeffnen');
+});
+
+// --- Haendler-Land: kein stiller Rueckfall --------------------------------
+test('Ein geleertes Haendler-Land behaelt den zuletzt gueltigen Wert', () => {
+  // Der Rumpf waehrend des Tippens darf nicht ins Modell, aber ein stiller
+  // Rueckfall auf CH wuerde im Kopf des Reports "Haendler-Land: CH" behaupten,
+  // waehrend das Feld leer dasteht.
+  const { app, el } = starte({
+    wallee_query_builder_v6: JSON.stringify({
+      mode: 'reporting', reportingMerchantCountry: 'DE',
+    }),
+  });
+  el('reportingMerchantCountry').value = '';
+  el('reportingMerchantCountry').dispatch('input');
+  assert.strictEqual(app.getState().reportingMerchantCountry, 'DE');
+
+  el('reportingMerchantCountry').value = 'F';
+  el('reportingMerchantCountry').dispatch('input');
+  assert.strictEqual(app.getState().reportingMerchantCountry, 'DE',
+    'Ein einzelner Buchstabe ist kein Land');
+
+  el('reportingMerchantCountry').value = 'fr';
+  el('reportingMerchantCountry').dispatch('input');
+  assert.strictEqual(app.getState().reportingMerchantCountry, 'FR');
+});
+
+test('Ein Kanalwechsel schreibt nicht ins Haendler-Land-Feld', () => {
+  const { el } = starte({ wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }) });
+  el('reportingMerchantCountry').value = '';
+  el('reportingMerchantCountry').dispatch('input');
+
+  el('reportingChannelPos').checked = true;
+  el('reportingChannelPos').dispatch('change');
+  assert.strictEqual(el('reportingMerchantCountry').value, '',
+    'Der Radio-Handler darf dem Nutzer keinen Wert in die Box schreiben');
+});
+
+test('Ein gueltiges Haendler-Land rechnet das bereits geladene Modell neu', () => {
+  // Das Land steckt nicht in der Query, sondern nur im Modell: ohne den
+  // Neuaufbau zeigte der Report weiter die Einstufung des alten Landes, ohne
+  // dass irgendetwas darauf hinwiese.
+  const { app, el } = starte({
+    wallee_query_builder_v6: JSON.stringify({
+      mode: 'reporting', reportingMerchantCountry: 'CH',
+    }),
+  });
+  app.ingestReportingCsv(FIXTURE);
+  assert.strictEqual(app.reportingModellAktuell().merchantCountry, 'CH');
+
+  el('reportingMerchantCountry').value = 'fr';
+  el('reportingMerchantCountry').dispatch('input');
+  assert.strictEqual(app.reportingModellAktuell().merchantCountry, 'FR',
+    'Das Modell muss dem neuen Haendler-Land folgen');
+});

@@ -1166,7 +1166,12 @@
     <p class="hint" id="reportingStatus" style="margin-bottom:0;"></p>
 
     <div class="list-actions" style="margin-top:14px;">
-      <label class="btn" for="reportingCsvImport" title="Ergebnis-CSV aus dem Portal laden (Kopieren-Modus)">CSV importieren</label>
+      <!-- Echter Button statt eines <label for>: ein Label ist nicht
+           fokussierbar und der versteckte Input steht in keiner Tab-Reihenfolge -
+           der Import waere sonst nur mit der Maus erreichbar, obwohl er im
+           Kopieren-Modus der einzige Weg zu Daten ist. Gleiches Muster wie beim
+           Konfigurations-Import des Terminal-Reports. -->
+      <button class="btn" id="reportingCsvImportBtn" title="Ergebnis-CSV aus dem Portal laden (Kopieren-Modus)">CSV importieren</button>
       <input type="file" id="reportingCsvImport" accept=".csv,text/csv" class="hidden">
     </div>
 
@@ -1812,6 +1817,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const reportingXlsxBtn          = document.getElementById('reportingXlsxBtn');
   const reportingPdfBtn           = document.getElementById('reportingPdfBtn');
   const reportingCsvImport        = document.getElementById('reportingCsvImport');
+  const reportingCsvImportBtn     = document.getElementById('reportingCsvImportBtn');
   const terminalModeHint= document.getElementById('terminalModeHint');
   const tipUnsettledHint= document.getElementById('tipUnsettledHint');
   const reportSection   = document.getElementById('reportSection');
@@ -3876,6 +3882,11 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // Haendler-Land gibt es kein "Inland", und die ganze Herkunfts-Kennzahl
   // fiele auf UNKNOWN zurueck.
   const REPORTING_DEFAULT_LAND = 'CH';
+
+  // Gueltige Kanalwahlen des Reporting-Modus (SPEC 5). Steht bewusst hier bei
+  // REPORTING_DEFAULT_LAND und nicht bei reportingKanalFilter(): einziger
+  // Konsument ist loadState(), das beide Konstanten nebeneinander braucht.
+  const REPORTING_KANAL_WAHL = ['POS', 'ECOM', 'BOTH'];
 
   // Europa-Region fuer die Herkunfts-Einstufung (SPEC 2.6): EWR (EU-27 plus
   // Island, Liechtenstein, Norwegen) sowie Schweiz und Vereinigtes Koenigreich.
@@ -6512,6 +6523,28 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
 
   // Der ganze Ablauf. Gibt nichts zurueck, meldet alles ueber die
   // Fortschrittsanzeige. Wirft nicht - jeder Fehler landet als Meldung.
+  // Settlement- und Reporting-Report holen ihr Ergebnis auf demselben Weg und
+  // unterscheiden sich nur im Namen und in der Ingest-Funktion. Der
+  // Terminal-Report laeuft bewusst NICHT hierueber: er nutzt
+  // holeErgebnisInReport(), das die Antwort selbst auswertet (202/4xx) statt
+  // ueber holeErgebnisText() zu gehen.
+  const BERICHT_INGEST = {
+    settlement: { name: 'Settlement-Report', uebergib: uebergibSettlementCsv },
+    reporting:  { name: 'Reporting-Report',  uebergib: uebergibReportingCsv },
+  };
+
+  async function holeErgebnisInBericht(mode, token, account) {
+    const bericht = BERICHT_INGEST[mode];
+    const r = await holeErgebnisText(token, account);
+    if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return false; }
+    const ok = bericht.uebergib(r.text);
+    zeigeFortschritt(ok
+      ? `Ergebnis geladen – ${bericht.name} erstellt.`
+      : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
+      ok ? 'erfolg' : 'fehler');
+    return ok;
+  }
+
   async function submitUndReport(sql) {
     if (apiLauf) return;                       // schon ein Lauf aktiv
     apiLauf = { token: '', abgebrochen: false };
@@ -6600,22 +6633,8 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
 
       if (state.mode === 'terminal') {
         await holeErgebnisInReport(token, account);
-      } else if (state.mode === 'settlement') {
-        const r = await holeErgebnisText(token, account);
-        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
-        const ok = uebergibSettlementCsv(r.text);
-        zeigeFortschritt(ok
-          ? 'Ergebnis geladen – Settlement-Report erstellt.'
-          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
-          ok ? 'erfolg' : 'fehler');
-      } else if (state.mode === 'reporting') {
-        const r = await holeErgebnisText(token, account);
-        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
-        const ok = uebergibReportingCsv(r.text);
-        zeigeFortschritt(ok
-          ? 'Ergebnis geladen – Reporting-Report erstellt.'
-          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
-          ok ? 'erfolg' : 'fehler');
+      } else if (BERICHT_INGEST[state.mode]) {
+        await holeErgebnisInBericht(state.mode, token, account);
       } else {
         zeigeFortschritt('Fertig — Ergebnis unten im Verlauf als CSV oder Excel herunterladen.', 'erfolg');
       }
@@ -6786,25 +6805,12 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (!bereit) { settingsOeffnen(); return; }
       const account = aktiverAccount();
       // Gleiches Muster wie submitUndReport (siehe dort): das Token-Feld ist
-      // in jedem API-Modus sichtbar, auch im Settlement-Modus. Ohne diese
-      // Verzweigung liefe der Abruf immer ueber den Terminal-Report-Pfad und
-      // wuerde im Settlement-Modus mit "Pflichtspalten fehlen" scheitern.
-      if (state.mode === 'settlement') {
-        const r = await holeErgebnisText(token, account);
-        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
-        const ok = uebergibSettlementCsv(r.text);
-        zeigeFortschritt(ok
-          ? 'Ergebnis geladen – Settlement-Report erstellt.'
-          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
-          ok ? 'erfolg' : 'fehler');
-      } else if (state.mode === 'reporting') {
-        const r = await holeErgebnisText(token, account);
-        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
-        const ok = uebergibReportingCsv(r.text);
-        zeigeFortschritt(ok
-          ? 'Ergebnis geladen – Reporting-Report erstellt.'
-          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
-          ok ? 'erfolg' : 'fehler');
+      // in jedem API-Modus sichtbar, auch im Settlement- und im
+      // Reporting-Modus. Ohne diese Verzweigung liefe der Abruf immer ueber den
+      // Terminal-Report-Pfad und wuerde dort mit "Pflichtspalten fehlen"
+      // scheitern.
+      if (BERICHT_INGEST[state.mode]) {
+        await holeErgebnisInBericht(state.mode, token, account);
       } else {
         await holeErgebnisInReport(token, account);
       }
@@ -7529,8 +7535,9 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // Bewusst reine Funktionen und nicht inline in setMode/generate: beide Regeln
   // haengen an State-Feldern, die sich WAEHREND des Modus aendern (Radio,
   // Checkbox), nicht nur am Modus selbst - und beide waeren sonst nur ueber den
-  // Umweg des gerenderten DOM pruefbar.
-  const REPORTING_KANAL_WAHL = ['POS', 'ECOM', 'BOTH'];
+  // Umweg des gerenderten DOM pruefbar. Die Liste der gueltigen Kanalwahlen
+  // (REPORTING_KANAL_WAHL) steht bei den uebrigen Reporting-Konstanten, weil
+  // loadState() ihr einziger Konsument ist.
 
   // 'BOTH' ergibt eine LEERE Liste, nicht ['POS','ECOM']: leer heisst fuer
   // buildReportingQuery "gar kein saleschannel-Filter", und nur so bleibt ein
@@ -7852,7 +7859,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   function reportingKanalSetzen(wahl) {
     state.reportingChannel = wahl;
     saveState();
-    aktualisiereReportingInputs();
+    // Bewusst NUR die Radios abgleichen: aktualisiereReportingInputs() wuerde
+    // auch das Landfeld neu setzen und dem Nutzer mitten im Tippen einen Wert
+    // in die Box schreiben, den er gerade loescht.
+    aktualisiereReportingKanalInputs();
     // Der Kanal entscheidet mit, ob das Terminal-Panel gilt - und er aendert
     // die Query. Deshalb beides nachziehen.
     aktualisiereReportingTerminalPanel();
@@ -7870,10 +7880,13 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     const wert = String(reportingMerchantCountryEl.value || '')
       .replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 2);
     reportingMerchantCountryEl.value = wert;
-    // Waehrend des Tippens ist der Wert einen Anschlag lang einbuchstabig -
-    // ein solcher Rumpf wuerde im Modell jede Karte auf UNKNOWN werfen. Bis
-    // zwei Buchstaben stehen, gilt deshalb der Vorgabewert.
-    state.reportingMerchantCountry = wert.length === 2 ? wert : REPORTING_DEFAULT_LAND;
+    // Ein Rumpf von weniger als zwei Buchstaben ist kein Land: er wuerde im
+    // Modell jede Karte auf UNKNOWN werfen. Solange er dasteht, bleibt der
+    // zuletzt GUELTIGE Wert stehen und das Modell unberuehrt - bewusst kein
+    // stiller Rueckfall auf den Vorgabewert, der im Kopf des Reports
+    // "Haendler-Land: CH" behaupten wuerde, waehrend das Feld leer ist.
+    if (wert.length !== 2) return;
+    state.reportingMerchantCountry = wert;
     saveState();
     // Reine Auswertungsgroesse: sie steckt nicht in der Query, sondern im
     // Modell - deshalb neu rechnen statt generate().
@@ -7887,6 +7900,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     generate();
   });
 
+  reportingCsvImportBtn.addEventListener('click', () => reportingCsvImport.click());
   reportingCsvImport.addEventListener('change', e => {
     const f = e.target.files && e.target.files[0];
     if (f) {
@@ -7910,10 +7924,16 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       reportingTerminalPanelSichtbar(state.reportingChannel, state.reportingByTerminal));
   }
 
-  function aktualisiereReportingInputs() {
+  function aktualisiereReportingKanalInputs() {
     reportingChannelPos.checked  = state.reportingChannel === 'POS';
     reportingChannelEcom.checked = state.reportingChannel === 'ECOM';
     reportingChannelBoth.checked = state.reportingChannel === 'BOTH';
+  }
+
+  // Vollabgleich - nur beim Init. Waehrend der Bedienung fasst niemand das
+  // Landfeld an ausser dem Nutzer selbst.
+  function aktualisiereReportingInputs() {
+    aktualisiereReportingKanalInputs();
     reportingMerchantCountryEl.value = state.reportingMerchantCountry || REPORTING_DEFAULT_LAND;
     reportingByTerminalToggle.checked = !!state.reportingByTerminal;
   }
