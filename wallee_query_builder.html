@@ -3619,7 +3619,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     for (let i = 1; i < zeilen.length; i++) {
       const z = zeilen[i];
       // Die Analytics-CSV endet mit einer Leerzeile; die faellt hier weg.
-      if (!z || z.length === 1 && String(z[0] || '').trim() === '') continue;
+      // Geprueft wird die GANZE Zeile, nicht nur der Ein-Feld-Fall: eine Zeile
+      // aus lauter leeren Feldern (",,,") hat volle Breite und landete sonst
+      // in unbekannteBloecke - ein Fehlalarm, sobald der Zaehler angezeigt wird.
+      if (!z || z.every(f => String(f == null ? '' : f).trim() === '')) continue;
       const block = roh(z, 'block').toUpperCase();
 
       // Jeder Block bekommt seine EIGENE Zeilenform, statt alle 26 Spalten

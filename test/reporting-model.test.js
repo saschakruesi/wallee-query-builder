@@ -1,11 +1,11 @@
 // Reporting-Modus (v5.11): Parser des Query-Ergebnisses.
 // parseReportingCsv ist rein und DOM-frei, deshalb hier ohne DOM-Ersatz.
 //
-// Die Kopfzeile stammt 1:1 aus der SELECT-Liste von
-// dashboard/sql/01_reporting_reference.sql (Task 1) - sie ist die massgebliche
-// Definition, nicht der Prosa-Text der SPEC. Die Terminal-Variante
-// (01b_reporting_reference_terminal.sql) haengt zwei weitere Spalten an; die
-// sind optional und werden separat geprueft.
+// Massgeblich fuer die Spaltennamen ist buildReportingQuery selbst - der
+// Waechtertest unten leitet sie aus der erzeugten SQL ab, nicht aus einer
+// zweiten Handliste. KOPF hier ist nur der Baustein fuer die synthetischen
+// Testzeilen. Die Terminal-Variante haengt zwei weitere Spalten an; die sind
+// optional und werden separat geprueft.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -60,14 +60,57 @@ const CONV = {
   tx_mit_attempt: '17', tx_erfolgreich: '12',
 };
 
-test('REPORTING_PFLICHT deckt sich mit der Kopfzeile der Referenz-Query', () => {
-  const { parseReportingCsv, REPORTING_PFLICHT } = loadBuilders();
-  // Waechter gegen Auseinanderlaufen: KOPF oben ist die SELECT-Liste aus
-  // 01_reporting_reference.sql, REPORTING_PFLICHT die Forderung des Parsers.
-  // Beide sind von Hand gepflegt - weicht eine ab, faellt es hier auf und
-  // nicht erst am leeren Report.
-  assert.deepStrictEqual(plain([...REPORTING_PFLICHT].sort()), [...KOPF].sort());
-  assert.strictEqual(typeof parseReportingCsv, 'function');
+// Liest die Aliasse des ERSTEN SELECT-Blocks (DIM) aus einer erzeugten Query.
+// Bewusst aus der SQL statt aus einer zweiten Handliste: zwei von Hand
+// gepflegte Listen bleiben zueinander konsistent, auch wenn beide gegen die
+// Query falsch sind - genau der Fall, den der Waechter erwischen soll, waere
+// der einzige, den er nicht saehe. Der UNION ALL erzwingt fuer alle Bloecke
+// dieselben Spalten, deshalb reicht der erste.
+function spaltenAusQuery(sql) {
+  const von = sql.indexOf('\nSELECT\n');
+  const bis = sql.indexOf('\nFROM att', von);
+  assert.ok(von >= 0 && bis > von, 'DIM-SELECT-Block in der Query nicht gefunden');
+  return sql.slice(von + '\nSELECT\n'.length, bis).split('\n')
+    .map(z => z.replace(/--.*$/, '').trim())
+    .filter(z => z && z !== ',')
+    .map(z => {
+      // Letztes "AS <name>" der Zeile gewinnt: CAST(x AS varchar) AS x traegt
+      // zwei, und nur das hintere ist der Spaltenname.
+      const mitAlias = /\bAS\s+([a-z_][a-z0-9_]*)\s*,?\s*$/i.exec(z);
+      if (mitAlias) return mitAlias[1].toLowerCase();
+      // Nackte Spalte ohne Alias (space_id, channel, ...).
+      const nackt = /^([a-z_][a-z0-9_]*)\s*,?\s*$/i.exec(z);
+      return nackt ? nackt[1].toLowerCase() : null;
+    })
+    .filter(Boolean);
+}
+
+const QUERY_ARGS = {
+  spaceIds: ['40402'], start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00',
+  channels: [], byTerminal: false, terminalIds: [],
+};
+
+test('REPORTING_PFLICHT deckt sich mit der SELECT-Liste von buildReportingQuery', () => {
+  const { buildReportingQuery, REPORTING_PFLICHT } = loadBuilders();
+  const ausQuery = spaltenAusQuery(buildReportingQuery(QUERY_ARGS));
+  // Reihenfolge inklusive: der Parser loest zwar ueber den Namen auf, aber eine
+  // vertauschte Liste waere ein Zeichen, dass jemand die Query umgebaut hat.
+  assert.deepStrictEqual(plain([...REPORTING_PFLICHT]), ausQuery);
+});
+
+test('KOPF der Testzeilen deckt sich mit der SELECT-Liste von buildReportingQuery', () => {
+  const { buildReportingQuery } = loadBuilders();
+  // Sonst wuerden die synthetischen Zeilen dieser Datei eine CSV beschreiben,
+  // die es gar nicht gibt.
+  assert.deepStrictEqual(KOPF, spaltenAusQuery(buildReportingQuery(QUERY_ARGS)));
+});
+
+test('die Terminal-Variante haengt genau die zwei optionalen Spalten an', () => {
+  const { buildReportingQuery, REPORTING_PFLICHT } = loadBuilders();
+  const mitTerminal = spaltenAusQuery(
+    buildReportingQuery(Object.assign({}, QUERY_ARGS, { byTerminal: true })));
+  const zusatz = mitTerminal.filter(k => plain([...REPORTING_PFLICHT]).indexOf(k) === -1);
+  assert.deepStrictEqual(zusatz, ['terminal_identifier', 'terminal_name']);
 });
 
 test('parseReportingCsv: leerer Text ergibt einen Fehler, wirft aber nicht', () => {
@@ -144,8 +187,7 @@ test('parseReportingCsv: unbekannter block-Wert wird nicht eingemischt, sondern 
 });
 
 test('parseReportingCsv: Betraege werden zu 1e-8-Ganzzahlen zerlegt', () => {
-  const { parseReportingCsv, AMOUNT_SCALE } = loadBuilders();
-  assert.strictEqual(AMOUNT_SCALE, 8);
+  const { parseReportingCsv } = loadBuilders();
   const r = parseReportingCsv(csv([
     Object.assign({}, DIM, {
       summe_betrag: '1234.5',
@@ -217,6 +259,33 @@ test('parseReportingCsv: TIME ohne stunde ergibt null, nicht Stunde 0', () => {
   assert.strictEqual(r.rows.time[0].tag, 'UNKNOWN');
 });
 
+test('parseReportingCsv: zu kurze Zeile faellt auf UNKNOWN/0 zurueck, ohne Wurf', () => {
+  const { parseReportingCsv } = loadBuilders();
+  // Abgeschnittene Zeile (Download abgebrochen, Datei von Hand gekuerzt): der
+  // Zugriff laeuft ins Leere, statt zu werfen - fehlende Dimensionen werden
+  // UNKNOWN, fehlende Zaehler und Betraege 0.
+  const text = KOPF.map(q).join(',') + '\n"DIM","90001","POS"\n';
+  const r = parseReportingCsv(text);
+  assert.strictEqual(r.error, null);
+  assert.strictEqual(r.rows.dim.length, 1);
+  assert.strictEqual(r.rows.dim[0].channel, 'POS');
+  assert.strictEqual(r.rows.dim[0].brand, 'UNKNOWN');
+  assert.strictEqual(r.rows.dim[0].attempts, 0);
+  assert.strictEqual(r.rows.dim[0].betrag, 0);
+  assert.strictEqual(r.rows.dim[0].dcc, null);
+});
+
+test('parseReportingCsv: Zeile aus lauter leeren Feldern zaehlt nicht als unbekannter Block', () => {
+  const { parseReportingCsv } = loadBuilders();
+  // ",,,,..." hat volle Breite und ist trotzdem eine Leerzeile - sie darf den
+  // Zaehler fuer unbekannte Bloecke nicht hochtreiben.
+  const text = csv([DIM]) + KOPF.map(() => '""').join(',') + '\n';
+  const r = parseReportingCsv(text);
+  assert.strictEqual(r.error, null);
+  assert.strictEqual(r.rows.dim.length, 1);
+  assert.strictEqual(r.unbekannteBloecke, 0);
+});
+
 test('parseReportingCsv: Kopfzeile wird case-insensitiv gelesen', () => {
   const { parseReportingCsv } = loadBuilders();
   const kopf = KOPF.map(k => k.toUpperCase());
@@ -240,6 +309,21 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
     r.rows.dim.length + r.rows.time.length + r.rows.conv.length, datenzeilen);
   assert.ok(r.rows.dim.length > 0 && r.rows.time.length > 0 && r.rows.conv.length > 0);
 
+  // Sollwerte der Fixture. Sie nageln die Betraege fest, nicht nur die
+  // Zeilenzahl - ein Parser, der die 1e-8-Zerlegung verliert oder leere
+  // NULL-Felder anders behandelt, faellt hier auf. Unabhaengig aus der Rohdatei
+  // nachgerechnet (Decimal-Summe der Spalten), nicht vom Parser uebernommen.
+  // Zugleich die Basislinie fuer das Modell in Task 3.
+  const summe = (liste, feld) => liste.reduce((a, z) => a + z[feld], 0);
+  assert.strictEqual(summe(r.rows.dim, 'betrag'), 5441239000000);        // 54'412.39
+  assert.strictEqual(summe(r.rows.dim, 'betragFailed'), 377444000000);   //  3'774.44
+  assert.strictEqual(summe(r.rows.dim, 'refund'), 212143000000);         //  2'121.43
+  assert.strictEqual(summe(r.rows.dim, 'attempts'), 1854);
+  assert.strictEqual(summe(r.rows.time, 'attempts'), 872);
+  assert.strictEqual(summe(r.rows.time, 'betrag'), 1649053000000);       // 16'490.53
+  assert.strictEqual(summe(r.rows.conv, 'txMitAttempt'), 1682);
+  assert.strictEqual(summe(r.rows.conv, 'txErfolgreich'), 1622);
+
   // Die Faelle, die die Fixture bewusst abdeckt (siehe
   // test/fixtures/generate-reporting-beispiel.mjs).
   const kanaele = new Set(r.rows.dim.map(z => z.channel));
@@ -257,4 +341,17 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
   assert.ok(r.rows.dim.some(z => z.tdsStarted === true && z.tdsCavv === true));
   assert.ok(r.rows.dim.some(z => z.tdsStarted === true && z.tdsCavv === false));
   assert.ok(r.rows.dim.some(z => z.tdsStarted === false && z.eci !== 'UNKNOWN'));
+
+  // SPEC 7: PENDING gehoert in die Kacheln als "offen" und aus allen Quoten
+  // heraus - beide Betragsspalten sind dort NULL, also 0.
+  const pending = r.rows.dim.filter(z => z.attemptState === 'PENDING');
+  assert.strictEqual(pending.length, 1);
+  assert.deepStrictEqual(plain([pending[0].betrag, pending[0].betragFailed]), [0, 0]);
+  assert.ok(r.rows.time.some(z => z.attemptState === 'PENDING'),
+    'PENDING fehlt im TIME-Block');
+
+  // SPEC 7: Issuer-Land in abweichendem Format. Der Parser reicht den Rohwert
+  // durch; normalisiert wird erst im Modell (Task 3) - nie zu INTER.
+  assert.ok(r.rows.dim.some(z => z.issuerCountry === 'CHE'),
+    'ISO-3-Landescode fehlt');
 });

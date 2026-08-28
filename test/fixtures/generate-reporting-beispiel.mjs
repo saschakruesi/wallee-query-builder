@@ -72,9 +72,9 @@ const SPACE_ECOM = '90002';   // erfundener E-Commerce-Space
 // Betrag als String mit 8 Nachkommastellen, aus Ganzzahl-Rappen gerechnet -
 // nie ueber Gleitkomma, damit die Datei bei jedem Lauf identisch bleibt.
 function betrag(rappen) {
+  const vorzeichen = rappen < 0 ? '-' : '';
   const v = Math.abs(rappen);
-  const s = (v < 0 ? '-' : '') + Math.floor(v / 100) + '.' + String(v % 100).padStart(2, '0');
-  return (rappen < 0 ? '-' : '') + s.replace('-', '') + '000000';
+  return vorzeichen + Math.floor(v / 100) + '.' + String(v % 100).padStart(2, '0') + '000000';
 }
 function zufallsBetrag(min, max) {
   return betrag(min + Math.floor(rnd() * (max - min)));
@@ -97,6 +97,12 @@ const DIM_FAELLE = [
   // Auslaendischer Issuer + DCC.
   { space: SPACE_POS, channel: 'POS', brand: 'Mastercard', waehrung: 'CHF', state: 'SUCCESSFUL',
     arc: '00', land: 'DE', kat: 'CLASSIC', funding: 'CREDIT', dcc: true, n: 58 },
+  // Issuer-Land in abweichendem Format (ISO-3 statt ISO-2, SPEC 7). Der Parser
+  // gibt den Rohwert durch; die Normalisierung gehoert ins Modell (Task 3) -
+  // dort muss 'CHE' zu Inland werden oder zu UNKNOWN, NIE zu INTER. Ohne diesen
+  // Fall in der Fixture liesse sich die Regel dort an nichts festmachen.
+  { space: SPACE_POS, channel: 'POS', brand: 'Visa', waehrung: 'CHF', state: 'SUCCESSFUL',
+    arc: '00', land: 'CHE', kat: 'CLASSIC', funding: 'CREDIT', n: 34 },
   // Nicht-Karten-Brand: TWINT traegt keine Karten-Labels, alle bleiben leer.
   { space: SPACE_POS, channel: 'POS', brand: 'TWINT', waehrung: 'CHF', state: 'SUCCESSFUL',
     land: '', kat: '', funding: '', n: 137 },
@@ -129,6 +135,13 @@ const DIM_FAELLE = [
   { space: SPACE_ECOM, channel: 'ECOM', brand: 'UNKNOWN', waehrung: 'CHF',
     state: 'FAILED', reason: '', land: '', kat: '', funding: '', n: 6 },
 
+  // PENDING (SPEC 7): weder Umsatz noch Ablehnung - in den Kacheln als "offen"
+  // auszuweisen und aus allen Quoten herauszuhalten. Beide Betragsspalten
+  // bleiben deshalb NULL.
+  { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF',
+    state: 'PENDING', land: 'CH', kat: 'CLASSIC', funding: 'CREDIT',
+    tds: true, cavv: false, n: 9 },
+
   // Dritter Kanal (saleschannel weder POS noch ECOM) - eigener Tab, nicht
   // verworfen.
   { space: SPACE_ECOM, channel: 'OTHER', brand: 'Visa', waehrung: 'CHF',
@@ -138,6 +151,10 @@ const DIM_FAELLE = [
 
 DIM_FAELLE.forEach(f => {
   const erfolg = f.state === 'SUCCESSFUL';
+  // PENDING ist weder das eine noch das andere: kein Umsatz, kein abgelehnter
+  // Betrag - beide Betragsspalten bleiben NULL (SPEC 7: als "offen" ausweisen,
+  // aus allen Quoten heraushalten).
+  const fehlgeschlagen = f.state === 'FAILED';
   const tx = Math.max(1, f.n - Math.floor(rnd() * Math.min(8, f.n)));
   zeilen.push({
     block: 'DIM',
@@ -159,11 +176,17 @@ DIM_FAELLE.forEach(f => {
     eci: f.eci || '',
     anzahl_attempts: String(f.n),
     anzahl_transaktionen: String(tx),
-    summe_betrag: erfolg ? zufallsBetrag(f.n * 900, f.n * 4200) : betrag(0),
-    summe_betrag_failed: erfolg ? betrag(0) : zufallsBetrag(f.n * 1200, f.n * 5000),
+    // SUM() ueber lauter NULL ergibt NULL, nicht 0 - in der CSV also ein LEERES
+    // Feld. summe_betrag entsteht aus CASE WHEN state = 'SUCCESSFUL', ist bei
+    // einer FAILED-Zeile also durchgehend NULL (und umgekehrt fuer
+    // summe_betrag_failed). "0.00000000" wuerde eine Form zeigen, die die Query
+    // gar nicht liefert, und den NULL-Pfad des Parsers ungeprueft lassen.
+    summe_betrag: erfolg ? zufallsBetrag(f.n * 900, f.n * 4200) : '',
+    summe_betrag_failed: fehlgeschlagen ? zufallsBetrag(f.n * 1200, f.n * 5000) : '',
     // Refunds nur auf einem Teil der erfolgreichen Zeilen - so bleibt die
-    // Refund-Quote im Modell unterscheidbar von "alles 0".
-    summe_refund: erfolg && rnd() < 0.5 ? zufallsBetrag(0, f.n * 300) : betrag(0),
+    // Refund-Quote im Modell unterscheidbar von "alles 0". Ohne Erfolg gibt es
+    // keinen Refund-Wert, nur NULL.
+    summe_refund: erfolg ? (rnd() < 0.5 ? zufallsBetrag(0, f.n * 300) : betrag(0)) : '',
   });
 });
 
@@ -177,6 +200,7 @@ const TIME_BASIS = [
   { space: SPACE_POS, channel: 'POS', brand: 'TWINT', waehrung: 'CHF', state: 'SUCCESSFUL' },
   { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF', state: 'SUCCESSFUL' },
   { space: SPACE_ECOM, channel: 'ECOM', brand: 'Mastercard', waehrung: 'EUR', state: 'SUCCESSFUL' },
+  { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF', state: 'PENDING' },
 ];
 ['2026-07-01', '2026-07-02'].forEach(tag => {
   [8, 12, 19].forEach(stunde => {
@@ -188,7 +212,8 @@ const TIME_BASIS = [
         attempt_state: b.state,
         tag, stunde: String(stunde),
         anzahl_attempts: String(n),
-        summe_betrag: b.state === 'SUCCESSFUL' ? zufallsBetrag(n * 900, n * 4200) : betrag(0),
+        // Wie im DIM-Block: SUM(amount) ist ausserhalb von SUCCESSFUL NULL.
+        summe_betrag: b.state === 'SUCCESSFUL' ? zufallsBetrag(n * 900, n * 4200) : '',
       });
     });
   });
