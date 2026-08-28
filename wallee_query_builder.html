@@ -3543,6 +3543,154 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     return { rows, headers, error: null };
   }
 
+  // --- Reporting-Modus: CSV-Parser -----------------------------------------
+  // Dritter Parser neben parseReportCsv und parseSettlementCsv, aus demselben
+  // Grund eigenstaendig: andere Pflichtspalten, andere Feldnamen - und hier
+  // zusaetzlich drei Zeilenformen in EINER Datei. Gemeinsam bleiben csvZuZeilen
+  // als Zerleger und parseAmount fuer die 1e-8-Einheiten; ein eigener
+  // Tokenizer waere der vierte im Haus und ohne Nutzen.
+
+  // Die Pflichtspalten sind die vollstaendige SELECT-Liste von
+  // buildReportingQuery ohne die beiden Terminal-Spalten (Referenz:
+  // dashboard/sql/01_reporting_reference.sql). Bewusst vollstaendig statt nur
+  // "was das Modell braucht": die Query ist EIN UNION ALL, ihre Spalten kommen
+  // also immer gemeinsam oder gar nicht. Fehlt eine, stammt die CSV nicht aus
+  // diesem Modus, und ein Report auf halben Spalten waere schlimmer als eine
+  // klare Fehlermeldung. terminal_identifier/terminal_name stehen NICHT drin -
+  // sie existieren nur in der Terminal-Variante (01b) und sind optional.
+  const REPORTING_PFLICHT = [
+    'block', 'space_id', 'channel', 'brand', 'wallet', 'waehrung', 'attempt_state',
+    'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
+    'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
+    'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
+    'summe_refund', 'tx_mit_attempt', 'tx_erfolgreich',
+  ];
+
+  // Fehlende Dimensionen landen im UNKNOWN-Eimer, nie als '' oder null. Sonst
+  // wuerde ein Attempt ohne Label still zu einer eigenen, namenlosen Gruppe -
+  // oder, schlimmer, per Falsy-Vergleich in einer benachbarten. UNKNOWN ist
+  // eine Aussage ("Label fehlt"), '' ist keine.
+  const REPORTING_UNBEKANNT = 'UNKNOWN';
+
+  // Presto schreibt boolean als true/false; ein typisierter NULL-Platzhalter
+  // (Bloecke TIME und CONV) kommt als leeres Feld an. null statt false, weil
+  // "nicht erhoben" und "nicht gesetzt" fachlich verschieden sind: tds_started
+  // = false heisst "3DS nicht gestartet", leer heisst "in diesem Block gar
+  // nicht ausgewiesen". Ein unerwarteter Wert ergibt ebenfalls null - lieber
+  // unbekannt als falsch einsortiert.
+  function parseBool(value) {
+    const s = String(value == null ? '' : value).trim().toLowerCase();
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+    return null;
+  }
+
+  function parseReportingCsv(text) {
+    const leer = { dim: [], time: [], conv: [] };
+    const zeilen = csvZuZeilen(text);
+    if (!zeilen.length) {
+      return {
+        rows: leer, headers: [], unbekannteBloecke: 0,
+        error: new Error('Das Ergebnis ist leer – keine Kopfzeile gefunden.'),
+      };
+    }
+    const headers = zeilen[0].map(h => String(h || '').trim().toLowerCase());
+    const fehlend = REPORTING_PFLICHT.filter(s => headers.indexOf(s) === -1);
+    if (fehlend.length) {
+      return {
+        rows: leer, headers, unbekannteBloecke: 0,
+        error: new Error('Im Ergebnis fehlen Pflichtspalten: ' + fehlend.join(', ')),
+      };
+    }
+    const idx = {};
+    headers.forEach((h, i) => { idx[h] = i; });
+
+    const roh = (z, name) => String(z[idx[name]] == null ? '' : z[idx[name]]).trim();
+    // Dimensionswert: leer -> UNKNOWN. Gilt auch fuer Spalten, die gar nicht in
+    // der CSV stehen (Terminal-Variante nicht gelaufen) - idx[name] ist dann
+    // undefined, z[undefined] ebenfalls, und der Wert wird UNKNOWN.
+    const dim = (z, name) => roh(z, name) || REPORTING_UNBEKANNT;
+    const betrag = (z, name) => parseAmount(z[idx[name]]);
+    const zahl = (z, name) => parseCount(z[idx[name]]);
+
+    const rows = { dim: [], time: [], conv: [] };
+    let unbekannteBloecke = 0;
+
+    for (let i = 1; i < zeilen.length; i++) {
+      const z = zeilen[i];
+      // Die Analytics-CSV endet mit einer Leerzeile; die faellt hier weg.
+      if (!z || z.length === 1 && String(z[0] || '').trim() === '') continue;
+      const block = roh(z, 'block').toUpperCase();
+
+      // Jeder Block bekommt seine EIGENE Zeilenform, statt alle 26 Spalten
+      // ueberall mitzuschleppen: TIME und CONV fuehren die DIM-Spalten nur als
+      // typisierte NULL-Platzhalter (das verlangt UNION ALL), sie sind dort
+      // also keine fehlenden Werte, sondern gar keine. Sie zu UNKNOWN zu
+      // machen waere eine erfundene Aussage.
+      if (block === 'DIM') {
+        rows.dim.push({
+          spaceId:          dim(z, 'space_id'),
+          channel:          dim(z, 'channel'),
+          brand:            dim(z, 'brand'),
+          wallet:           dim(z, 'wallet'),
+          waehrung:         dim(z, 'waehrung'),
+          attemptState:     dim(z, 'attempt_state'),
+          failureReasonId:  dim(z, 'failure_reason_id'),
+          authResponseCode: dim(z, 'auth_response_code'),
+          issuerCountry:    dim(z, 'issuer_country'),
+          cardCategory:     dim(z, 'card_category'),
+          funding:          dim(z, 'funding'),
+          panType:          dim(z, 'pan_type'),
+          eci:              dim(z, 'eci'),
+          dcc:              parseBool(roh(z, 'dcc')),
+          tdsStarted:       parseBool(roh(z, 'tds_started')),
+          tdsCavv:          parseBool(roh(z, 'tds_cavv')),
+          // Nur in der Terminal-Variante (01b) vorhanden; sonst UNKNOWN.
+          terminalIdentifier: dim(z, 'terminal_identifier'),
+          terminalName:       dim(z, 'terminal_name'),
+          attempts:         zahl(z, 'anzahl_attempts'),
+          transaktionen:    zahl(z, 'anzahl_transaktionen'),
+          betrag:           betrag(z, 'summe_betrag'),
+          betragFailed:     betrag(z, 'summe_betrag_failed'),
+          refund:           betrag(z, 'summe_refund'),
+        });
+      } else if (block === 'TIME') {
+        const stunde = parseInt(roh(z, 'stunde'), 10);
+        rows.time.push({
+          spaceId:      dim(z, 'space_id'),
+          channel:      dim(z, 'channel'),
+          brand:        dim(z, 'brand'),
+          waehrung:     dim(z, 'waehrung'),
+          attemptState: dim(z, 'attempt_state'),
+          tag:          dim(z, 'tag'),
+          // Bewusst null statt 0: 0 ist eine gueltige Stunde (Mitternacht), ein
+          // fehlender Wert wuerde sich sonst still in diesen Eimer legen.
+          stunde:       Number.isFinite(stunde) ? stunde : null,
+          attempts:     zahl(z, 'anzahl_attempts'),
+          betrag:       betrag(z, 'summe_betrag'),
+        });
+      } else if (block === 'CONV') {
+        rows.conv.push({
+          spaceId:        dim(z, 'space_id'),
+          channel:        dim(z, 'channel'),
+          brand:          dim(z, 'brand'),
+          waehrung:       dim(z, 'waehrung'),
+          txMitAttempt:   zahl(z, 'tx_mit_attempt'),
+          txErfolgreich:  zahl(z, 'tx_erfolgreich'),
+        });
+      } else {
+        // Unbekannter block-Wert: NICHT still verwerfen und erst recht nicht
+        // raten. Erst der Block sagt, welche Spalten dieser Zeile ueberhaupt
+        // eine Bedeutung haben - ohne ihn liesse sich die Zeile nur falsch
+        // einsortieren. Ein Fehler ist es trotzdem nicht (die uebrigen Bloecke
+        // bleiben auswertbar), deshalb nur gezaehlt: der Zaehler macht den
+        // Verlust sichtbar, statt ihn zu verschweigen.
+        unbekannteBloecke++;
+      }
+    }
+    return { rows, headers, unbekannteBloecke, error: null };
+  }
+
   // --- Settlement-Report: Modell -------------------------------------------
   // Gruppiert wird nach (Space, Valutazeitpunkt) aus settlement_valuedate,
   // gefiltert wurde in der Query nach Transaktionsdatum. Genau daraus entsteht
