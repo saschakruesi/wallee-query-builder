@@ -135,6 +135,20 @@ const EXPORTED = [
   // Zeitraum/Spaces fuer die Bloecke - Step 7 haengt daran (siehe §6.2 des Berichts).
   'reportingExportOptionen',
   'aktualisiereReportingInputs',
+  // Reporting-Ausgabe (Task 5b): Zellformatierung, Balken-SVG, CSV und
+  // PDF-Layout. Alles reine Funktionen; nur der XLSX-Schreiber braucht den
+  // Vendor-Block und wird deshalb in test/reporting-xlsx.test.js separat
+  // geladen (Muster test/report-xlsx.test.js).
+  'formatProzentCH',
+  'reportingZellText',
+  'svgBalken',
+  'reportingBalkenSerien',
+  'buildReportingReportCsv',
+  'reportingPdfBloecke',
+  // Naht auf die Ausgabe EINES Blocks - nur so laesst sich ein von Hand
+  // gebauter Block mit zellFormate durch den Bildschirm-Pfad schicken
+  // (reportingExportBloecke traegt zellFormate heute nur an den Kacheln).
+  'reportingBlockHtml',
   'buildSettlementReportModel',
   'settlementExportBloecke',
   'buildSettlementReportCsv',
@@ -193,6 +207,9 @@ const EXPORTED = [
   'historyFuerModus',
   'historyLaden',
   'historySpeichern',
+  // DOM-gebunden, aber ueber den DOM-Ersatz pruefbar: welche Knoepfe eine
+  // Verlaufszeile je Modus traegt (Task 5b, Step 8).
+  'renderHistory',
   'submitUndReport',
   // Self-Update (Task 3), reine Funktion
   'istNeuer',

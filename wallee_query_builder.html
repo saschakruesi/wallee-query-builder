@@ -365,6 +365,36 @@
   .report-table tr.subtotal td { font-weight: 600; background: var(--panel-2); }
   .report-table tr.grand td { font-weight: 700; border-top: 2px solid var(--accent); }
   .report-output { margin-top: 10px; }
+
+  /* Reporting-Report: Kanal-Abschnitte, KPI-Kacheln und Balken. Alle Farben
+     ueber die :root-Variablen - auch im SVG, das seine Flaechen ueber
+     fill="var(--accent)" faerbt. */
+  .report-kanal {
+    margin: 26px 0 6px; font-size: 14px; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--accent-dark); font-weight: 700;
+    border-bottom: 2px solid var(--accent); padding-bottom: 4px;
+  }
+  .kpi-kacheln { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .kpi-kachel {
+    flex: 1 1 140px; min-width: 140px; background: var(--panel-2);
+    border: 1px solid var(--panel-3); border-radius: 8px; padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .kpi-label {
+    font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .kpi-wert {
+    font-size: 17px; font-weight: 600; color: var(--accent-dark);
+    font-variant-numeric: tabular-nums;
+  }
+  .balken-block { margin: 12px 0 0; }
+  .balken-block figcaption { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .balken { display: block; background: var(--panel-2); border-radius: 4px; }
+  .balken-achse {
+    display: flex; justify-content: space-between; font-size: 11px;
+    color: var(--muted); margin-top: 2px;
+  }
+
   .report-block { margin-top: 26px; }
   .report-block h3 { margin: 0 0 2px; font-size: 15px; }
   .report-outlet { margin-top: 16px; }
@@ -5971,6 +6001,208 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     return bloecke;
   }
 
+  // --- Reporting-Report: Ausgabe-Schicht -----------------------------------
+  // Hier - und NUR hier - werden die rohen Blockwerte formatiert. Die Bloecke
+  // oben fuehren Betraege als 1e-8-Ganzzahlen und Prozente in voller
+  // Genauigkeit (bewusst, siehe Kommentar an reportingExportBloecke).
+  // Bildschirm, CSV, Excel und PDF sitzen alle vier auf derselben Blockliste
+  // auf und unterscheiden sich nur darin, WIE sie eine Zelle ausgeben.
+  //
+  // Zwei Regeln gelten fuer jede der vier Ausgaben:
+  //  1. Das Format einer Zelle kommt ueber reportingZellFormat(block, r, c),
+  //     nie ueber block.kopf[c].format - die Wert-Spalte der Kacheln traegt
+  //     das nicht renderbare 'gemischt'.
+  //  2. Zahlformat von Hand (formatIntCH/formatAmountCH/formatProzentCH),
+  //     nie toLocaleString - dessen Tausendertrennung haengt an der
+  //     ICU-Version des Browsers.
+
+  // Prozentwert mit EINER Nachkommastelle (SPEC 4). Eigene Funktion neben
+  // formatZahlCH (zwei Stellen) und formatAmountCH (1e-8-Einheiten): die drei
+  // bedienen verschiedene Eingabe-Domaenen und sollen sich nicht gegenseitig
+  // umrechnen muessen.
+  function formatProzentCH(n) {
+    const wert = Number(n) || 0;
+    const negativ = wert < 0;
+    const zehntel = Math.round(Math.abs(wert) * 10);
+    const ganz = Math.floor(zehntel / 10);
+    return (negativ && zehntel !== 0 ? '-' : '') + gruppiere(String(ganz)) + '.' + (zehntel % 10);
+  }
+
+  // "Keine Grundlage" - der Nenner war 0. Bewusst ein sichtbares Zeichen und
+  // keine leere Zelle: leer heisst in den Bloecken "gehoert zur Zeile darueber"
+  // (Fortsetzungszeile einer Waehrungsgruppe), und die beiden Aussagen duerfen
+  // nicht zusammenfallen.
+  const REPORTING_OHNE_GRUNDLAGE = '—';
+
+  function reportingZellText(wert, format) {
+    if (wert === '' || wert === undefined) return '';
+    if (wert === null) return REPORTING_OHNE_GRUNDLAGE;
+    if (typeof wert === 'number') {
+      if (format === 'zahl') return formatIntCH(wert);
+      if (format === 'betrag') return formatAmountCH(wert);
+      if (format === 'pct') return formatProzentCH(wert) + ' %';
+      if (format === 'faktor') return formatZahlCH(wert);
+    }
+    return String(wert);
+  }
+
+  // Wert einer Zelle fuer die maschinenlesbaren Ausgaben (CSV, Excel): Zahlen
+  // bleiben Zahlen, damit dort gerechnet und sortiert werden kann. Betraege
+  // kommen aus den 1e-8-Einheiten herunter, Prozente werden auf eine
+  // Nachkommastelle gerundet - sonst behauptete das Excel-Zahlformat 0.0"%"
+  // eine Genauigkeit, die die Zelle gar nicht hat.
+  function reportingZellZahl(wert, format) {
+    if (wert === '' || wert === null || wert === undefined) return '';
+    if (typeof wert !== 'number') return wert;
+    if (format === 'betrag') return unitsZuZahl(wert);
+    if (format === 'pct') return Math.round(wert * 10) / 10;
+    // Der Faktor wird wie auf dem Bildschirm (formatZahlCH) auf zwei Stellen
+    // gerundet. Alle vier Ausgaben kommen aus derselben Blockliste und sollen
+    // dieselbe Zahl zeigen - eine CSV mit 1.105793450881612 neben einem PDF
+    // mit 1.11 laesst den Leser raten, welche der beiden gilt.
+    if (format === 'faktor') return Math.round(wert * 100) / 100;
+    return wert;
+  }
+
+  // --- Balken als inline-SVG ------------------------------------------------
+  // Kein Chart-Vendor (SPEC 5): die Datei ist mit den beiden bestehenden
+  // Vendor-Bloecken bereits ~1.06 MB gross, und ein Balkendiagramm sind ein
+  // paar <rect>. Farben ausschliesslich ueber die :root-Variablen.
+  const SVG_BALKEN_STANDARD = { breite: 640, hoehe: 90 };
+  // Whitelist statt freier Farbangabe: so kann kein Aufrufer versehentlich ein
+  // Inline-Hex ins SVG schreiben.
+  const SVG_BALKEN_FARBEN = { accent: 'var(--accent)', 'accent-dark': 'var(--accent-dark)',
+    muted: 'var(--muted)', danger: 'var(--danger)' };
+
+  // werte: Zahlen. optionen: { breite, hoehe, max, farbe, beschriftung }.
+  // max setzt eine feste Obergrenze (Quoten gehoeren auf eine 0-100-Achse,
+  // sonst sieht ein Tag mit 61 % neben lauter 60ern wie ein Volltreffer aus);
+  // ohne max skaliert die Reihe auf ihr eigenes Maximum.
+  function svgBalken(werte, optionen) {
+    const liste = Array.isArray(werte) ? werte : [];
+    if (!liste.length) return '';
+    const opt = optionen || {};
+    const breite = Number(opt.breite) > 0 ? Number(opt.breite) : SVG_BALKEN_STANDARD.breite;
+    const hoehe = Number(opt.hoehe) > 0 ? Number(opt.hoehe) : SVG_BALKEN_STANDARD.hoehe;
+    // Nicht-Zahlen (null = keine Grundlage, '' = Fortsetzungszeile) und
+    // negative Werte zaehlen als 0. Eine Luecke statt eines Nullbalkens
+    // verschoebe alle folgenden Tage auf der Achse.
+    const zahlen = liste.map(v => (typeof v === 'number' && isFinite(v) && v > 0 ? v : 0));
+    const max = Number(opt.max) > 0 ? Number(opt.max) : Math.max(...zahlen);
+    const farbe = SVG_BALKEN_FARBEN[opt.farbe] || SVG_BALKEN_FARBEN.accent;
+    const slot = breite / zahlen.length;
+    const bBreite = rundeSvg(Math.max(1, slot * 0.7));
+    const rects = zahlen.map((v, i) => {
+      // max === 0 (lauter Nullen) darf keine Division sein - ein NaN im
+      // height-Attribut macht das ganze SVG unbrauchbar.
+      const h = max > 0 ? rundeSvg((v / max) * hoehe) : 0;
+      const x = rundeSvg(i * slot + (slot - bBreite) / 2);
+      return `<rect x="${x}" y="${rundeSvg(hoehe - h)}" width="${bBreite}" height="${h}" fill="${farbe}"></rect>`;
+    }).join('');
+    const label = opt.beschriftung
+      ? ` role="img" aria-label="${escapeHtml(String(opt.beschriftung))}"` : ' aria-hidden="true"';
+    return `<svg class="balken" viewBox="0 0 ${rundeSvg(breite)} ${rundeSvg(hoehe)}" `
+      + `width="100%" height="${rundeSvg(hoehe)}" preserveAspectRatio="none"${label}>${rects}</svg>`;
+  }
+
+  function rundeSvg(n) { return Math.round(n * 100) / 100; }
+
+  // Welche Spalten eines 'balken'-Blocks als Balken taugen. Reine Funktion,
+  // damit die Auswahl ohne DOM pruefbar bleibt.
+  function reportingBalkenSerien(block) {
+    // Fortsetzungszeilen (leere erste Spalte) gehoeren zur Zeile darueber und
+    // haetten auf der Achse keinen eigenen Platz.
+    const zeilen = (block.zeilen || []).filter(z => z[0] !== '' && z[0] !== null && z[0] !== undefined);
+    const achse = zeilen.map(z => String(z[0]));
+    const serien = [];
+    // Erste Zaehler-Spalte nach der Achse: das ist "Attempts" in beiden
+    // balken-Bloecken (Verlauf, Stunden).
+    const zahlIdx = block.kopf.findIndex((k, c) => c > 0 && k.format === 'zahl');
+    if (zahlIdx > 0 && zeilen.length) {
+      serien.push({ label: block.kopf[zahlIdx].label, format: 'zahl',
+        werte: zeilen.map(z => z[zahlIdx]) });
+    }
+    // Die Quote nur, wenn sie fuer JEDE Zeile eine Grundlage hat: null heisst
+    // "kein Nenner" (eine Stunde ganz ohne Versuch), und ein Nullbalken
+    // behauptete an dieser Stelle 0 % Erfolg - eine Messung, die es nicht gibt.
+    const pctIdx = block.kopf.findIndex((k, c) => c > 0 && k.format === 'pct');
+    if (pctIdx > 0 && zeilen.length && zeilen.every(z => typeof z[pctIdx] === 'number')) {
+      serien.push({ label: block.kopf[pctIdx].label, format: 'pct', max: 100,
+        werte: zeilen.map(z => z[pctIdx]) });
+    }
+    return { achse, serien };
+  }
+
+  // --- Reporting-Report: CSV ------------------------------------------------
+  // Gleicher Aufbau wie buildSettlementReportCsv: Blocktitel, Spaltenkopf,
+  // Zeilen, Hinweis - Semikolon getrennt und mit BOM. Zahlen bleiben
+  // maschinenlesbar (Punkt als Dezimaltrenner, keine Tausendertrennung),
+  // sonst bricht der Import.
+  function buildReportingReportCsv(modell, optionen) {
+    const zeilen = [];
+    reportingExportBloecke(modell, optionen).forEach((block, i) => {
+      if (i > 0) zeilen.push('');
+      zeilen.push(csvFeld(block.titel));
+      if (block.kopf.length) {
+        zeilen.push(block.kopf.map(k => csvFeld(k.label)).join(';'));
+        block.zeilen.forEach((r, ri) => zeilen.push(r.map((wert, c) =>
+          csvFeld(reportingZellZahl(wert, reportingZellFormat(block, ri, c)))).join(';')));
+      }
+      if (block.hinweis) zeilen.push(csvFeld(block.hinweis));
+    });
+    return CSV_BOM + zeilen.join('\r\n') + '\r\n';
+  }
+
+  // --- Reporting-Report: PDF-Layout ----------------------------------------
+  // Reine Beschreibung wie settlementPdfBloecke: Titel, Kopfzeilen, Tabellen
+  // mit FERTIGEN Strings. Erst exportReportingPdf() weiter unten fuettert
+  // damit jsPDF - so bleibt das Layout ohne den Vendor-Block testbar.
+  //
+  // Balken stehen bewusst NICHT im PDF: autotable kann kein SVG, und ein
+  // Rasterbild waere ein dritter Vendor. Die Zahlen der Balken-Bloecke stehen
+  // vollstaendig in ihrer Tabelle.
+  function reportingPdfTabelle(block, titel, seitenumbruchDavor) {
+    return {
+      titel,
+      header: block.kopf.map(k => k.label),
+      rows: block.zeilen.map((r, ri) => r.map((wert, c) =>
+        reportingZellText(wert, reportingZellFormat(block, ri, c)))),
+      ausrichtung: block.kopf.map(k => (k.format === 'text' ? 'left' : 'right')),
+      hinweis: block.hinweis || '',
+      seitenumbruchDavor: !!seitenumbruchDavor,
+      // Bloecke ohne Spalten (die Hinweisbloecke aus SPEC 7) tragen nur ihren
+      // Hinweis - autoTable bekaeme sonst einen Kopf ohne Spalten.
+      nurHinweis: block.kopf.length === 0,
+    };
+  }
+
+  function reportingPdfBloecke(modell, optionen) {
+    const bloecke = reportingExportBloecke(modell, optionen);
+    const kopfzeilen = [];
+    const tabellen = [];
+    let letzterKanal = null;
+    let kapitel = 0;
+    bloecke.forEach(b => {
+      if (!b.kanal) {
+        // Der kanaluebergreifende Titelblock wird zur Kopfzeile des Dokuments;
+        // seine Prosa haengt als eigener Abschnitt darunter. Zweimal dieselbe
+        // Angabe auf einer Seite waere Fuellstoff.
+        b.zeilen.forEach(z => kopfzeilen.push(`${z[0]}: ${z[1]}`));
+        if (b.hinweis) {
+          tabellen.push(reportingPdfTabelle(
+            { kopf: [], zeilen: [], hinweis: b.hinweis }, 'Grundlagen', false));
+        }
+        return;
+      }
+      const neuerKanal = b.kanal !== letzterKanal;
+      if (neuerKanal) { letzterKanal = b.kanal; kapitel += 1; }
+      // Das Kapitel steht im Titel der ERSTEN Tabelle des Kanals - dieselbe
+      // Loesung wie beim Settlement-Report ("4. Detail pro Space — <id>").
+      tabellen.push(reportingPdfTabelle(b, neuerKanal ? `${kapitel}. ${b.titel}` : b.titel, neuerKanal));
+    });
+    return { titel: 'REPORTING-REPORT / MERCHANT KPI REPORT', kopfzeilen, tabellen };
+  }
+
   // --- Settlement-Report: Ansicht ------------------------------------------
   let settlementModell = null;
   let settlementZeitraum = { start: '', end: '', account: '' };
@@ -6393,6 +6625,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     export: 'Transaktions-Export',
     card: 'Kartensuche',
     settlement: 'Settlement / Auszahlung',
+    reporting: 'Reporting',
   };
   function modusLabel(mode) { return MODUS_LABELS[mode] || String(mode || ''); }
 
@@ -6757,6 +6990,11 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     });
   }
 
+  // Modi mit eigenem Report-Panel: dort gibt es Excel (und beim Settlement- und
+  // Reporting-Report zusaetzlich PDF) gebrandet aus dem Panel selbst, deshalb
+  // traegt ihre Verlaufszeile nur den Roh-CSV-Download.
+  const MODI_MIT_REPORT_PANEL = ['terminal', 'settlement', 'reporting'];
+
   function renderHistory() {
     const list = historyFuerModus(historyLaden(), state.mode);
     queryHistoryBody.innerHTML = '';
@@ -6774,12 +7012,13 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       const zeit = isNaN(dt.getTime()) ? (e.submittedAt || '')
         : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
       const zsf = escapeHtml([e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · '));
-      // Im Terminal- und im Settlement-Report deckt der Report-Export unten (mit
-      // Titel/Branding, XLSX/CSV/PDF) das Excel ab, und der Report erscheint nach
-      // dem Submit ohnehin - deshalb dort in der Verlaufszeile nur der Roh-CSV-
-      // Download. In den uebrigen Modi zusaetzlich der logikfreie Excel-Download.
+      // Im Terminal-, Settlement- und Reporting-Report deckt der Report-Export
+      // unten (mit Titel/Branding, XLSX/CSV/PDF) das Excel ab, und der Report
+      // erscheint nach dem Submit ohnehin - deshalb dort in der Verlaufszeile
+      // nur der Roh-CSV-Download. In den uebrigen Modi zusaetzlich der
+      // logikfreie Excel-Download.
       const acc = escapeHtml(e.account || '');
-      const xlsxBtn = (e.mode === 'terminal' || e.mode === 'settlement') ? ''
+      const xlsxBtn = MODI_MIT_REPORT_PANEL.includes(e.mode) ? ''
         : `<button class="btn" data-act="xlsx" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}" data-account="${acc}">Excel</button>`;
       tr.innerHTML =
         `<td>${escapeHtml(zeit)}</td><td>${escapeHtml(modusLabel(e.mode))}</td><td>${zsf}</td><td>${escapeHtml(e.status || '')}</td>` +
@@ -7774,11 +8013,82 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     };
   }
 
-  // PLATZHALTER. Die eigentliche Ausgabe (Kacheln, Tabellen, Balken als
-  // inline-SVG) folgt im naechsten Schritt; hier steht vorerst nur die
-  // Gliederung der Bloecke, damit der Ingest-Pfad end-to-end sichtbar ist.
-  // Vertrag fuer den Ersatz: reportingExportBloecke(modell, optionen) liefert
-  // die Bloecke, reportingZellFormat(block, r, c) das Format je Zelle.
+  // Ab wie vielen Zeilen eine Tabelle eingeklappt wird. Der Verlauf kann ueber
+  // ein Jahr laufen und die Stundenachse hat immer 24 Zeilen - beides wuerde
+  // die Uebersicht erschlagen. Gleiche Ueberlegung wie beim Transaktionsdetail
+  // des Settlement-Reports, nur mit einer kleineren Schwelle. 20 liegt bewusst
+  // unter den 24 Stunden und ueber der laengsten Sachtabelle (Top-10 Laender).
+  const REPORTING_TABELLE_OFFEN = 20;
+
+  function reportingTabelleHtml(block) {
+    const kopf = block.kopf.map(k =>
+      `<th${k.format === 'text' ? '' : ' class="num"'}>${escapeHtml(k.label)}</th>`).join('');
+    const zeilen = block.zeilen.map((r, ri) => '<tr>' + r.map((wert, c) => {
+      // reportingZellFormat statt kopf[c].format: die Kacheln mischen in ihrer
+      // Wert-Spalte Zaehler, Prozente und Betraege.
+      const format = reportingZellFormat(block, ri, c);
+      return `<td${format === 'text' ? '' : ' class="num"'}>`
+        + `${escapeHtml(reportingZellText(wert, format))}</td>`;
+    }).join('') + '</tr>').join('');
+    return `<table class="report-table"><thead><tr>${kopf}</tr></thead><tbody>${zeilen}</tbody></table>`;
+  }
+
+  // Kacheln: Kennzahl / Wert / Waehrung. Die Waehrung steht vor dem Betrag,
+  // damit keine Kachel eine Zahl ohne ihre Einheit zeigt.
+  function reportingKachelnHtml(block) {
+    const kacheln = block.zeilen.map((z, r) => {
+      const wert = reportingZellText(z[1], reportingZellFormat(block, r, 1));
+      const waehrung = String(z[2] == null ? '' : z[2]);
+      return '<div class="kpi-kachel">'
+        + `<span class="kpi-label">${escapeHtml(String(z[0] == null ? '' : z[0]))}</span>`
+        + `<span class="kpi-wert">${escapeHtml(waehrung ? `${waehrung} ${wert}` : wert)}</span></div>`;
+    }).join('');
+    return `<div class="kpi-kacheln">${kacheln}</div>`;
+  }
+
+  function reportingBalkenHtml(block) {
+    const { achse, serien } = reportingBalkenSerien(block);
+    if (!achse.length || !serien.length) return '';
+    const achsenName = block.kopf.length ? block.kopf[0].label : '';
+    return serien.map(s => {
+      const svg = svgBalken(s.werte, {
+        hoehe: s.format === 'pct' ? 60 : 90,
+        max: s.max,
+        farbe: s.format === 'pct' ? 'accent-dark' : 'accent',
+        beschriftung: `${s.label} je ${achsenName}`,
+      });
+      if (!svg) return '';
+      // Ohne feste Obergrenze skaliert die Reihe auf ihr eigenes Maximum - das
+      // gehoert dazugeschrieben, sonst laesst sich die Balkenhoehe nicht lesen.
+      const spitze = s.max
+        ? `Skala 0–${reportingZellText(s.max, s.format === 'pct' ? 'zahl' : s.format)}`
+          + (s.format === 'pct' ? ' %' : '')
+        : `Maximum ${reportingZellText(Math.max(...s.werte.map(v => (typeof v === 'number' ? v : 0))), s.format)}`;
+      return '<figure class="balken-block">'
+        + `<figcaption>${escapeHtml(s.label)} · ${escapeHtml(spitze)}</figcaption>${svg}`
+        + `<div class="balken-achse"><span>${escapeHtml(achse[0])}</span>`
+        + `<span>${escapeHtml(achse[achse.length - 1])}</span></div></figure>`;
+    }).join('');
+  }
+
+  function reportingBlockHtml(block) {
+    const titel = `<h3>${escapeHtml(block.titel)}</h3>`;
+    const hinweis = block.hinweis ? `<p class="hint">${escapeHtml(block.hinweis)}</p>` : '';
+    // Hinweisblock (kopf: [], zeilen: []) - nur seine Aussage, keine Tabelle.
+    // Ein Kopf ohne Spalten waere ein Rahmen um ein Nichts.
+    if (!block.kopf.length) return titel + hinweis;
+    if (block.typ === 'kacheln') return titel + reportingKachelnHtml(block) + hinweis;
+    const balken = block.typ === 'balken' ? reportingBalkenHtml(block) : '';
+    const tabelle = block.zeilen.length > REPORTING_TABELLE_OFFEN
+      ? `<details><summary>Tabelle (${formatIntCH(block.zeilen.length)} Zeilen)</summary>`
+        + `${reportingTabelleHtml(block)}</details>`
+      : reportingTabelleHtml(block);
+    return titel + balken + tabelle + hinweis;
+  }
+
+  // Bildschirm-Ausgabe: Titelblock voran, danach ein Abschnitt je Kanal
+  // (gruppiert ueber block.kanal, nicht ueber den Titel - der Kanal steht dort
+  // zwar auch drin, aber nur damit die XLSX-Blattnamen eindeutig bleiben).
   function renderReportingReport() {
     if (!reportingModell) {
       reportingReportOutput.innerHTML = '';
@@ -7786,10 +8096,18 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       return;
     }
     const bloecke = reportingExportBloecke(reportingModell, reportingExportOptionen());
-    reportingReportOutput.innerHTML = bloecke.map(b =>
-      `<h3>${escapeHtml(b.titel)}</h3>`
-      + `<p class="hint">${escapeHtml(b.kanal ? REPORTING_KANAL_LABEL[b.kanal] || b.kanal : 'gesamt')}`
-      + ` · ${formatIntCH(b.zeilen.length)} Zeilen · ${escapeHtml(b.typ)}</p>`).join('');
+    const teile = [];
+    let letzterKanal = null;
+    bloecke.forEach(b => {
+      if (b.kanal !== letzterKanal) {
+        letzterKanal = b.kanal;
+        if (b.kanal) {
+          teile.push(`<h2 class="report-kanal">${escapeHtml(REPORTING_KANAL_LABEL[b.kanal] || b.kanal)}</h2>`);
+        }
+      }
+      teile.push(reportingBlockHtml(b));
+    });
+    reportingReportOutput.innerHTML = teile.join('');
     reportingReportActions.classList.remove('hidden');
   }
 
@@ -7844,16 +8162,169 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     return ok;
   }
 
-  // PLATZHALTER. Die drei Exporte (CSV roh, Excel je Kanal, PDF) folgen im
-  // naechsten Schritt und sitzen dann - wie beim Settlement-Report - auf
-  // reportingExportBloecke() auf. Bis dahin sagt der Knopf ehrlich, dass er
-  // noch nichts liefert, statt still nichts zu tun.
-  function reportingExportNochNicht(was) {
-    showToast(`${was}-Export für den Reporting-Report folgt noch.`, true);
+  // --- Reporting-Report: die drei Exporte ----------------------------------
+  // Alle drei sitzen auf reportingExportBloecke() auf - vier Ausgaben aus einer
+  // Quelle, wie beim Terminal- und beim Settlement-Report. XLSX und PDF laufen
+  // ueber die eingebetteten Vendor-Bloecke und deshalb ausschliesslich hier,
+  // im Event-Pfad; die reinen Funktionen oben bleiben vendorfrei.
+  function reportingDateiname(endung) {
+    const d = new Date();
+    const stempel = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return `reporting-report_${stempel}.${endung}`;
   }
-  function exportReportingCsv()  { reportingExportNochNicht('CSV'); }
-  function exportReportingXlsx() { reportingExportNochNicht('Excel'); }
-  function exportReportingPdf()  { reportingExportNochNicht('PDF'); }
+
+  function exportReportingCsv() {
+    if (!reportingModell) return;
+    downloadDatei(buildReportingReportCsv(reportingModell, reportingExportOptionen()),
+      reportingDateiname('csv'), 'text/csv;charset=utf-8');
+  }
+
+  // Excel-Zahlformate je Blockformat. 0.0"%" zeigt den Wert mit genau einer
+  // Nachkommastelle und haengt das Prozentzeichen an, OHNE ihn wie das
+  // eingebaute Format 0.0% mit 100 zu multiplizieren - die Bloecke fuehren
+  // bereits Werte von 0 bis 100.
+  const REPORTING_XLSX_FORMAT = { betrag: '#,##0.00', zahl: '#,##0', pct: '0.0"%"', faktor: '0.00' };
+
+  // Ein Blatt je Kanal, die Abschnitte darin untereinander gestapelt (Muster
+  // exportReportXlsx beim Terminal-Report), statt ein Blatt je Block: der
+  // Fixture-Bericht haette sonst 34 Tabs. Der kanaluebergreifende Titelblock
+  // bekommt sein eigenes, vorangestelltes Blatt.
+  function exportReportingXlsx() {
+    if (!reportingModell) return;
+    const bloecke = reportingExportBloecke(reportingModell, reportingExportOptionen());
+    const wb = XLSX.utils.book_new();
+    const d = new Date();
+    const datum = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+
+    const gruppen = [];
+    bloecke.forEach(b => {
+      const schluessel = b.kanal || '';
+      let g = gruppen.find(x => x.kanal === schluessel);
+      if (!g) { g = { kanal: schluessel, bloecke: [] }; gruppen.push(g); }
+      g.bloecke.push(b);
+    });
+
+    gruppen.forEach(gruppe => {
+      const maxCols = Math.max(1, ...gruppe.bloecke.map(b => b.kopf.length));
+      const aoa = [];
+      const stile = [];               // { r, c, s, z } - nach aoa_to_sheet angewandt
+      const merges = [];
+      const spanne = r => merges.push({ s: { r, c: 0 }, e: { r, c: maxCols - 1 } });
+
+      aoa.push(['wallee — Reporting-Report']); spanne(0);
+      stile.push({ r: 0, c: 0, s: { font: { bold: true, sz: 14, color: { rgb: XLSX_FARBE.text } },
+        alignment: { horizontal: 'left', vertical: 'center' } } });
+      aoa.push([`Erstellt am ${datum}`]); spanne(1);
+      stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: '6B7A79' } } } });
+      aoa.push([]);
+      let r = 3;
+
+      gruppe.bloecke.forEach(block => {
+        aoa.push([block.titel]); spanne(r);
+        stile.push({ r, c: 0, s: { font: { bold: true, sz: 12, color: { rgb: XLSX_FARBE.text } } } });
+        r++;
+        if (block.kopf.length) {
+          aoa.push(block.kopf.map(k => k.label));
+          for (let c = 0; c < block.kopf.length; c++) stile.push({ r, c, s: xlsxKopfStil() });
+          r++;
+          block.zeilen.forEach((zeile, i) => {
+            const zebra = i % 2 === 1;
+            aoa.push(zeile.map((wert, c) => reportingZellZahl(wert, reportingZellFormat(block, i, c))));
+            zeile.forEach((wert, c) => {
+              const format = REPORTING_XLSX_FORMAT[reportingZellFormat(block, i, c)] || null;
+              stile.push({ r, c, s: xlsxZellStil(zebra, !!format, format), z: format });
+            });
+            r++;
+          });
+        }
+        if (block.hinweis) {
+          aoa.push([block.hinweis]); spanne(r);
+          stile.push({ r, c: 0,
+            s: { font: { color: { rgb: XLSX_FARBE.text }, italic: true, sz: 9 } } });
+          r++;
+        }
+        aoa.push([]); r++;            // Leerzeile zwischen den Abschnitten
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!merges'] = merges;
+      stile.forEach(op => {
+        const zelle = ws[XLSX.utils.encode_cell({ r: op.r, c: op.c })];
+        if (!zelle) return;
+        if (op.s) zelle.s = op.s;
+        if (op.z && zelle.t === 'n') zelle.z = op.z;
+      });
+      ws['!cols'] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 26 : 15 }));
+      XLSX.utils.book_append_sheet(wb, ws,
+        xlsxBlattName(gruppe.kanal ? (REPORTING_KANAL_LABEL[gruppe.kanal] || gruppe.kanal) : 'Reporting'));
+    });
+
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    downloadDatei(
+      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      reportingDateiname('xlsx'),
+    );
+  }
+
+  // Muster exportSettlementPdf. Bewusst eine eigene Schleife statt einer
+  // gemeinsamen: der Settlement-Export ist ausgeliefert und getestet, und ein
+  // geteilter Schreiber haette sein Verhalten mit angefasst.
+  function exportReportingPdf() {
+    if (!reportingModell) return;
+    const p = reportingPdfBloecke(reportingModell, reportingExportOptionen());
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+    doc.setFontSize(16);
+    doc.text(p.titel, 40, 50);
+    doc.setFontSize(9);
+    p.kopfzeilen.forEach((z, i) => doc.text(z, 40, 68 + i * 12));
+
+    let y = 68 + p.kopfzeilen.length * 12 + 16;
+    p.tabellen.forEach(tab => {
+      if (tab.seitenumbruchDavor) { doc.addPage(); y = 50; }
+      // Gleiche Schwelle und dieselbe Begruendung wie beim Settlement-PDF:
+      // reicht der Platz nicht mehr fuer Titel UND Kopfzeile, stuende der
+      // Titel sonst verwaist am Seitenende.
+      const MIN_PLATZ_FUER_TITEL = 70;
+      if (!tab.seitenumbruchDavor
+        && y + MIN_PLATZ_FUER_TITEL > doc.internal.pageSize.getHeight() - 40) {
+        doc.addPage();
+        y = 50;
+      }
+      doc.setFontSize(11);
+      doc.text(tab.titel, 40, y);
+      y += 8;
+      if (!tab.nurHinweis) {
+        const spalten = {};
+        tab.ausrichtung.forEach((a, i) => { spalten[i] = { halign: a }; });
+        // Breite Tabellen (Zahlungsmittel mit neun Spalten, Beztraege je
+        // Waehrung mit elf) sprengen bei Schriftgroesse 8 die nutzbaren 515pt.
+        const schrift = tab.header.length >= 9 ? 7 : 8;
+        doc.autoTable({
+          head: [tab.header],
+          body: tab.rows,
+          startY: y,
+          margin: { left: 40, right: 40 },
+          styles: { fontSize: schrift, cellPadding: 3 },
+          headStyles: { fillColor: [17, 217, 204], textColor: [255, 255, 255] },
+          alternateRowStyles: { fillColor: [241, 251, 250] },
+          columnStyles: spalten,
+        });
+        y = doc.lastAutoTable.finalY + 20;
+      } else {
+        y += 6;
+      }
+      if (tab.hinweis) {
+        doc.setFontSize(8);
+        const zeilen = doc.splitTextToSize(tab.hinweis, 515);
+        doc.text(zeilen, 40, y);
+        y += zeilen.length * 10 + 14;
+      }
+    });
+
+    doc.save(reportingDateiname('pdf'));
+  }
 
   // --- Event bindings: Reporting -------------------------------------------
   function reportingKanalSetzen(wahl) {
