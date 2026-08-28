@@ -66,8 +66,17 @@ test('Zeitfilter auf ca.createdon, halboffenes Intervall', () => {
   assert.doesNotMatch(s, /t\.completedon/);
 });
 
-test('Nur PRODUCTION-Attempts', () => {
-  assert.match(sql(), /ca\.environment = 'PRODUCTION'/);
+test('Nur PRODUCTION-Attempts - in BEIDEN CTEs, nicht nur im tx-CTE', () => {
+  const s = sql();
+  // assert.match allein genuegt hier nicht: der Filter steht zweimal - einmal
+  // im vorgelagerten tx-CTE (Unterbau des Trinkgeld-Joins) und einmal im
+  // att-CTE, das entscheidet, was tatsaechlich gezaehlt wird. Faellt er im
+  // att-CTE weg, blieben Testtransaktionen in jeder Quote, und ein blosses
+  // match bliebe wegen des tx-CTE gruen. Dieselbe Technik wie bei
+  // tip.tip_amount und beim CAVV-Descriptor.
+  assert.strictEqual(s.split("ca.environment = 'PRODUCTION'").length - 1, 2);
+  const att = s.slice(s.indexOf('att AS ('), s.indexOf("'DIM'"));
+  assert.match(att, /ca\.environment = 'PRODUCTION'/);
 });
 
 test('Space-Filter ueber spaceInClause auf ca.spaceid', () => {

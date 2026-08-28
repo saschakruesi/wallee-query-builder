@@ -213,6 +213,23 @@ test('ingestReportingCsv meldet einen Parserfehler, statt zu werfen', () => {
   assert.ok(!sichtbar(el('reportingReportActions')), 'Ohne Modell keine Export-Aktionen');
 });
 
+test('Die Statuszeile meldet Werte im unerwarteten Format', () => {
+  // Der einzige Verlustkanal ohne Zaehler war bisher das Zahlen-/Boolean-Format
+  // - und er trifft genau die Kennzahlen, die dann als saubere Nullen
+  // dastuenden (DCC 0 %, 3DS "nicht angefordert"). Die Meldung muss beim ersten
+  // Import kommen, nicht erst beim Vergleich mit dem Portal.
+  const { app, el } = starte({
+    wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }),
+  });
+  const kaputt = FIXTURE.replace(/"true"/g, '"1"').replace(/"false"/g, '"0"');
+  assert.strictEqual(app.ingestReportingCsv(kaputt), true, 'lesbar bleibt sie trotzdem');
+  assert.match(el('reportingStatus').textContent, /Werte im unerwarteten Format/);
+  // Gegenprobe: die unveraenderte Fixture darf nichts melden, sonst waere der
+  // Hinweis ein Dauerzustand und niemand liest ihn mehr.
+  assert.strictEqual(app.ingestReportingCsv(FIXTURE), true);
+  assert.doesNotMatch(el('reportingStatus').textContent, /unerwarteten Format/);
+});
+
 test('Das Haendler-Land aus dem State geht ins Modell', () => {
   const { app } = starte({
     wallee_query_builder_v6: JSON.stringify({
@@ -269,6 +286,34 @@ test('Im Settlement-Modus gilt der Override weiterhin', () => {
     }),
   });
   assert.strictEqual(app.aktiverAccount(), '99999');
+});
+
+// --- Verlaufszeile: der Modus hat einen eigenen Filter ---------------------
+test('Die Verlaufszeile nennt den Kanal - und Terminals nur, wo sie gelten', () => {
+  // Ohne eigenen Zweig stuende im Verlauf gar kein Filter, obwohl der Kanal die
+  // Query nachweislich einschraenkt. Und die Terminal-Auswahl darf nur dann
+  // auftauchen, wenn sie ueberhaupt gilt (dieselbe Bedingung wie in
+  // generate()): sonst verspraeche die Zeile eine Einschraenkung, die es
+  // nicht gibt.
+  const { app } = starte();
+  const st = (over) => Object.assign({
+    spaces: ['90001'], startDate: '2026-07-01', endDate: '2026-07-31',
+    terminals: [{ identifier: 'T-1', selected: true }, { identifier: 'T-2', selected: false }],
+    reportingChannel: 'BOTH', reportingByTerminal: false,
+  }, over);
+  const filter = over =>
+    app.historyEintragBauen('reporting', 'tok', st(over), '2026-01-01T00:00:00Z').filterSummary;
+
+  assert.strictEqual(filter({}), 'alle Kanäle');
+  assert.strictEqual(filter({ reportingChannel: 'POS' }), 'POS');
+  assert.strictEqual(filter({ reportingChannel: 'ECOM' }), 'E-Commerce');
+  // Terminal-Aufschluesselung an: die Auswahl gilt und gehoert in die Zeile.
+  assert.strictEqual(filter({ reportingChannel: 'POS', reportingByTerminal: true }),
+    'POS · 1 Terminal(s)');
+  // Im E-Commerce gibt es keine Terminals - das Panel ist dort auch mit
+  // gesetzter Checkbox aus, und die Zeile darf nichts anderes behaupten.
+  assert.strictEqual(filter({ reportingChannel: 'ECOM', reportingByTerminal: true }),
+    'E-Commerce');
 });
 
 // --- CSV-Import ist mit der Tastatur erreichbar ----------------------------

@@ -1768,13 +1768,25 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Labels ein Connector schreibt, ist connectorabhaengig, und ein falscher
   // Descriptor liefert stumm NULL statt eines Fehlers. Der Map-Key ist
   // ebenfalls descriptorabhaengig und steht als Kommentar dabei.
+  //
+  // Auch der Map-Key ist gemessen, nicht angenommen - und zwar dort, wo die
+  // Zusammenfassung in DESCRIPTORS.md ihn weglaesst, weil er dem Default
+  // entspricht. Belegstelle ist die Spalte `ohne_shorttext` der Discovery-Query
+  // Q2 (dashboard/sql/00_label_discovery.sql): sie zaehlt die Attempts, bei
+  // denen shortTextContent NULL ist. Fuer die vier Descriptors ohne Key-Vermerk
+  // unten steht dort 0, zusammen mit den erwarteten Werten - Ablehncode POS
+  // 14 Werte '00'..'Z3', Ablehncode E-Com 5 Werte, DCC 'EUR'/'SEK', Pan Type
+  // 5 Werte 'DEVICE_TOKEN_APPLE_PAY'..'SCHEME_TOKEN_CLICK_TO_PAY'. Zum
+  // Gegenbeispiel: dieselbe Spalte steht bei Issuer-Land, 3DS-Start und CAVV
+  // auf der vollen Attempt-Zahl bei 0 Werten - genau daran wurden ihre
+  // abweichenden Keys ueberhaupt erst erkannt.
   const DESC_ISSUER_COUNTRY     = '1474552618629'; // Issuer Country, countryContent (ISO-2)
   const DESC_CARD_TYPE          = '1474552618699'; // Issuer Card type, CREDIT/DEBIT
   const DESC_CARD_CATEGORY      = '1474552618999'; // Issuer Card category, Produktname (Business/Privat)
-  const DESC_AUTH_RESPONSE_POS  = '1579287790513'; // Authorization Response Code (ISO-8583, POS)
-  const DESC_AUTH_RESPONSE_ECOM = '15537739985478'; // Response Code des Processors (E-Commerce)
-  const DESC_DCC_CURRENCY       = '1695119783358'; // DCC Cardholder Currency (nur Existenz)
-  const DESC_PAN_TYPE           = '1634723429555'; // Pan Type (Klartext-PAN / Device-/Scheme-Token)
+  const DESC_AUTH_RESPONSE_POS  = '1579287790513'; // Authorization Response Code (ISO-8583, POS), shortTextContent (Q2: ohne_shorttext = 0)
+  const DESC_AUTH_RESPONSE_ECOM = '15537739985478'; // Response Code des Processors (E-Commerce), shortTextContent (Q2: ohne_shorttext = 0)
+  const DESC_DCC_CURRENCY       = '1695119783358'; // DCC Cardholder Currency, shortTextContent (Q2: ohne_shorttext = 0) - nur Existenz
+  const DESC_PAN_TYPE           = '1634723429555'; // Pan Type (Klartext-PAN / Device-/Scheme-Token), shortTextContent (Q2: ohne_shorttext = 0)
   const DESC_TDS_STARTED        = '1568637480278'; // 3-D Secure Process Started, dateTimeContent
   const DESC_TDS_CAVV           = '1569496536590'; // 3-D Secure CAVV, longTextContent - NUR Existenz, nie der Wert
   const DESC_ECI                = '1634723429552'; // Cryptogram Eci (02/05/06/07)
@@ -3448,7 +3460,12 @@ SELECT
     CAST(NULL AS date)                              AS tag,
     CAST(NULL AS integer)                           AS stunde,
     COUNT(*)                                        AS anzahl_attempts,
-    COUNT(DISTINCT transaction_id)                  AS anzahl_transaktionen,
+    -- Kein COUNT(DISTINCT transaction_id) hier: ueber DIM-Tupel hinweg ist er
+    -- nicht summierbar (dieselbe Transaktion steckt beim Retry in mehreren
+    -- Tupeln), das Modell nimmt die Transaktionszahl deshalb ausschliesslich
+    -- aus dem CONV-Block. Eine Spalte, die niemand lesen darf, kostet in Athena
+    -- ein DISTINCT ueber 16-18 Gruppierungsspalten - und im Parser eine
+    -- Pflichtspalte, die nichts absichert.
     CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
     CAST(SUM(amount_failed) AS decimal(38,8))       AS summe_betrag_failed,
     -- Bewusst in Kauf genommene Ungenauigkeit (SPEC 3.2): refundedamount haengt
@@ -3494,7 +3511,6 @@ SELECT
     date(created_on)                                AS tag,
     CAST(hour(created_on) AS integer)               AS stunde,
     COUNT(*)                                        AS anzahl_attempts,
-    CAST(NULL AS bigint)                            AS anzahl_transaktionen,
     CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
     CAST(NULL AS decimal(38,8))                     AS summe_refund,
@@ -3529,7 +3545,6 @@ SELECT
     CAST(NULL AS date)                              AS tag,
     CAST(NULL AS integer)                           AS stunde,
     CAST(NULL AS bigint)                            AS anzahl_attempts,
-    CAST(NULL AS bigint)                            AS anzahl_transaktionen,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
     CAST(NULL AS decimal(38,8))                     AS summe_refund,
@@ -3741,7 +3756,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     'block', 'space_id', 'channel', 'brand', 'wallet', 'waehrung', 'attempt_state',
     'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
     'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
-    'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
+    'anzahl_attempts', 'summe_betrag', 'summe_betrag_failed',
     'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
   ];
 
@@ -3764,12 +3779,25 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     return null;
   }
 
+  // Was die drei Wandler ueberhaupt lesen koennen. parseBool, parseAmount und
+  // parseCount koennen "nicht lesbar" nicht von "leer" bzw. "0" unterscheiden -
+  // sie liefern null oder 0, ohne Spur. Das ist der einzige Verlustkanal dieses
+  // Moduls ohne Zaehler: unbekannte Bloecke, unbrauchbare Tage und Stunden
+  // werden gemeldet, ein unerwartetes Zahlen- oder Boolean-Format bisher nicht.
+  // Die Query ist noch nie gegen echte Daten gelaufen (SPEC 8.6); schriebe
+  // Athena boolean als 1/0 oder Dezimalzahlen mit Komma, stuenden DCC- und
+  // 3DS-Kennzahlen sowie saemtliche Betraege dauerhaft auf 0 - und zwar als
+  // gemessen aussehende Nullen, was schlimmer ist als eine Fehlermeldung.
+  // Deshalb hier die Gegenprobe: nicht leer, aber nicht lesbar -> gezaehlt.
+  const REPORTING_MUSTER_BETRAG = /^-?(?:\d+(?:\.\d*)?|\.\d+)$/;
+  const REPORTING_MUSTER_ZAHL   = /^-?\d+$/;
+
   function parseReportingCsv(text) {
     const leer = { dim: [], time: [], conv: [] };
     const zeilen = csvZuZeilen(text);
     if (!zeilen.length) {
       return {
-        rows: leer, headers: [], unbekannteBloecke: 0,
+        rows: leer, headers: [], unbekannteBloecke: 0, unbrauchbareWerte: 0,
         error: new Error('Das Ergebnis ist leer – keine Kopfzeile gefunden.'),
       };
     }
@@ -3777,7 +3805,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     const fehlend = REPORTING_PFLICHT.filter(s => headers.indexOf(s) === -1);
     if (fehlend.length) {
       return {
-        rows: leer, headers, unbekannteBloecke: 0,
+        rows: leer, headers, unbekannteBloecke: 0, unbrauchbareWerte: 0,
         error: new Error('Im Ergebnis fehlen Pflichtspalten: ' + fehlend.join(', ')),
       };
     }
@@ -3789,11 +3817,30 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // der CSV stehen (Terminal-Variante nicht gelaufen) - idx[name] ist dann
     // undefined, z[undefined] ebenfalls, und der Wert wird UNKNOWN.
     const dim = (z, name) => roh(z, name) || REPORTING_UNBEKANNT;
-    const betrag = (z, name) => parseAmount(z[idx[name]]);
-    const zahl = (z, name) => parseCount(z[idx[name]]);
 
     const rows = { dim: [], time: [], conv: [] };
     let unbekannteBloecke = 0;
+    let unbrauchbareWerte = 0;
+
+    // Leer ist erlaubt und bedeutet etwas (typisierter NULL-Platzhalter der
+    // Bloecke TIME/CONV, SUM ueber lauter NULL); nicht leer und trotzdem
+    // unlesbar ist der Fall, der gemeldet gehoert.
+    const betrag = (z, name) => {
+      const s = roh(z, name);
+      if (s !== '' && !REPORTING_MUSTER_BETRAG.test(s)) unbrauchbareWerte++;
+      return parseAmount(s);
+    };
+    const zahl = (z, name) => {
+      const s = roh(z, name);
+      if (s !== '' && !REPORTING_MUSTER_ZAHL.test(s)) unbrauchbareWerte++;
+      return parseCount(s);
+    };
+    const bool = (z, name) => {
+      const s = roh(z, name);
+      const b = parseBool(s);
+      if (s !== '' && b === null) unbrauchbareWerte++;
+      return b;
+    };
 
     for (let i = 1; i < zeilen.length; i++) {
       const z = zeilen[i];
@@ -3824,14 +3871,13 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
           funding:          dim(z, 'funding'),
           panType:          dim(z, 'pan_type'),
           eci:              dim(z, 'eci'),
-          dcc:              parseBool(roh(z, 'dcc')),
-          tdsStarted:       parseBool(roh(z, 'tds_started')),
-          tdsCavv:          parseBool(roh(z, 'tds_cavv')),
+          dcc:              bool(z, 'dcc'),
+          tdsStarted:       bool(z, 'tds_started'),
+          tdsCavv:          bool(z, 'tds_cavv'),
           // Nur in der Terminal-Variante (01b) vorhanden; sonst UNKNOWN.
           terminalIdentifier: dim(z, 'terminal_identifier'),
           terminalName:       dim(z, 'terminal_name'),
           attempts:         zahl(z, 'anzahl_attempts'),
-          transaktionen:    zahl(z, 'anzahl_transaktionen'),
           betrag:           betrag(z, 'summe_betrag'),
           betragFailed:     betrag(z, 'summe_betrag_failed'),
           refund:           betrag(z, 'summe_refund'),
@@ -3873,7 +3919,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         unbekannteBloecke++;
       }
     }
-    return { rows, headers, unbekannteBloecke, error: null };
+    return { rows, headers, unbekannteBloecke, unbrauchbareWerte, error: null };
   }
 
   // --- Reporting-Modus: Klassifikation und Modell ---------------------------
@@ -3917,6 +3963,12 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // REPORTING_DEFAULT_LAND und nicht bei reportingKanalFilter(): einziger
   // Konsument ist loadState(), das beide Konstanten nebeneinander braucht.
   const REPORTING_KANAL_WAHL = ['POS', 'ECOM', 'BOTH'];
+
+  // Beschriftung der KANALWAHL - nicht zu verwechseln mit REPORTING_KANAL_LABEL,
+  // das die drei Kanaele des Modells benennt (POS/ECOM/OTHER). 'BOTH' heisst
+  // "gar kein Kanalfilter", deshalb hier "alle Kanäle" und nicht "POS + E-Com":
+  // ein dritter Verkaufskanal bleibt sichtbar.
+  const REPORTING_KANAL_WAHL_LABEL = { POS: 'POS', ECOM: 'E-Commerce', BOTH: 'alle Kanäle' };
 
   // Europa-Region fuer die Herkunfts-Einstufung (SPEC 2.6): EWR (EU-27 plus
   // Island, Liechtenstein, Norwegen) sowie Schweiz und Vereinigtes Koenigreich.
@@ -5487,6 +5539,13 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     WALLET_CRYPTOGRAM: 'Wallet-Kryptogramm',
     NOT_REQUESTED: 'Nicht angefordert',
     UNKNOWN: 'Unbekannt',
+    // PAN-Quelle (E6): nur die beiden an Produktivdaten belegten Werte
+    // bekommen einen deutschen Namen. Der Descriptor kennt fuenf, die uebrigen
+    // drei sind in Task 0 nie vorgekommen - sie bleiben als Rohwert stehen,
+    // aus demselben Grund wie eine unbekannte Failure-Reason-ID: eine
+    // erfundene Bezeichnung waere schlimmer als der Scheme-Wert selbst.
+    DEVICE_TOKEN_APPLE_PAY: 'Device-Token (Apple Pay)',
+    SCHEME_TOKEN_CLICK_TO_PAY: 'Scheme-Token (Click to Pay)',
   };
   function reportingLabel(schluessel) {
     const k = String(schluessel == null ? '' : schluessel);
@@ -6099,9 +6158,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // paar <rect>. Farben ausschliesslich ueber die :root-Variablen.
   const SVG_BALKEN_STANDARD = { breite: 640, hoehe: 90 };
   // Whitelist statt freier Farbangabe: so kann kein Aufrufer versehentlich ein
-  // Inline-Hex ins SVG schreiben.
-  const SVG_BALKEN_FARBEN = { accent: 'var(--accent)', 'accent-dark': 'var(--accent-dark)',
-    muted: 'var(--muted)', danger: 'var(--danger)' };
+  // Inline-Hex ins SVG schreiben. Sie fuehrt genau die zwei Farben, die
+  // reportingBalkenHtml tatsaechlich waehlt - eine Whitelist mit Eintraegen auf
+  // Vorrat erfuellt ihren Zweck nicht besser, sie sieht nur benutzt aus.
+  const SVG_BALKEN_FARBEN = { accent: 'var(--accent)', 'accent-dark': 'var(--accent-dark)' };
 
   // werte: Zahlen. optionen: { breite, hoehe, max, farbe, beschriftung }.
   // max setzt eine feste Obergrenze (Quoten gehoeren auf eine 0-100-Achse,
@@ -6687,6 +6747,15 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (mode === 'card') filterSummary = s.cardLast4 ? 'Karte …' + s.cardLast4 : '';
       else if (mode === 'terminal' || mode === 'export') {
         filterSummary = term ? term + ' Terminal(s)' : 'alle Terminals';
+      } else if (mode === 'reporting') {
+        // Der eigentliche Filter ist hier der Kanal. Die Terminal-Auswahl kommt
+        // nur dazu, wenn sie ueberhaupt gilt - dieselbe Bedingung wie in
+        // generate() (reportingTerminalPanelSichtbar). Sonst verspraeche die
+        // Zeile eine Einschraenkung, die die Query gar nicht traegt.
+        const kanal = REPORTING_KANAL_WAHL_LABEL[s.reportingChannel] || s.reportingChannel || '';
+        filterSummary = reportingTerminalPanelSichtbar(s.reportingChannel, s.reportingByTerminal)
+          ? kanal + ' · ' + (term ? term + ' Terminal(s)' : 'alle Terminals')
+          : kanal;
       }
     }
     return {
@@ -7887,7 +7956,8 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
 
     if (api) {
       apiHinweis.textContent = 'Die Query wird über den lokalen Proxy ausgeführt. '
-        + 'Das Ergebnis erscheint im Verlauf (CSV/Excel); im Terminal- und im Settlement-Report zusätzlich als Auswertung.';
+        + 'Das Ergebnis erscheint im Verlauf (CSV/Excel); im Terminal-, im Settlement- und '
+        + 'im Reporting-Modus zusätzlich als Auswertung.';
     }
   }
 
@@ -8168,19 +8238,31 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     });
     renderReportingReport();
 
+    // Die beiden Verlust-Zaehler haengen an der Datei, nicht am Modell - sie
+    // gehoeren deshalb an BEIDE Statuszeilen. Gerade "keine Zahlungsversuche"
+    // ist der Fall, in dem ein unlesbares Zahlenformat sich sonst als leeres
+    // Ergebnis tarnte.
+    let hinweise = '';
+    if (res.unbekannteBloecke > 0) {
+      hinweise += ` · ${formatIntCH(res.unbekannteBloecke)} Zeilen mit unbekanntem Block übersprungen`;
+    }
+    // Ein unerwartetes Zahlen- oder Boolean-Format meldet sich damit beim ersten
+    // Import, statt einen plausibel aussehenden falschen Report zu erzeugen.
+    if (res.unbrauchbareWerte > 0) {
+      hinweise += ` · ${formatIntCH(res.unbrauchbareWerte)} Werte im unerwarteten Format `
+        + '(als 0 bzw. unbekannt gewertet)';
+    }
+
     if (!reportingModell.hatDaten) {
-      reportingZeigeStatus('Keine Zahlungsversuche im gewählten Zeitraum.', 'info');
+      reportingZeigeStatus('Keine Zahlungsversuche im gewählten Zeitraum.' + hinweise, 'info');
       return true;
     }
     const attempts = reportingModell.kanalListe
       .reduce((s, k) => s + reportingModell.kanaele[k].kpi.attempts, 0);
     const kanaele = reportingModell.kanalListe
       .map(k => REPORTING_KANAL_LABEL[k] || k).join(', ');
-    let zeile = `${formatIntCH(attempts)} Zahlungsversuche · ${kanaele}`;
-    if (res.unbekannteBloecke > 0) {
-      zeile += ` · ${formatIntCH(res.unbekannteBloecke)} Zeilen mit unbekanntem Block übersprungen`;
-    }
-    reportingZeigeStatus(zeile, 'erfolg');
+    reportingZeigeStatus(
+      `${formatIntCH(attempts)} Zahlungsversuche · ${kanaele}${hinweise}`, 'erfolg');
     return true;
   }
 

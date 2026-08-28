@@ -442,8 +442,12 @@ unterschieden durch die erste Spalte `block`:
 - **`DIM`** — `GROUP BY` über 16 Dimensionen (Space, Kanal, Brand, Wallet, Währung,
   `attempt_state`, Ablehngrund, Ablehncode, Issuer-Land, Kartenkategorie, Funding,
   PAN-Typ, DCC, 3DS-Start, CAVV, ECI; mit Terminal-Aufschlüsselung 18). Trägt
-  `anzahl_attempts`, `anzahl_transaktionen`, `summe_betrag`, `summe_betrag_failed`,
-  `summe_refund`, `summe_tip`.
+  `anzahl_attempts`, `summe_betrag`, `summe_betrag_failed`, `summe_refund`, `summe_tip`.
+  **Kein `anzahl_transaktionen`** — die Spalte gab es bis v5.11 und niemand las sie:
+  `COUNT(DISTINCT transaction_id)` ist über DIM-Tupel hinweg nicht summierbar (dieselbe
+  Transaktion steckt beim Retry in mehreren Tupeln), deshalb kommen Transaktionszahl und
+  Retry-Rate ausschliesslich aus `CONV`. Sie kostete in Athena ein `DISTINCT` über 16–18
+  Gruppierungsspalten und im Parser eine Pflichtspalte, die nichts absicherte.
 - **`TIME`** — `GROUP BY` Space, Kanal, Brand, Währung, `attempt_state`, `date(ca.createdon)`,
   `hour(ca.createdon)`. Verlauf und Stosszeiten.
 - **`CONV`** — `GROUP BY` Space, Kanal, Brand, Währung mit `tx_mit_attempt` und
@@ -483,7 +487,16 @@ zentrale Fallstrick dieses Modus: `countryContent` (Issuer Country), `dateTimeCo
 Helfers). Ein falsch geratener Key wirft **nicht** — er liefert `NULL`, und zwar dauerhaft
 und ohne jede Meldung: die KPI steht dann für immer auf „Unbekannt", und niemand merkt es.
 Genauso verhält sich eine falsch geratene Descriptor-ID. Deshalb ist **jede** Konstante an
-Produktivdaten ermittelt (Task 0) und trägt ihren Key als Kommentar:
+Produktivdaten ermittelt (Task 0) und trägt ihren Key als Kommentar — **auch der Key ist
+gemessen, nicht angenommen.** Belegstelle ist die Spalte `ohne_shorttext` der
+Discovery-Query Q2 (`dashboard/sql/00_label_discovery.sql`): sie zählt die Attempts, bei
+denen `shortTextContent` `NULL` ist, und steht in der Ergebnistabelle unten für jeden
+Descriptor mit dem Default-Key auf **0**, zusammen mit den erwarteten Werten. Umgekehrt
+steht sie bei Issuer-Land, 3-D-Secure-Start und CAVV auf der vollen Attempt-Zahl bei 0
+gefundenen Werten — genau daran wurden deren abweichende Keys überhaupt erst erkannt. Die
+Zusammenfassung in `dashboard/discovery-results/DESCRIPTORS.md` führt die Key-Spalte nur
+dort, wo der Key vom Default abweicht; **das ist eine Kürzung der Darstellung, kein
+fehlender Beleg** — der Beleg steht in den Q2-CSVs daneben.
 
 | Konstante | ID | Map-Key |
 |---|---|---|
@@ -491,10 +504,10 @@ Produktivdaten ermittelt (Task 0) und trägt ihren Key als Kommentar:
 | `DESC_ISSUER_COUNTRY` | `1474552618629` | **`countryContent`** |
 | `DESC_CARD_TYPE` (Funding CREDIT/DEBIT) | `1474552618699` | `shortTextContent` |
 | `DESC_CARD_CATEGORY` (Business/Privat) | `1474552618999` | `shortTextContent` |
-| `DESC_AUTH_RESPONSE_POS` (ISO-8583) | `1579287790513` | `shortTextContent` |
-| `DESC_AUTH_RESPONSE_ECOM` (Processor) | `15537739985478` | `shortTextContent` |
-| `DESC_DCC_CURRENCY` (nur Existenz) | `1695119783358` | `shortTextContent` |
-| `DESC_PAN_TYPE` | `1634723429555` | `shortTextContent` |
+| `DESC_AUTH_RESPONSE_POS` (ISO-8583) | `1579287790513` | `shortTextContent` (Q2: 14 Werte `00`…`Z3`) |
+| `DESC_AUTH_RESPONSE_ECOM` (Processor) | `15537739985478` | `shortTextContent` (Q2: 5 Werte) |
+| `DESC_DCC_CURRENCY` (nur Existenz) | `1695119783358` | `shortTextContent` (Q2: `EUR`/`SEK`) |
+| `DESC_PAN_TYPE` | `1634723429555` | `shortTextContent` (Q2: 5 Werte) |
 | `DESC_TDS_STARTED` | `1568637480278` | **`dateTimeContent`** |
 | `DESC_TDS_CAVV` (nur Existenz) | `1569496536590` | **`longTextContent`** |
 | `DESC_ECI` | `1634723429552` | `shortTextContent` |
@@ -653,7 +666,7 @@ verliert vor allem der E-Commerce an Lesbarkeit, nicht der POS.
 #### Parser, Blöcke, vier Ausgaben
 
 - **`parseReportingCsv(text)`** → `{ rows: { dim, time, conv }, headers, unbekannteBloecke,
-  error }`, wirft nie. Nutzt den gemeinsamen Zerleger `csvZuZeilen` und `parseAmount`
+  unbrauchbareWerte, error }`, wirft nie. Nutzt den gemeinsamen Zerleger `csvZuZeilen` und `parseAmount`
   (Beträge als ganzzahlige **1e-8-Einheiten**, per String zerlegt) wie der Settlement-Parser.
   **Jeder Block hat seine eigene Zeilenform** statt aller Spalten überall: in `TIME`/`CONV`
   sind die DIM-Spalten keine *fehlenden* Werte, sondern **gar keine** — sie auf `'UNKNOWN'`
@@ -661,7 +674,18 @@ verliert vor allem der E-Commerce an Lesbarkeit, nicht der POS.
   `null`, **nicht** `0` (0 ist eine gültige Stunde); Booleans nur `true`/`false`, alles
   andere `null`. Eine Zeile mit unbekanntem `block` wird nicht stumm verworfen, sondern in
   `unbekannteBloecke` gezählt.
-  `REPORTING_PFLICHT` ist die **vollständige SELECT-Liste** der Query (27 Spalten), nicht
+  **Seit v5.11 ist auch der letzte stille Verlustkanal gezählt:** `parseBool`, `parseAmount`
+  und `parseCount` können „nicht lesbar" nicht von „leer" bzw. „0" unterscheiden. Ein
+  nicht leeres Feld, das gegen `REPORTING_MUSTER_BETRAG`/`REPORTING_MUSTER_ZAHL` bzw. gegen
+  `true`/`false` nicht ankommt, erhöht deshalb `unbrauchbareWerte`, und die Statuszeile des
+  Panels nennt die Zahl (beide Zweige, auch „Keine Zahlungsversuche" — gerade dort tarnte
+  sich ein unlesbares Zahlenformat sonst als leeres Ergebnis). **Warum das nötig ist:** die
+  Query ist noch nie gegen echte Daten gelaufen (SPEC 8.6). Schriebe Athena `boolean` als
+  `1`/`0` oder Beträge mit Komma bzw. in Exponentialschreibweise, stünden `dcc`,
+  `tds_started`, `tds_cavv` und sämtliche Beträge dauerhaft auf `null` bzw. `0` — P7 läse
+  „DCC 0 %", E1/E2 „nicht angefordert 100 %", und zwar als gemessen aussehende Nullen. Der
+  Wert selbst bleibt trotzdem der defensive; gemeldet wird zusätzlich, nicht statt dessen.
+  `REPORTING_PFLICHT` ist die **vollständige SELECT-Liste** der Query (26 Spalten), nicht
   nur was das Modell braucht: die Query ist ein einziges `UNION ALL`, ihre Spalten kommen
   gemeinsam oder gar nicht — fehlt eine, stammt das CSV nicht aus diesem Modus. Nicht
   Pflicht sind nur `terminal_identifier`/`terminal_name` (nur in der Terminal-Variante).
@@ -708,7 +732,9 @@ verliert vor allem der E-Commerce an Lesbarkeit, nicht der POS.
   (ab `REPORTING_TABELLE_OFFEN = 20` Zeilen in `<details>` eingeklappt — die Schwelle liegt
   bewusst unter den 24 Stunden), und für `typ: 'balken'` ein **Inline-SVG** über der Tabelle
   (`svgBalken`, kein Chart-Vendor — die Datei ist schon ~1.06 MB). Farben ausschliesslich
-  über die Whitelist `SVG_BALKEN_FARBEN` → `var(--…)`; eine freie Farbangabe wäre der Weg,
+  über die Whitelist `SVG_BALKEN_FARBEN` (genau die zwei Farben, die
+  `reportingBalkenHtml` wählt — Einträge auf Vorrat sehen nur benutzt aus) → `var(--…)`;
+  eine freie Farbangabe wäre der Weg,
   über den doch ein Inline-Hex ins Markup käme. Balken bekommen nur Zähler und — **nur wenn
   jede Zeile eine Zahl trägt** — die Erfolgsquote: bei `null` (Stunde ganz ohne Versuch)
   behauptete ein Nullbalken 0 % Erfolg, eine Messung, die es nicht gibt.
@@ -757,6 +783,11 @@ verliert vor allem der E-Commerce an Lesbarkeit, nicht der POS.
   Modus `reporting` nur den Roh-CSV-Download; Excel und PDF laufen über das Report-Panel.
   Die Unterdrückung läuft über `MODI_MIT_REPORT_PANEL = ['terminal','settlement','reporting']`
   statt einer wachsenden Oder-Kette. `MODUS_LABELS.reporting = 'Reporting'`.
+  `historyEintragBauen` hat seit v5.11 einen eigenen `filterSummary`-Zweig für den Modus:
+  er nennt die **Kanalwahl** (`REPORTING_KANAL_WAHL_LABEL`, `'BOTH'` → „alle Kanäle" — der
+  Kanal ist hier der eigentliche Filter) und die Terminal-Auswahl **nur dann**, wenn
+  `reportingTerminalPanelSichtbar` sie gelten lässt, also mit derselben Bedingung wie
+  `generate()`. Sonst versprächen die Zeilen eine Einschränkung, die die Query nicht trägt.
 
 #### Bewusste Abweichungen von `dashboard/SPEC.md`
 
@@ -1480,7 +1511,11 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     Verteilung gegen den `brand`-Modus, wobei `ca.createdon` vs. `t.completedon` kleine
     Randabweichungen erklärt: **dokumentieren, nicht wegdiskutieren**).
   - **Fixture danach gegen das echte Ergebnis halten** und ersetzen, wo sie abweicht
-    (Boolean-Schreibweise, NULL-Darstellung, Datums-/Dezimalformat).
+    (Boolean-Schreibweise, NULL-Darstellung, Datums-/Dezimalformat). Der Parser meldet
+    solche Abweichungen seit v5.11 selbst: steht in der Statuszeile „… Werte im
+    unerwarteten Format", ist genau das eingetreten — dann die Muster
+    `REPORTING_MUSTER_BETRAG`/`REPORTING_MUSTER_ZAHL` bzw. `parseBool` nachziehen und die
+    Fixture auf die echte Schreibweise umstellen, nicht den Hinweis wegdrücken.
   - **Conversion und Retry-Rate auf Kanal-Ebene** bleiben eine Obergrenze; exakt würden sie
     erst mit einem vierten Query-Block ohne Brand-Gruppierung.
   - Aus SPEC 4.4 bewusst **nicht** in v5.11: Vorperioden-Vergleich, Billing-Land ≠

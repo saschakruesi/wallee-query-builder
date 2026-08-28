@@ -148,7 +148,12 @@ SELECT
     CAST(NULL AS date)                              AS tag,
     CAST(NULL AS integer)                           AS stunde,
     COUNT(*)                                        AS anzahl_attempts,
-    COUNT(DISTINCT transaction_id)                  AS anzahl_transaktionen,
+    -- Kein COUNT(DISTINCT transaction_id) hier: ueber DIM-Tupel hinweg ist er
+    -- nicht summierbar (dieselbe Transaktion steckt beim Retry in mehreren
+    -- Tupeln), das Modell nimmt die Transaktionszahl deshalb ausschliesslich
+    -- aus dem CONV-Block. Eine Spalte, die niemand lesen darf, kostet in Athena
+    -- ein DISTINCT ueber 16-18 Gruppierungsspalten - und im Parser eine
+    -- Pflichtspalte, die nichts absichert.
     CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
     CAST(SUM(amount_failed) AS decimal(38,8))       AS summe_betrag_failed,
     -- Bewusst in Kauf genommene Ungenauigkeit (SPEC 3.2): refundedamount haengt
@@ -196,7 +201,6 @@ SELECT
     date(created_on)                                AS tag,
     CAST(hour(created_on) AS integer)               AS stunde,
     COUNT(*)                                        AS anzahl_attempts,
-    CAST(NULL AS bigint)                            AS anzahl_transaktionen,
     CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
     CAST(NULL AS decimal(38,8))                     AS summe_refund,
@@ -233,7 +237,6 @@ SELECT
     CAST(NULL AS date)                              AS tag,
     CAST(NULL AS integer)                           AS stunde,
     CAST(NULL AS bigint)                            AS anzahl_attempts,
-    CAST(NULL AS bigint)                            AS anzahl_transaktionen,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
     CAST(NULL AS decimal(38,8))                     AS summe_refund,

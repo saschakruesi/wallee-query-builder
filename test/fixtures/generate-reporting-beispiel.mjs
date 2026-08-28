@@ -74,7 +74,7 @@ const KOPF = [
   'block', 'space_id', 'channel', 'brand', 'wallet', 'waehrung', 'attempt_state',
   'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
   'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
-  'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
+  'anzahl_attempts', 'summe_betrag', 'summe_betrag_failed',
   'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
 ];
 
@@ -88,8 +88,13 @@ function betrag(rappen) {
   const v = Math.abs(rappen);
   return vorzeichen + Math.floor(v / 100) + '.' + String(v % 100).padStart(2, '0') + '000000';
 }
+// Gibt die ganzzahligen Rappen zurueck, nicht den String: der TIME-Block muss
+// denselben Umsatz exakt auf seine Faecher verteilen koennen.
+function zufallsRappen(min, max) {
+  return min + Math.floor(rnd() * (max - min));
+}
 function zufallsBetrag(min, max) {
-  return betrag(min + Math.floor(rnd() * (max - min)));
+  return betrag(zufallsRappen(min, max));
 }
 function zufallsTrinkgeld(min, max) {
   return betrag(min + Math.floor(rndTip() * (max - min)));
@@ -173,7 +178,9 @@ DIM_FAELLE.forEach(f => {
   // Betrag - beide Betragsspalten bleiben NULL (SPEC 7: als "offen" ausweisen,
   // aus allen Quoten heraushalten).
   const fehlgeschlagen = f.state === 'FAILED';
-  const tx = Math.max(1, f.n - Math.floor(rnd() * Math.min(8, f.n)));
+  // summe_betrag entsteht als Rappen-Ganzzahl, damit der TIME-Block unten
+  // exakt denselben Umsatz verteilen kann (siehe dort).
+  const rappen = erfolg ? zufallsRappen(f.n * 900, f.n * 4200) : null;
   zeilen.push({
     block: 'DIM',
     space_id: f.space,
@@ -193,13 +200,16 @@ DIM_FAELLE.forEach(f => {
     tds_cavv: f.cavv ? 'true' : 'false',
     eci: f.eci || '',
     anzahl_attempts: String(f.n),
-    anzahl_transaktionen: String(tx),
+    // Kein anzahl_transaktionen mehr: die Spalte ist seit v5.11 aus der Query
+    // entfernt (ueber DIM-Tupel hinweg nicht summierbar, deshalb las sie
+    // niemand). Die Transaktionszahl kommt allein aus dem CONV-Block.
+    _rappen: rappen,
     // SUM() ueber lauter NULL ergibt NULL, nicht 0 - in der CSV also ein LEERES
     // Feld. summe_betrag entsteht aus CASE WHEN state = 'SUCCESSFUL', ist bei
     // einer FAILED-Zeile also durchgehend NULL (und umgekehrt fuer
     // summe_betrag_failed). "0.00000000" wuerde eine Form zeigen, die die Query
     // gar nicht liefert, und den NULL-Pfad des Parsers ungeprueft lassen.
-    summe_betrag: erfolg ? zufallsBetrag(f.n * 900, f.n * 4200) : '',
+    summe_betrag: erfolg ? betrag(rappen) : '',
     summe_betrag_failed: fehlgeschlagen ? zufallsBetrag(f.n * 1200, f.n * 5000) : '',
     // Refunds nur auf einem Teil der erfolgreichen Zeilen - so bleibt die
     // Refund-Quote im Modell unterscheidbar von "alles 0". Ohne Erfolg gibt es
@@ -214,30 +224,67 @@ DIM_FAELLE.forEach(f => {
 });
 
 // --- Block TIME -----------------------------------------------------------
-// Tag/Stunde je Space, Kanal, Brand, Waehrung, Attempt-State. Bewusst nur
-// wenige Stunden, damit die Fixture lesbar bleibt; die Tagesverteilung des
-// echten Laufs ist deutlich dichter.
-const TIME_BASIS = [
-  { space: SPACE_POS, channel: 'POS', brand: 'Visa', waehrung: 'CHF', state: 'SUCCESSFUL' },
-  { space: SPACE_POS, channel: 'POS', brand: 'Visa', waehrung: 'CHF', state: 'FAILED' },
-  { space: SPACE_POS, channel: 'POS', brand: 'TWINT', waehrung: 'CHF', state: 'SUCCESSFUL' },
-  { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF', state: 'SUCCESSFUL' },
-  { space: SPACE_ECOM, channel: 'ECOM', brand: 'Mastercard', waehrung: 'EUR', state: 'SUCCESSFUL' },
-  { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF', state: 'PENDING' },
-];
+// ABGELEITET aus dem DIM-Block, nicht unabhaengig gezogen. In der echten Query
+// sind beide COUNT(*) ueber demselben att-CTE, nur anders gruppiert - die
+// Summen MUESSEN sich also decken. Zwei unabhaengige Zufallsreihen widersprechen
+// sich zwangslaeufig: die Fixture zeigte dann in den Kacheln eine andere
+// Erfolgsquote als im Verlauf unmittelbar darunter, und die Invariante
+// "DIM-Summe = TIME-Summe" liesse sich an nichts festmachen.
+//
+// TIME gruppiert ohne wallet und ohne die Karten-Dimensionen; mehrere
+// DIM-Zeilen fallen deshalb in dieselbe TIME-Gruppe (etwa die E-Com-Visa-Zeile
+// mit und ohne Wallet). Genau diese Gruppen werden hier zuerst gebildet und
+// dann restlos auf die Tag/Stunde-Faecher verteilt.
+const TIME_SLOTS = [];
 ['2026-07-01', '2026-07-02'].forEach(tag => {
-  [8, 12, 19].forEach(stunde => {
-    TIME_BASIS.forEach(b => {
-      const n = 1 + Math.floor(rnd() * 40);
-      zeilen.push({
-        block: 'TIME',
-        space_id: b.space, channel: b.channel, brand: b.brand, waehrung: b.waehrung,
-        attempt_state: b.state,
-        tag, stunde: String(stunde),
-        anzahl_attempts: String(n),
-        // Wie im DIM-Block: SUM(amount) ist ausserhalb von SUCCESSFUL NULL.
-        summe_betrag: b.state === 'SUCCESSFUL' ? zufallsBetrag(n * 900, n * 4200) : '',
-      });
+  [8, 12, 19].forEach(stunde => TIME_SLOTS.push({ tag, stunde }));
+});
+
+// Ganzzahlige Aufteilung nach Gewichten (Largest Remainder): die Summe der
+// Teile ist per Konstruktion gleich dem Ganzen - genau das ist hier der Punkt,
+// eine Rundung je Fach wuerde die Invariante wieder aufweichen.
+function verteile(gesamt, gewichte) {
+  const summe = gewichte.reduce((a, g) => a + g, 0);
+  const roh = gewichte.map(g => (summe > 0 ? (gesamt * g) / summe : 0));
+  const teile = roh.map(Math.floor);
+  let rest = gesamt - teile.reduce((a, t) => a + t, 0);
+  const nachRest = roh.map((v, i) => i)
+    .sort((a, b) => ((roh[b] - teile[b]) - (roh[a] - teile[a])) || (a - b));
+  for (let i = 0; rest > 0; i++, rest--) teile[nachRest[i % teile.length]]++;
+  return teile;
+}
+
+const TIME_GRUPPEN = new Map();
+zeilen.filter(z => z.block === 'DIM').forEach(z => {
+  const schluessel = [z.space_id, z.channel, z.brand, z.waehrung, z.attempt_state].join('|');
+  const g = TIME_GRUPPEN.get(schluessel) || {
+    space_id: z.space_id, channel: z.channel, brand: z.brand,
+    waehrung: z.waehrung, attempt_state: z.attempt_state,
+    attempts: 0, rappen: 0, umsatz: false,
+  };
+  g.attempts += Number(z.anzahl_attempts);
+  // Umsatz gibt es nur an erfolgreichen Attempts; ausserhalb bleibt die Spalte
+  // NULL - in der CSV also ein leeres Feld, nicht "0.00000000".
+  if (z._rappen != null) { g.rappen += z._rappen; g.umsatz = true; }
+  TIME_GRUPPEN.set(schluessel, g);
+});
+
+TIME_GRUPPEN.forEach(g => {
+  const gewichte = TIME_SLOTS.map(() => 1 + rnd() * 9);
+  const proSlot = verteile(g.attempts, gewichte);
+  // Ein Fach ohne Attempt erzeugt in der echten Query gar keine Zeile. Der
+  // Umsatz wird deshalb nur ueber die belegten Faecher verteilt, sonst fiele
+  // ein Rest in eine Zeile, die es nicht gibt.
+  const belegt = proSlot.map((n, i) => i).filter(i => proSlot[i] > 0);
+  const umsatzProSlot = g.umsatz ? verteile(g.rappen, belegt.map(i => proSlot[i])) : null;
+  belegt.forEach((i, j) => {
+    zeilen.push({
+      block: 'TIME',
+      space_id: g.space_id, channel: g.channel, brand: g.brand, waehrung: g.waehrung,
+      attempt_state: g.attempt_state,
+      tag: TIME_SLOTS[i].tag, stunde: String(TIME_SLOTS[i].stunde),
+      anzahl_attempts: String(proSlot[i]),
+      summe_betrag: umsatzProSlot ? betrag(umsatzProSlot[j]) : '',
     });
   });
 });

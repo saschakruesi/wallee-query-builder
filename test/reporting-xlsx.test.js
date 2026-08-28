@@ -129,7 +129,7 @@ test('XLSX: Betraege sind Zahlen, keine 1e-8-Einheiten und keine Strings', async
   // Kopf bei t+1, erste Datenzeile (Visa) bei t+2, Betrag in Spalte 6.
   const zelle = ws[XLSX.utils.encode_cell({ r: t + 2, c: 6 })];
   assert.strictEqual(zelle.t, 'n', 'Betrag als Zahl, sonst kann Excel nicht rechnen');
-  assert.strictEqual(zelle.v, 20671.88);
+  assert.strictEqual(zelle.v, 16150.7);
   assert.strictEqual(zelle.z, '#,##0.00');
 });
 
@@ -152,10 +152,10 @@ test('XLSX: die Kachel-Wertspalte laeuft ueber reportingZellFormat', async () =>
   const zaehler = ws[XLSX.utils.encode_cell({ r: t + 2, c: 1 })];
   assert.strictEqual(zaehler.v, 1403);
   assert.strictEqual(zaehler.z, '#,##0');
-  // Die Umsatz-Kachel weiter unten: Betrag, nicht 4229859000000.
+  // Die Umsatz-Kachel weiter unten: Betrag, nicht 3089116000000.
   const umsatz = zeilen.slice(t).find(z => z[0] === 'Umsatz');
   assert.ok(umsatz, 'Umsatz-Kachel fehlt');
-  assert.strictEqual(umsatz[1], 42298.59);
+  assert.strictEqual(umsatz[1], 30891.16);
 });
 
 test('XLSX: die Kopfzeile jedes Abschnitts ist tuerkis eingefaerbt', async () => {

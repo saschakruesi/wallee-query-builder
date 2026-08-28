@@ -104,7 +104,7 @@ test('svgBalken faerbt ausschliesslich ueber die CSS-Variablen', () => {
   const bunt = app.svgBalken([3, 1], { farbe: '#ff0000' });
   assert.doesNotMatch(bunt, /#ff0000/i);
   assert.match(bunt, /fill="var\(--accent\)"/, 'unbekannte Farbe faellt auf --accent zurueck');
-  assert.match(app.svgBalken([1], { farbe: 'danger' }), /fill="var\(--danger\)"/);
+  assert.match(app.svgBalken([1], { farbe: 'accent-dark' }), /fill="var\(--accent-dark\)"/);
 });
 
 // --- Welche Spalten als Balken taugen --------------------------------------
@@ -302,14 +302,14 @@ test('Kacheln lesen ihr Format je Zelle, nicht aus dem Spaltenkopf', () => {
   // Die Wert-Spalte der Kacheln traegt kopf[1].format === 'gemischt'. Wer
   // darueber rendert, bekommt fuer beide Zellen String(wert):
   //   Zahlungsversuche -> "1403" statt "1’403"
-  //   Umsatz           -> "4229859000000" statt "42’298.59"
+  //   Umsatz           -> "3089116000000" statt "30’891.16"
   assert.match(html, /<h3>POS · Kennzahlen<\/h3><div class="kpi-kacheln">/,
     'Kacheln sind Kacheln, keine zweispaltige Tabelle');
   assert.match(html, /1’403/, 'Zaehler mit Schweizer Tausendertrennung');
-  assert.match(html, /CHF 42’298\.59/,
+  assert.match(html, /CHF 30’891\.16/,
     'Betrag aus 1e-8-Einheiten heruntergerechnet, MIT seiner Waehrung - eine '
     + 'Kachel ohne Einheit ist eine Zahl ohne Aussage');
-  assert.doesNotMatch(html, /4229859000000/, 'Rohe 1e-8-Einheiten duerfen nie sichtbar werden');
+  assert.doesNotMatch(html, /3089116000000/, 'Rohe 1e-8-Einheiten duerfen nie sichtbar werden');
   assert.doesNotMatch(html, /gemischt/, 'Das Sentinel-Format darf nirgends durchschlagen');
 });
 
@@ -329,7 +329,7 @@ test('Balken-Bloecke zeichnen ein inline-SVG neben ihrer Tabelle', () => {
   // Die Bildunterschrift sagt, worauf der Balken skaliert - ohne sie laesst
   // sich seine Hoehe nicht lesen. Der Zaehler auf sein eigenes Maximum, die
   // Quote auf die feste 0-100-Achse.
-  assert.match(html, /Attempts · Maximum 217/);
+  assert.match(html, /Attempts · Maximum 793/);
   assert.match(html, /Erfolg % · Skala 0–100 %/);
   // Die Tabelle bleibt daneben stehen - das SVG ist die Zugabe, nicht der Ersatz.
   assert.match(html, /2026-07-01/);
@@ -376,11 +376,11 @@ test('Der CSV-Export sitzt auf denselben Bloecken auf', () => {
 test('Die CSV traegt maschinenlesbare Zahlen, keine formatierten Woerter', () => {
   const { app } = mitFixture();
   const csv = app.buildReportingReportCsv(app.reportingModellAktuell(), app.reportingExportOptionen());
-  assert.match(csv, /42298\.59/, 'Betrag als Dezimalzahl, Punkt als Trenner');
-  assert.doesNotMatch(csv, /4229859000000/, 'nicht die rohen 1e-8-Einheiten');
+  assert.match(csv, /30891\.16/, 'Betrag als Dezimalzahl, Punkt als Trenner');
+  assert.doesNotMatch(csv, /3089116000000/, 'nicht die rohen 1e-8-Einheiten');
   assert.doesNotMatch(csv, /96\.70014/, 'Prozent auf eine Nachkommastelle');
-  assert.doesNotMatch(csv, /1\.105793/, 'Faktor auf zwei Stellen, wie auf dem Schirm');
-  assert.match(csv, /\r\nVisa;697;49\.7;96\.7;3\.3;CHF;20671\.88;48\.9;30\.67\r\n/,
+  assert.doesNotMatch(csv, /1\.102120/, 'Faktor auf zwei Stellen, wie auf dem Schirm');
+  assert.match(csv, /\r\nVisa;697;49\.7;96\.7;3\.3;CHF;16150\.7;52\.3;23\.96\r\n/,
     'Datenzeile durchgehend maschinenlesbar: keine Tausendertrennung, kein Prozentzeichen');
   // Tausendertrennung gibt es nur in der Hinweis-PROSA unter der Tabelle
   // ("Grundlage: 1’147 …") - das ist Fliesstext, keine Zelle.

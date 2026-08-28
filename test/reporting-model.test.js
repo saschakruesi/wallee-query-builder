@@ -21,7 +21,7 @@ const KOPF = [
   'block', 'space_id', 'channel', 'brand', 'wallet', 'waehrung', 'attempt_state',
   'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
   'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
-  'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
+  'anzahl_attempts', 'summe_betrag', 'summe_betrag_failed',
   'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
 ];
 
@@ -47,7 +47,7 @@ const DIM = {
   waehrung: 'CHF', attempt_state: 'SUCCESSFUL', failure_reason_id: '',
   auth_response_code: '00', issuer_country: 'CH', card_category: 'CLASSIC',
   funding: 'DEBIT', pan_type: '', dcc: 'false', tds_started: 'false',
-  tds_cavv: 'false', eci: '', anzahl_attempts: '10', anzahl_transaktionen: '10',
+  tds_cavv: 'false', eci: '', anzahl_attempts: '10',
   summe_betrag: '200.00000000', summe_betrag_failed: '0.00000000',
   summe_refund: '0.00000000', summe_tip: '0.00000000',
 };
@@ -233,10 +233,14 @@ test('parseReportingCsv: Betragssummen bleiben exakt (kein float)', () => {
 test('parseReportingCsv: Zaehlwerte sind Integer, leer ergibt 0', () => {
   const { parseReportingCsv } = loadBuilders();
   const r = parseReportingCsv(csv([
-    Object.assign({}, DIM, { anzahl_attempts: '7', anzahl_transaktionen: '' }),
+    Object.assign({}, DIM, { anzahl_attempts: '7' }),
+    // Leer heisst hier NULL-Platzhalter, nicht "unlesbar": das ist der
+    // Normalfall in TIME/CONV und darf nichts melden.
+    Object.assign({}, DIM, { anzahl_attempts: '' }),
   ]));
   assert.strictEqual(r.rows.dim[0].attempts, 7);
-  assert.strictEqual(r.rows.dim[0].transaktionen, 0);
+  assert.strictEqual(r.rows.dim[1].attempts, 0);
+  assert.strictEqual(r.unbrauchbareWerte, 0);
 });
 
 test('parseReportingCsv: leere Dimensionen landen im UNKNOWN-Eimer', () => {
@@ -270,6 +274,45 @@ test('parseReportingCsv: boolesche Spalten ergeben true/false/null', () => {
     plain(r.rows.dim.map(z => [z.dcc, z.tdsStarted, z.tdsCavv])),
     [[true, true, true], [false, true, false], [null, null, null]],
   );
+});
+
+test('parseReportingCsv: unlesbare Werte werden gezaehlt, nicht stumm zu 0', () => {
+  const { parseReportingCsv } = loadBuilders();
+  // Der einzige Verlustkanal des Moduls, der bisher keinen Zaehler hatte. Die
+  // Query ist noch nie gegen echte Daten gelaufen (SPEC 8.6): schreibt Athena
+  // boolean als 1/0 oder Betraege mit Komma bzw. in Exponentialschreibweise,
+  // stuenden DCC, 3DS und saemtliche Betraege auf 0 - und zwar als gemessen
+  // aussehende Nullen. Genau diese Faelle stehen hier.
+  const r = parseReportingCsv(csv([
+    Object.assign({}, DIM, { dcc: '1', tds_started: 't', tds_cavv: 'false' }),
+    Object.assign({}, DIM, { summe_betrag: '1234,56', summe_refund: '1.2E3' }),
+    Object.assign({}, DIM, { anzahl_attempts: '1 234' }),
+  ]));
+  assert.strictEqual(r.error, null);
+  // 2 Booleans + 2 Betraege + 1 Zaehler; 'false' und die leeren Felder nicht.
+  assert.strictEqual(r.unbrauchbareWerte, 5);
+  // Der Wert selbst bleibt der defensive: unbekannt bzw. 0 - gemeldet wird er
+  // trotzdem, statt beides gegeneinander auszuspielen.
+  assert.strictEqual(r.rows.dim[0].dcc, null);
+  assert.strictEqual(r.rows.dim[0].tdsCavv, false);
+  assert.strictEqual(r.rows.dim[1].betrag, 0);
+  // parseInt liest '1 234' als 1 - eine Zahl, die plausibel aussieht und
+  // trotzdem falsch ist. Genau darum reicht der Wert allein nicht als Signal.
+  assert.strictEqual(r.rows.dim[2].attempts, 1);
+});
+
+test('parseReportingCsv: lesbare Werte melden nichts - auch die Fixture nicht', () => {
+  const { parseReportingCsv } = loadBuilders();
+  // Sonst waere der Zaehler ein Dauerhinweis und damit wertlos. Negative
+  // Betraege (Refund-Zeilen) und leere NULL-Platzhalter sind lesbar.
+  const r = parseReportingCsv(csv([
+    Object.assign({}, DIM, { summe_betrag: '-12.34000000', summe_refund: '', dcc: 'TRUE' }),
+  ]));
+  assert.strictEqual(r.unbrauchbareWerte, 0);
+  assert.strictEqual(r.rows.dim[0].betrag, -1234000000);
+  const text = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'reporting-beispiel.csv'), 'utf8');
+  assert.strictEqual(parseReportingCsv(text).unbrauchbareWerte, 0);
 });
 
 test('parseReportingCsv: TIME ohne stunde ergibt null, nicht Stunde 0', () => {
@@ -335,16 +378,20 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
   // nachgerechnet (Decimal-Summe der Spalten), nicht vom Parser uebernommen.
   // Zugleich die Basislinie fuer das Modell in Task 3.
   const summe = (liste, feld) => liste.reduce((a, z) => a + z[feld], 0);
-  assert.strictEqual(summe(r.rows.dim, 'betrag'), 5441239000000);        // 54'412.39
-  assert.strictEqual(summe(r.rows.dim, 'betragFailed'), 377444000000);   //  3'774.44
-  assert.strictEqual(summe(r.rows.dim, 'refund'), 212143000000);         //  2'121.43
+  assert.strictEqual(summe(r.rows.dim, 'betrag'), 3806115000000);        // 38'061.15
+  assert.strictEqual(summe(r.rows.dim, 'betragFailed'), 298879000000);   //  2'988.79
+  assert.strictEqual(summe(r.rows.dim, 'refund'), 63562000000);          //    635.62
   // Trinkgeld gibt es nur am POS und nur an erfolgreichen Attempts (Task 4b);
   // die uebrigen Summen sind unveraendert, weil der Generator dafuer einen
   // eigenen PRNG-Strom benutzt.
   assert.strictEqual(summe(r.rows.dim, 'tip'), 152607000000);            //  1'526.07
   assert.strictEqual(summe(r.rows.dim, 'attempts'), 1854);
-  assert.strictEqual(summe(r.rows.time, 'attempts'), 872);
-  assert.strictEqual(summe(r.rows.time, 'betrag'), 1649053000000);       // 16'490.53
+  // DIM und TIME zaehlen in der echten Query dasselbe att-CTE, nur anders
+  // gruppiert - ihre Summen muessen sich decken. Die Fixture leitet den
+  // TIME-Block deshalb aus dem DIM-Block ab; ohne diese Zusicherung zeigte der
+  // Report in den Kacheln eine andere Erfolgsquote als im Verlauf darunter.
+  assert.strictEqual(summe(r.rows.time, 'attempts'), 1854);
+  assert.strictEqual(summe(r.rows.time, 'betrag'), 3806115000000);       // 38'061.15
   assert.strictEqual(summe(r.rows.conv, 'txMitAttempt'), 1682);
   assert.strictEqual(summe(r.rows.conv, 'txErfolgreich'), 1622);
 
@@ -380,6 +427,38 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
     'ISO-3-Landescode fehlt');
 });
 
+test('Fixture: DIM und TIME zaehlen dasselbe - je Gruppe, nicht nur im Total', () => {
+  const { parseReportingCsv } = loadBuilders();
+  const text = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'reporting-beispiel.csv'), 'utf8');
+  const r = parseReportingCsv(text);
+  assert.strictEqual(r.error, null);
+
+  // In der echten Query sind beide COUNT(*) ueber demselben att-CTE, nur anders
+  // gruppiert: TIME laesst wallet und die Karten-Dimensionen weg. Ueber die
+  // gemeinsamen Dimensionen hinweg muessen Attempts UND Umsatz deshalb exakt
+  // uebereinstimmen. Eine Fixture, die das verletzt, laesst den Report in den
+  // Kacheln eine andere Erfolgsquote zeigen als im Verlauf unmittelbar darunter
+  // - und keine Zusicherung koennte den echten Lauf daran messen.
+  const schluessel = z =>
+    [z.spaceId, z.channel, z.brand, z.waehrung, z.attemptState].join('|');
+  const falte = liste => liste.reduce((m, z) => {
+    const k = schluessel(z);
+    const e = m[k] || (m[k] = { attempts: 0, betrag: 0 });
+    e.attempts += z.attempts;
+    e.betrag += z.betrag;
+    return m;
+  }, {});
+  const ausDim = falte(r.rows.dim);
+  const ausTime = falte(r.rows.time);
+  assert.deepStrictEqual(plain(Object.keys(ausTime).sort()), plain(Object.keys(ausDim).sort()));
+  Object.keys(ausDim).forEach(k => {
+    assert.deepStrictEqual(plain(ausTime[k]), plain(ausDim[k]), 'Gruppe ' + k);
+  });
+  // Und die Gruppen sind wirklich mehr als eine - sonst prueft die Schleife nichts.
+  assert.ok(Object.keys(ausDim).length >= 10);
+});
+
 // ---------------------------------------------------------------------------
 // Task 3 — Modell: buildReportingModel und die Klassifikations-Funktionen.
 //
@@ -403,7 +482,7 @@ function dimZeile(over) {
     issuerCountry: 'CH', cardCategory: 'CLASSIC', funding: 'DEBIT', panType: 'UNKNOWN',
     eci: 'UNKNOWN', dcc: false, tdsStarted: false, tdsCavv: false,
     terminalIdentifier: 'UNKNOWN', terminalName: 'UNKNOWN',
-    attempts: 1, transaktionen: 1, betrag: 0, betragFailed: 0, refund: 0, tip: 0,
+    attempts: 1, betrag: 0, betragFailed: 0, refund: 0, tip: 0,
   }, over);
 }
 function timeZeile(over) {
@@ -751,6 +830,28 @@ test('Unbekannter attempt_state landet in "sonstige", nicht in einer Quote', () 
   assert.strictEqual(k.successRate, 80);
 });
 
+test('Ein Anteil ohne Grundlage ist 0, kein fehlender Messwert', () => {
+  // reportingQuote -> null ("keine Grundlage"), reportingAnteil -> 0 ("nichts,
+  // wovon es ein Teil waere"). Der Unterschied ist tragend und hier
+  // festgenagelt: ein Kanal mit ausschliesslich TWINT hat null erfolgreiche
+  // Karten-Attempts, also Basis 0 in Kartentyp und Funding. Wuerde der Anteil
+  // dort null liefern, stuende in der Ausgabe "—" ("nicht erhoben") statt
+  // "0.0 %" - eine andere Aussage ueber dieselbe Messung.
+  const m = modell({ dim: [
+    dimZeile({ brand: 'TWINT', attempts: 40, cardCategory: 'UNKNOWN', funding: 'UNKNOWN' }),
+  ] });
+  const pos = m.kanaele.POS;
+  assert.strictEqual(pos.kartentyp.basis, 0);
+  pos.kartentyp.gruppen.forEach(g => {
+    assert.strictEqual(g.anteilAttempts, 0, g.schluessel + ' muss 0 sein, nicht null');
+  });
+  pos.funding.gruppen.forEach(g => {
+    assert.strictEqual(g.anteilAttempts, 0, g.schluessel + ' muss 0 sein, nicht null');
+  });
+  // Gegenprobe an derselben Stelle: die Quote OHNE Grundlage bleibt null.
+  pos.kartentyp.gruppen.forEach(g => assert.strictEqual(g.successRate, null));
+});
+
 test('P7: DCC-Anteil an erfolgreichen Karten-Attempts', () => {
   const m = modell({ dim: [
     dimZeile({ brand: 'Visa', dcc: true, attempts: 2 }),
@@ -850,9 +951,10 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   assert.strictEqual(unbekannt.attempts, 34);
   assert.ok(!pos.herkunft.gruppen.some(g => g.schluessel === 'INTER' && g.attempts > 0));
 
-  // P3: Trinkgeld gibt es nur am POS. 1'526.07 von 42'298.59 Umsatz.
+  // P3: Trinkgeld gibt es nur am POS. 1'526.07 von 30'891.16 Umsatz.
   assert.strictEqual(pos.waehrungen[0].tip, 152607000000);
-  assert.strictEqual(Math.round(pos.waehrungen[0].tipQuote * 10) / 10, 3.6);
+  assert.strictEqual(pos.waehrungen[0].betrag, 3089116000000);
+  assert.strictEqual(Math.round(pos.waehrungen[0].tipQuote * 10) / 10, 4.9);
 
   const ecom = m.kanaele.ECOM;
   assert.strictEqual(ecom.kpi.offen, 9);

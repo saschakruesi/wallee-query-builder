@@ -19,7 +19,7 @@ const KOPF = [
   'block', 'space_id', 'channel', 'brand', 'wallet', 'waehrung', 'attempt_state',
   'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
   'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
-  'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
+  'anzahl_attempts', 'summe_betrag', 'summe_betrag_failed',
   'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
 ];
 
@@ -36,7 +36,7 @@ const DIM_POS = {
   waehrung: 'CHF', attempt_state: 'SUCCESSFUL', auth_response_code: '00',
   issuer_country: 'CH', card_category: 'CLASSIC', funding: 'DEBIT',
   dcc: 'false', tds_started: 'false', tds_cavv: 'false',
-  anzahl_attempts: '20', anzahl_transaktionen: '20',
+  anzahl_attempts: '20',
   summe_betrag: '200.00000000', summe_betrag_failed: '0.00000000',
   summe_refund: '0.00000000',
 };
@@ -277,11 +277,11 @@ test('P3: Trinkgeld-Spalten haengen an "Betraege je Waehrung", wo es Trinkgeld g
     'Rückerstattungen:betrag', 'Refund-Quote %:pct',
     'Trinkgeld:betrag', 'Trinkgeld-Quote %:pct',
   ]);
-  // 1'526.07 von 42'298.59 Umsatz - roh, ungerundet, in 1e-8-Einheiten.
+  // 1'526.07 von 30'891.16 Umsatz - roh, ungerundet, in 1e-8-Einheiten.
   const zeile = pos.zeilen[0];
   assert.strictEqual(zeile[0], 'CHF');
   assert.strictEqual(zeile[9], 152607000000);
-  assert.strictEqual(Math.round(zeile[10] * 10) / 10, 3.6);
+  assert.strictEqual(Math.round(zeile[10] * 10) / 10, 4.9);
   // Das Trinkgeld ist im Umsatz bereits enthalten (an Produktivdaten belegt) -
   // der Hinweis muss das sagen, sonst wird es addiert.
   assert.match(pos.hinweis, /Trinkgeld/);
@@ -358,6 +358,20 @@ test('Alle Titel ueberleben xlsxBlattName ungekuerzt und bleiben eindeutig', () 
   });
 });
 
+test('E6: die PAN-Quelle steht durchgehend in einer Sprache', () => {
+  // Vorher mischte der Block eine uebersetzte Schublade ("Unbekannt") mit rohen
+  // Label-Werten ("DEVICE_TOKEN_APPLE_PAY") - dieselbe Spalte, zwei Register.
+  // Uebersetzt sind nur die beiden an Produktivdaten belegten Werte; ein
+  // unbekannter bleibt bewusst roh stehen, statt erfunden zu werden.
+  const b = plain(reportingExportBloeckeFixtur());
+  const pan = b.find(x => x.titel === 'E-Com · PAN-Quelle');
+  assert.ok(pan, 'PAN-Quelle-Block fehlt');
+  const namen = pan.zeilen.map(z => z[0]);
+  assert.ok(namen.includes('Device-Token (Apple Pay)'));
+  assert.ok(!namen.some(n => /_/.test(n)), 'kein roher Label-Wert: ' + namen.join(', '));
+  assert.ok(namen.includes('Unbekannt'));
+});
+
 // --- Fixture ----------------------------------------------------------------
 
 test('Fixture: alle drei Kanaele, Titelblock nennt Zeitraum und Spaces', () => {
@@ -375,10 +389,13 @@ test('Fixture: alle drei Kanaele, Titelblock nennt Zeitraum und Spaces', () => {
   assert.strictEqual(kopfWerte.get('Kanäle'), 'POS, E-Com, Andere');
   const kanaele = [...new Set(b.slice(1).map(x => x.kanal))];
   assert.deepStrictEqual(kanaele, ['POS', 'ECOM', 'OTHER']);
-  // Verlauf und Stunden gibt es nur, wo TIME-Zeilen vorliegen (POS, E-Com).
+  // Verlauf und Stunden gibt es, wo TIME-Zeilen vorliegen - seit die Fixture
+  // ihren TIME-Block aus dem DIM-Block ableitet, ist das jeder Kanal mit
+  // Attempts, also auch "Andere". Genau so verhaelt sich die echte Query: beide
+  // Bloecke zaehlen dasselbe att-CTE.
   assert.ok(b.some(x => x.titel === 'POS · Verlauf' && x.typ === 'balken'));
   assert.ok(b.some(x => x.titel === 'E-Com · Stunden' && x.typ === 'balken'));
-  assert.ok(!b.some(x => x.titel === 'Andere · Verlauf'));
+  assert.ok(b.some(x => x.titel === 'Andere · Verlauf' && x.typ === 'balken'));
   // Terminals: die Fixture traegt keine Terminal-Spalten, der Block entfaellt.
   assert.ok(!b.some(x => x.titel === 'POS · Terminals'));
 });

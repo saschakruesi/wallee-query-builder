@@ -105,11 +105,17 @@ dcc, tds_started, tds_cavv, eci`
 | Spalte | Inhalt |
 |---|---|
 | `anzahl_attempts` | `COUNT(*)` |
-| `anzahl_transaktionen` | `COUNT(DISTINCT transaction_id)` — Attempts pro Transaktion (Retry-Rate) innerhalb des Tupels |
 | `summe_betrag` | `SUM(amount)` (nur SUCCESSFUL, sonst 0) |
 | `summe_betrag_failed` | `SUM(amount_failed)` (nur FAILED) |
 | `summe_refund` | `SUM(t.refundedamount)` je erfolgreichem Attempt (Refund-Quote) |
 | `summe_tip` | `SUM(tip_amount)` (nur SUCCESSFUL) — Grundlage von P3. Exakt wie `summe_betrag`, weil pro Transaktion höchstens ein erfolgreicher Attempt existiert; in TIME und CONV ein typisierter `CAST(NULL AS decimal(38,8))`-Platzhalter |
+
+~~`anzahl_transaktionen`~~ (`COUNT(DISTINCT transaction_id)` je DIM-Tupel) ist **seit
+v5.11 entfallen**: über DIM-Tupel hinweg ist der Wert nicht summierbar — dieselbe
+Transaktion steckt beim Retry in mehreren Tupeln —, deshalb liest ihn niemand. Die
+Transaktionszahl und jede Retry-Rate kommen ausschliesslich aus dem Block `CONV` (E3/E4).
+Die Spalte kostete in Athena ein `DISTINCT` über 16–18 Gruppierungsspalten und im Parser
+eine Pflichtspalte, die nichts absichert.
 
 **Block `TIME`** — `GROUP BY space_id, channel, brand, currency, attempt_state,
 date(ca.createdon) AS tag, hour(ca.createdon) AS stunde` mit `anzahl_attempts`,
@@ -164,7 +170,7 @@ Nachkommastelle, Schweizer Zahlformat (`formatZahlCH`, `CH_TAUSENDER`).
 | E1 | **3DS-Akzeptanz (Kreditkarte)** | AUTHENTICATED / (AUTHENTICATED + FAILED_OR_ABANDONED) — Referenzmonat 281/310 = 90.6 %; zusätzlich «3DS angefordert»-Anteil an allen Karten-Attempts (73 %) und Wallet-Kryptogramm-Anteil. Kein Liability-Shift-Label vorhanden |
 | E2 | **Success Rate nach 3DS-Status** | K1 gruppiert nach `tds_status` — zeigt, ob 3DS-Failures die Conversion drücken |
 | E3 | **Transaktions-Conversion** | `tx_erfolgreich / tx_mit_attempt` (Block CONV) — der Wert, den der Shop-Betreiber «Conversion» nennt; neben K1 ausgewiesen, mit Erklärung des Unterschieds |
-| E4 | **Retry-Rate** | `anzahl_attempts / anzahl_transaktionen` pro Brand — > 1.3 deutet auf Reibung im Checkout |
+| E4 | **Retry-Rate** | `anzahl_attempts / tx_mit_attempt` pro Brand (Block `CONV`, nicht die entfallene DIM-Spalte `anzahl_transaktionen`) — > 1.3 deutet auf Reibung im Checkout |
 | E5 | **Ablehngründe pro Zahlungsmittel** | K8 × Brand (Tabelle, Top 5 je Brand) |
 | E6 | **PAN-Quelle / Token-Anteil** | Verteilung `pan_type` (Klartext-PAN vs. Device Token Apple/Google Pay vs. Scheme Token Click to Pay) mit Success Rate je Typ — `ca.tokenversion_id` ist in Task 0 durchgehend NULL und taugt nicht |
 
