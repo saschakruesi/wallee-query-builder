@@ -79,25 +79,35 @@ test('In einem anderen Modus bleiben beide Reporting-Panels aus', () => {
 });
 
 test('Terminal-Panel folgt der Checkbox und der Kanalwahl, nicht nur dem Modus', () => {
-  const { app, el } = starte({
-    wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }),
+  const { app, dokument, el } = starte({
+    wallee_query_builder_v6: JSON.stringify({
+      mode: 'reporting', spaces: [{ id: '40402', label: '', selected: true }],
+    }),
   });
   assert.ok(!aktiv(el('terminalSection')), 'Ausgangslage: keine Aufschluesselung');
+  assert.doesNotMatch(sql(app, dokument), /paymentterminal/);
 
   el('reportingByTerminal').checked = true;
   el('reportingByTerminal').dispatch('change');
   assert.strictEqual(app.getState().reportingByTerminal, true);
   assert.ok(aktiv(el('terminalSection')), 'Aufschluesselung blendet das Terminal-Panel ein');
+  // Die Klasse allein reicht nicht: ohne generate() im Handler stuende im
+  // Kopierfeld weiter das SQL ohne Terminal-Aufschluesselung.
+  assert.match(sql(app, dokument), /paymentterminal/,
+    'Die Umschaltung muss das SQL neu erzeugen, nicht nur das Panel einblenden');
 
   el('reportingChannelEcom').checked = true;
   el('reportingChannelEcom').dispatch('change');
   assert.strictEqual(app.getState().reportingChannel, 'ECOM');
   assert.ok(!aktiv(el('terminalSection')), 'E-Commerce hat keine Terminals');
+  assert.doesNotMatch(sql(app, dokument), /paymentterminal/,
+    'Mit dem Panel verschwindet auch die Aufschluesselung aus dem SQL');
 
   el('reportingChannelBoth').checked = true;
   el('reportingChannelBoth').dispatch('change');
   assert.strictEqual(app.getState().reportingChannel, 'BOTH');
   assert.ok(aktiv(el('terminalSection')), 'Bei "Beide" ist der POS-Teil wieder betroffen');
+  assert.match(sql(app, dokument), /paymentterminal/);
 });
 
 test('Haendler-Land wird als ISO-2 in Grossbuchstaben gehalten', () => {
@@ -181,6 +191,10 @@ test('ingestReportingCsv baut das Modell und schaltet die Aktionen frei', () => 
   const { app, el } = starte({
     wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }),
   });
+  // Der DOM-Stub uebernimmt die Klassen aus dem Markup nicht - ohne diesen
+  // Ausgangszustand waere "ist sichtbar" auch dann wahr, wenn der Ingest die
+  // Aktionen gar nicht freischaltet.
+  el('reportingReportActions').classList.add('hidden');
   const ok = app.ingestReportingCsv(FIXTURE);
   assert.strictEqual(ok, true, 'Die Fixture muss sich lesen lassen');
   assert.ok(sichtbar(el('reportingReportActions')), 'Export-Aktionen erscheinen erst mit Daten');
@@ -210,12 +224,18 @@ test('Das Haendler-Land aus dem State geht ins Modell', () => {
 });
 
 test('CSV-Import im Kopieren-Modus laeuft ueber denselben Ingest', () => {
+  // Bewusst aus einem ANDEREN Modus heraus: startete der Test in 'reporting',
+  // waere die Zusicherung auf state.mode auch ohne das setMode() im Ingest
+  // gruen - getState() ist eine lebende Closure.
   const { app, el } = starte({
-    wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }),
+    wallee_query_builder_v6: JSON.stringify({ mode: 'brand' }),
   });
+  el('reportingReportActions').classList.add('hidden');   // Markup-Ausgangszustand
   assert.strictEqual(app.uebergibReportingCsv(FIXTURE), true);
-  assert.ok(sichtbar(el('reportingReportActions')));
   assert.strictEqual(app.getState().mode, 'reporting', 'Der Ingest schaltet in den eigenen Modus');
+  assert.ok(sichtbar(el('reportingReportActions')));
+  assert.ok(aktiv(el('reportingSection')), 'und blendet dessen Panels ein');
+  assert.ok(aktiv(el('reportingReportSection')));
 });
 
 // --- Account-Override greift nur im Settlement-Modus -----------------------
@@ -314,4 +334,118 @@ test('Ein gueltiges Haendler-Land rechnet das bereits geladene Modell neu', () =
   el('reportingMerchantCountry').dispatch('input');
   assert.strictEqual(app.reportingModellAktuell().merchantCountry, 'FR',
     'Das Modell muss dem neuen Haendler-Land folgen');
+});
+
+// --- Persistenz -----------------------------------------------------------
+// getState() ist eine lebende Closure: eine Zusicherung darauf sieht ein
+// fehlendes saveState() NICHT. Deshalb gegen den localStorage-Stub pruefen,
+// wie es die Migrationstests tun.
+function gespeichert(app) {
+  return JSON.parse(app._localStorage.getItem(app.STORAGE_KEY) || '{}');
+}
+
+test('Alle drei Reporting-Bedienelemente schreiben ihren Wert in den Speicher', () => {
+  const { app, el } = starte({ wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }) });
+
+  el('reportingMerchantCountry').value = 'fr';
+  el('reportingMerchantCountry').dispatch('input');
+  assert.strictEqual(gespeichert(app).reportingMerchantCountry, 'FR',
+    'Ohne saveState() waere das Land nach einem Neuladen wieder weg');
+
+  el('reportingByTerminal').checked = true;
+  el('reportingByTerminal').dispatch('change');
+  assert.strictEqual(gespeichert(app).reportingByTerminal, true);
+
+  el('reportingChannelPos').checked = true;
+  el('reportingChannelPos').dispatch('change');
+  assert.strictEqual(gespeichert(app).reportingChannel, 'POS');
+});
+
+// --- Haendler-Land: das Feld bleibt nicht leer stehen ----------------------
+test('Beim Verlassen des Landfeldes kommt der gueltige Wert zurueck', () => {
+  // Der input-Handler laesst einen Rumpf bewusst stehen, ohne ihn zu
+  // uebernehmen. Ohne den blur-Abgleich zeigte das Feld den Rest der Sitzung
+  // nichts an, waehrend der Report-Kopf "Haendler-Land: DE" ausweist.
+  const { el } = starte({
+    wallee_query_builder_v6: JSON.stringify({
+      mode: 'reporting', reportingMerchantCountry: 'DE',
+    }),
+  });
+  el('reportingMerchantCountry').value = '';
+  el('reportingMerchantCountry').dispatch('input');
+  assert.strictEqual(el('reportingMerchantCountry').value, '', 'waehrend des Tippens leer');
+
+  el('reportingMerchantCountry').dispatch('blur');
+  assert.strictEqual(el('reportingMerchantCountry').value, 'DE',
+    'Feld und Modell duerfen nicht auseinanderlaufen');
+});
+
+// --- Was beim Laden aus dem State in die Bedienelemente zurueckkommt -------
+// Eine Zusicherung auf getState() sieht NICHT, ob die Eingabefelder den
+// gespeicherten Stand auch anzeigen: nach einem Neuladen stuende sonst der
+// Markup-Default in der Maske, waehrend der State etwas anderes sagt - und die
+// Query liefe nach dem sichtbaren Wert, nicht nach dem gewaehlten.
+test('Beim Laden zeigen die Bedienelemente den gespeicherten Stand', () => {
+  const { el } = starte({
+    wallee_query_builder_v6: JSON.stringify({
+      mode: 'reporting', reportingChannel: 'ECOM',
+      reportingMerchantCountry: 'DE', reportingByTerminal: true,
+    }),
+  });
+  assert.strictEqual(el('reportingChannelEcom').checked, true);
+  assert.strictEqual(el('reportingChannelBoth').checked, false,
+    'Der Markup-Default darf nicht angehakt stehenbleiben');
+  assert.strictEqual(el('reportingChannelPos').checked, false);
+  assert.strictEqual(el('reportingMerchantCountry').value, 'DE');
+  assert.strictEqual(el('reportingByTerminal').checked, true);
+});
+
+test('Ein Kanalwechsel nimmt den Haken bei den beiden anderen Radios weg', () => {
+  const { el } = starte({ wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }) });
+  assert.strictEqual(el('reportingChannelBoth').checked, true);
+
+  el('reportingChannelPos').checked = true;
+  el('reportingChannelPos').dispatch('change');
+  assert.strictEqual(el('reportingChannelBoth').checked, false);
+  assert.strictEqual(el('reportingChannelEcom').checked, false);
+});
+
+// --- Optionen fuer die Export-Bloecke -------------------------------------
+// Der GEWAEHLTE Zeitraum und die Spaces stehen nur hier - das Modell kennt nur
+// den belegten Zeitraum. Step 7 haengt daran (§6.2); ohne diese Zusicherung
+// koennte der Ingest sie fallen lassen, ohne dass etwas anschlaegt.
+test('reportingExportOptionen traegt gewaehlten Zeitraum und Spaces', () => {
+  const { app } = starte({
+    wallee_query_builder_v6: JSON.stringify({
+      mode: 'reporting',
+      spaces: [{ id: '40402', label: '', selected: true },
+        { id: '12622', label: '', selected: true },
+        { id: '99999', label: '', selected: false }],
+      startDate: '2026-07-01', startTime: '00:00:00',
+      endDate: '2026-08-01', endTime: '00:00:00',
+    }),
+  });
+  app.ingestReportingCsv(FIXTURE);
+  const opt = plain(app.reportingExportOptionen());
+  assert.deepStrictEqual(opt.spaces, ['40402', '12622'],
+    'Nur die angehakten Spaces, in der Reihenfolge der Liste');
+  assert.strictEqual(opt.zeitraum.start, '2026-07-01 00:00:00');
+  assert.strictEqual(opt.zeitraum.end, '2026-08-01 00:00:00');
+});
+
+test('Ein Fehler nach einem geglueckten Ingest raeumt den alten Report weg', () => {
+  // Sonst stuende der Report der vorigen Abfrage weiter auf dem Bildschirm,
+  // waehrend die Statuszeile einen Fehler meldet - veraltete Zahlen, die wie
+  // aktuelle aussehen. Der Fehlerpfad muss deshalb aus einem VORHANDENEN
+  // Modell heraus geprueft werden, nicht aus dem leeren Ausgangszustand.
+  const { app, el } = starte({
+    wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }),
+  });
+  assert.strictEqual(app.ingestReportingCsv(FIXTURE), true);
+  assert.ok(app.reportingModellAktuell(), 'Vorbedingung: es gibt ein Modell');
+
+  assert.strictEqual(app.ingestReportingCsv(''), false);
+  assert.strictEqual(app.reportingModellAktuell(), null, 'Das alte Modell muss weg sein');
+  assert.ok(!sichtbar(el('reportingReportActions')));
+  assert.strictEqual(el('reportingStatus').dataset.art, 'fehler');
 });

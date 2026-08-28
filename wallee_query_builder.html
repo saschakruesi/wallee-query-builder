@@ -7893,6 +7893,15 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     reportingModellNeuBauen();
   });
 
+  // Beim Verlassen des Feldes den gueltigen Stand zurueckschreiben. Der
+  // input-Handler laesst einen Rumpf ("", "D") bewusst stehen, ohne ihn in
+  // State und Modell zu uebernehmen - ohne diesen Abgleich bliebe das Feld den
+  // Rest der Sitzung leer, waehrend der Report-Kopf "Haendler-Land: DE"
+  // ausweist. Genau diese Diskrepanz waere im Bericht sichtbar.
+  reportingMerchantCountryEl.addEventListener('blur', () => {
+    reportingMerchantCountryEl.value = state.reportingMerchantCountry || REPORTING_DEFAULT_LAND;
+  });
+
   reportingByTerminalToggle.addEventListener('change', () => {
     state.reportingByTerminal = reportingByTerminalToggle.checked;
     saveState();

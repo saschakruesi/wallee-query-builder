@@ -132,6 +132,9 @@ const EXPORTED = [
   'uebergibReportingCsv',
   'renderReportingReport',
   'reportingModellAktuell',
+  // Zeitraum/Spaces fuer die Bloecke - Step 7 haengt daran (siehe §6.2 des Berichts).
+  'reportingExportOptionen',
+  'aktualisiereReportingInputs',
   'buildSettlementReportModel',
   'settlementExportBloecke',
   'buildSettlementReportCsv',
