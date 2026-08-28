@@ -256,12 +256,39 @@ test('Trinkgeld kommt ueber tipCte, lineitem wird nie direkt gejoint', () => {
   assert.match(s, /tip AS \(/);
   assert.match(s, /GROUP BY tl\.transaction_id/);
   assert.match(s, /LEFT JOIN tip\s+ON tip\.transaction_id = t\.id/);
-  const attCte = s.slice(s.indexOf('att AS ('), s.indexOf("\nSELECT\n"));
-  assert.doesNotMatch(attCte, /JOIN (?:transaction_)?lineitem/);
+  // Die Grenzen des att-CTE laut behaupten statt still falsch schneiden: ein
+  // top-level SELECT vor att wuerde die Scheibe sonst leer lassen und den
+  // Test tautologisch gruen faerben.
+  const attVon = s.indexOf('att AS (');
+  const attBis = s.indexOf("\nSELECT\n");
+  assert.ok(attVon >= 0 && attBis > attVon,
+    'att-CTE nicht abgrenzbar - steht ein SELECT auf oberster Ebene vor att?');
+  const attCte = s.slice(attVon, attBis);
+  // Bewusst der ganze Bezeichner und nicht nur "JOIN lineitem": ein
+  // Komma-Join (FROM chargeattempt ca, lineitem li2) ist derselbe Fehler und
+  // traegt kein JOIN-Schluesselwort.
+  assert.doesNotMatch(attCte, /lineitem/);
   // tipCte braucht ein CTE tx mit der Spalte id. Es kommt aus den Attempts des
   // Zeitraums, nicht aus txCte: txCte filtert auf t.completedon und t.state,
   // der Reporting-Modus filtert auf ca.createdon und ohne Statusfilter.
   assert.match(s, /WITH tx AS \(\n    SELECT DISTINCT c\.transaction_id\s+AS id/);
+});
+
+test('Das tx-CTE traegt denselben Kanalfilter wie att', () => {
+  // tx grenzt ein, fuer welche Transaktionen tipCte ueberhaupt
+  // transaction_lineitem/lineitem anfasst. Ohne den Kanalfilter zaehlte der
+  // Bericht ueber E-Commerce trotzdem das Trinkgeld saemtlicher POS-Umsaetze
+  // zusammen - also genau den teuren Teil, den der Join danach wegwirft.
+  const vorTip = t => t.slice(0, t.indexOf('tip AS ('));
+  const ecom = sql({ channels: ['ECOM'] });
+  assert.match(vorTip(ecom), new RegExp(`ca\\.saleschannel IN \\(${B.SALES_CHANNEL_ECOM}\\)`));
+  assert.ok(!vorTip(ecom).includes(B.SALES_CHANNEL_POS));
+  // Ohne Kanalwahl bleibt es auch im tx-CTE ungefiltert (SPEC 7: OTHER
+  // sichtbar halten).
+  assert.doesNotMatch(vorTip(sql({ channels: [] })), /saleschannel/);
+  // Der Terminal-Filter bleibt bewusst draussen: er haengt am
+  // paymentterminal-Join, den tx nicht traegt.
+  assert.doesNotMatch(vorTip(sql({ terminalIds: ['T-1'] })), /pt\.identifier/);
 });
 
 test('Trinkgeld zaehlt nur den erfolgreichen Attempt (CASE-Guard)', () => {

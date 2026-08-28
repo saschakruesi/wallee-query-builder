@@ -3195,6 +3195,14 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     // das Trinkgeld genau der Transaktionen weg, deren Versuch im Zeitraum
     // liegt, deren Abschluss aber nicht - ein anderer Zeitschnitt als der des
     // Reports.
+    //
+    // Der Kanalfilter laeuft mit: tx entscheidet, fuer welche Transaktionen
+    // tipCte ueberhaupt transaction_lineitem/lineitem anfasst. Ohne ihn suchte
+    // ein E-Commerce-Bericht das Trinkgeld saemtlicher POS-Umsaetze zusammen -
+    // also gerade den teuren Teil, den der LEFT JOIN danach wegwirft.
+    // Der Terminal-Filter bleibt bewusst draussen: er haengt am
+    // paymentterminal-Join, den tx nicht traegt (und er ist ohnehin nur eine
+    // Verengung innerhalb von POS).
     const txReporting = `tx AS (
     SELECT DISTINCT c.transaction_id                    AS id
     FROM chargeattempt ca
@@ -3203,7 +3211,7 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     WHERE ${spaceInClause(spaces, 'ca.spaceid')}
       AND ca.createdon >= TIMESTAMP '${start}'
       AND ca.createdon <  TIMESTAMP '${end}'
-      AND ca.environment = '${ATTEMPT_ENVIRONMENT}'
+      AND ca.environment = '${ATTEMPT_ENVIRONMENT}'${kanalFilter}
 )`;
 
     return `WITH ${txReporting},
@@ -3316,9 +3324,9 @@ SELECT
     -- exakt (Task 0: 12'507 von 12'522 Transaktionen mit genau einem Attempt).
     -- Dasselbe gilt fuer summe_betrag_failed: jeder gescheiterte Versuch
     -- derselben Transaktion addiert authorizationamount erneut, und genau das
-    -- ist im E-Commerce mit Retries der Normalfall. Exakt sind nur summe_betrag
-    -- und summe_tip - beide haengen am CASE WHEN state = 'SUCCESSFUL', und pro
-    -- Transaktion gibt es hoechstens einen erfolgreichen Attempt.
+    -- ist im E-Commerce mit Retries der Normalfall. summe_tip ist im selben
+    -- Mass exakt wie summe_betrag; der Vorbehalt oben zu summe_refund bleibt
+    -- als konservative Annahme stehen.
     CAST(SUM(refund) AS decimal(38,8))              AS summe_refund,
     CAST(SUM(tip_amount) AS decimal(38,8))          AS summe_tip,
     CAST(NULL AS bigint)                            AS tx_mit_attempt,

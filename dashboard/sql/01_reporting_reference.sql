@@ -151,9 +151,9 @@ SELECT
     -- exakt (Task 0: 12'507 von 12'522 Transaktionen mit genau einem Attempt).
     -- Dasselbe gilt fuer summe_betrag_failed: jeder gescheiterte Versuch
     -- derselben Transaktion addiert authorizationamount erneut, und genau das
-    -- ist im E-Commerce mit Retries der Normalfall. Exakt sind nur summe_betrag
-    -- und summe_tip - beide haengen am CASE WHEN state = 'SUCCESSFUL', und pro
-    -- Transaktion gibt es hoechstens einen erfolgreichen Attempt.
+    -- ist im E-Commerce mit Retries der Normalfall. summe_tip ist im selben
+    -- Mass exakt wie summe_betrag; der Vorbehalt oben zu summe_refund bleibt
+    -- als konservative Annahme stehen.
     CAST(SUM(refund) AS decimal(38,8))              AS summe_refund,
     CAST(SUM(tip_amount) AS decimal(38,8))          AS summe_tip,
     CAST(NULL AS bigint)                            AS tx_mit_attempt,
