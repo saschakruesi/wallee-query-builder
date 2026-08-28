@@ -6034,6 +6034,16 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // nicht zusammenfallen.
   const REPORTING_OHNE_GRUNDLAGE = '—';
 
+  // Ein Format, das diese Schicht nicht kennt - in der Praxis das Sentinel
+  // 'gemischt' der Kachel-Wertspalte, wenn ein Aufrufer den Umweg ueber
+  // reportingZellFormat() vergisst. Bewusst ein EIGENES Zeichen: der Strich und
+  // die leere Zelle sind in denselben Spalten bereits vergeben (— = kein
+  // Nenner, '' = Fortsetzungszeile einer Waehrungsgruppe), ein Fehler waere
+  // dort von einer gueltigen Aussage nicht zu unterscheiden. So faellt er auf,
+  // ohne dass die Ausgabe wirft - ein Wurf aus der Zellschleife machte aus
+  // einem Formatierungsfehler eine tote Ansicht.
+  const REPORTING_FORMAT_UNBEKANNT = '#FORMAT?';
+
   function reportingZellText(wert, format) {
     if (wert === '' || wert === undefined) return '';
     if (wert === null) return REPORTING_OHNE_GRUNDLAGE;
@@ -6042,16 +6052,15 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (format === 'betrag') return formatAmountCH(wert);
       if (format === 'pct') return formatProzentCH(wert) + ' %';
       if (format === 'faktor') return formatZahlCH(wert);
-      // Unbekanntes Format an einer ZAHL. Das passiert genau dann, wenn ein
-      // Aufrufer den Umweg ueber reportingZellFormat() vergisst und das
-      // Sentinel 'gemischt' der Kachel-Wertspalte bis hierher kommt. Ein
-      // String(wert) gaebe dort "4229859000000" aus - eine Zahl, die wie ein
-      // Messwert aussieht. Der Strich ist die schlechtere Aussage, aber der
-      // bessere Fehler: eine ganze Spalte voller "—" ist unuebersehbar kaputt,
-      // ein rohes 1e-8-Wort nicht. Preis: er ist von einem echten "kein
-      // Nenner" nicht zu unterscheiden - deshalb faengt der Sentinel den Fall
-      // im Test ab, statt sich auf die Anzeige zu verlassen.
-      return REPORTING_OHNE_GRUNDLAGE;
+      // 'text' ist ein gueltiges Format UND der Vorgabewert: reportingSpalte()
+      // setzt es, wenn keines angegeben ist, und reportingZellFormat() liefert
+      // es fuer eine fehlende Kopfspalte. Eine Zahl darunter ist deshalb keine
+      // Fehlbedienung, sondern schlicht als Zeichenkette zu zeigen.
+      if (format === 'text') return String(wert);
+      // Alles Uebrige ist ein echtes Versehen (siehe REPORTING_FORMAT_UNBEKANNT):
+      // String(wert) gaebe hier "4229859000000" aus - eine Zahl, die wie ein
+      // Messwert aussieht.
+      return REPORTING_FORMAT_UNBEKANNT;
     }
     return String(wert);
   }
@@ -6071,13 +6080,17 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // dieselbe Zahl zeigen - eine CSV mit 1.105793450881612 neben einem PDF
     // mit 1.11 laesst den Leser raten, welche der beiden gilt.
     if (format === 'faktor') return Math.round(wert * 100) / 100;
-    // Der Zaehler geht ungerundet durch - explizit, damit der Zweig darunter
-    // wirklich nur unbekannte Formate faengt.
-    if (format === 'zahl') return wert;
-    // Unbekanntes Format an einer Zahl: gleiche Lage wie in reportingZellText
-    // (siehe dort). Eine leere Zelle ist in CSV/Excel der sichtbare Fehler -
+    // Zaehler und Text gehen unveraendert durch - beide explizit, damit der
+    // Zweig darunter wirklich nur unbekannte Formate faengt. 'text' ist dabei
+    // der Vorgabewert von reportingSpalte()/reportingZellFormat(), keine
+    // Fehlbedienung.
+    if (format === 'zahl' || format === 'text') return wert;
+    // Unbekanntes Format an einer Zahl: gleiche Lage wie in reportingZellText.
+    // Eine LEERE Zelle taugt hier nicht als Fehlerzeichen - sie ist in
+    // denselben Spalten schon vergeben (Fortsetzungszeile einer
+    // Waehrungsgruppe). Deshalb derselbe eigene Marker wie auf dem Bildschirm;
     // die rohe 1e-8-Einheit waere eine Zahl, mit der jemand weiterrechnet.
-    return '';
+    return REPORTING_FORMAT_UNBEKANNT;
   }
 
   // --- Balken als inline-SVG ------------------------------------------------

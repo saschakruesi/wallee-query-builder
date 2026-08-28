@@ -207,13 +207,44 @@ test('Eine Zahl mit unbekanntem Format wird sichtbar falsch, nicht still falsch'
   // Genau der Fall, den Task 4 mit dem Sentinel 'gemischt' provoziert: wer den
   // Umweg ueber reportingZellFormat() vergisst, darf keine rohe 1e-8-Einheit
   // hinschreiben, die wie ein Messwert aussieht.
-  assert.strictEqual(app.reportingZellText(4229859000000, 'gemischt'), '—');
-  assert.strictEqual(app.reportingZellText(1403, 'nochnichterfunden'), '—');
-  // In den maschinenlesbaren Ausgaben ist die leere Zelle der sichtbare Fehler -
-  // eine Zahl liesse sich weiterverrechnen.
-  assert.strictEqual(app.reportingZellZahl(4229859000000, 'gemischt'), '');
+  //
+  // Der Marker ist bewusst WEDER der Strich NOCH die leere Zelle: beide sind in
+  // denselben Spalten schon vergeben (— = kein Nenner auf dem Schirm,
+  // '' = Fortsetzungszeile einer Waehrungsgruppe in CSV/Excel). Ein Fehler
+  // waere sonst von einer gueltigen Aussage nicht zu unterscheiden.
+  assert.strictEqual(app.reportingZellText(4229859000000, 'gemischt'), '#FORMAT?');
+  assert.strictEqual(app.reportingZellText(1403, 'nochnichterfunden'), '#FORMAT?');
+  assert.strictEqual(app.reportingZellZahl(4229859000000, 'gemischt'), '#FORMAT?');
   // Text bleibt Text: das Format ist dort ohnehin nur eine Ausrichtungsfrage.
   assert.strictEqual(app.reportingZellText('Visa', 'gemischt'), 'Visa');
+});
+
+test('Der Fehlermarker ist von den beiden gueltigen Aussagen unterscheidbar', () => {
+  const { app } = starte();
+  // Die drei Faelle stehen nebeneinander, damit keiner still auf einen anderen
+  // zusammenfaellt - genau das war der Fehler der ersten Fassung.
+  assert.strictEqual(app.reportingZellText(null, 'zahl'), '—', 'kein Nenner');
+  assert.strictEqual(app.reportingZellText('', 'zahl'), '', 'Fortsetzungszeile');
+  assert.strictEqual(app.reportingZellText(7, 'gemischt'), '#FORMAT?', 'Formatfehler');
+  assert.strictEqual(app.reportingZellZahl(null, 'zahl'), '');
+  assert.strictEqual(app.reportingZellZahl('', 'zahl'), '');
+  assert.strictEqual(app.reportingZellZahl(7, 'gemischt'), '#FORMAT?');
+});
+
+test('Das Format "text" ist gueltig und der Vorgabewert, kein Fehlerfall', () => {
+  const { app } = starte();
+  // reportingSpalte(label) setzt 'text', wenn kein Format angegeben ist, und
+  // reportingZellFormat() liefert es fuer eine fehlende Kopfspalte. Eine Zahl
+  // darunter ist deshalb keine Fehlbedienung - sie war einen
+  // reportingSpalte('Terminal-ID') davon entfernt, still geleert zu werden.
+  assert.strictEqual(app.reportingZellText(1403, 'text'), '1403');
+  assert.strictEqual(app.reportingZellZahl(1403, 'text'), 1403);
+  // Und der Vorgabeweg selbst: eine Spalte ohne Format ist eine text-Spalte,
+  // eine fehlende Kopfspalte ebenso.
+  const block = { kopf: [{ label: 'Nur eine Spalte', format: 'text' }], zeilen: [[1403]] };
+  assert.strictEqual(app.reportingZellFormat(block, 0, 0), 'text');
+  assert.strictEqual(app.reportingZellFormat(block, 0, 9), 'text', 'fehlende Kopfspalte');
+  assert.strictEqual(app.reportingZellText(1403, app.reportingZellFormat(block, 0, 9)), '1403');
 });
 
 // --- Bildschirm-Render -----------------------------------------------------
