@@ -4027,6 +4027,28 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // reines Kalenderdatum ohne Zeitzone ist - ueber die lokale Zeitzone zu
   // rechnen wuerde an Sommerzeitwechseln einen Tag verschieben.
   const REPORTING_TAG_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+  // Das Muster allein reicht NICHT: '2026-13-45' und '9999-99-99' erfuellen es,
+  // ergeben aber kein Datum - Date.parse liefert NaN. Ein NaN-Endpunkt macht
+  // jede Spannenrechnung zu NaN und die Auffuell-Schleife endlos, weil ihre
+  // Abbruchbedingung nie wahr wird (der Tab friert ein).
+  //
+  // Deshalb gibt es genau EIN Gueltigkeits-Praedikat, und beide Stellen
+  // benutzen es: die Bereichsbildung hier und die Zuordnung der TIME-Zeilen
+  // zum Tages-Eimer weiter unten. Liefe eine der beiden nur ueber das Muster,
+  // landete so eine Zeile in einem Eimer, den der Bereich nie ausgibt - sie
+  // verschwaende spurlos. So faellt sie sichtbar in kpi.ohneTag.
+  //
+  // NICHT geprueft wird die Kalender-Plausibilitaet: '2026-02-30' ist
+  // parsbar und wird von JavaScript still auf den 2. Maerz geschoben. Das ist
+  // bewusst so belassen (kosmetisch, und die Query selbst kann so etwas nicht
+  // erzeugen - date() laeuft ueber die Filterspalte).
+  function tagEpoche(tag) {
+    const s = String(tag == null ? '' : tag);
+    if (!REPORTING_TAG_REGEX.test(s)) return null;
+    const ms = Date.parse(s + 'T00:00:00Z');
+    return Number.isFinite(ms) ? Math.round(ms / 86400000) : null;
+  }
+  function istTag(tag) { return tagEpoche(tag) !== null; }
   function reportingTagPlus(tag, n) {
     const d = new Date(tag + 'T00:00:00Z');
     d.setUTCDate(d.getUTCDate() + n);
@@ -4047,16 +4069,17 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   function reportingTagesbereich(timeRows) {
     const vorhanden = new Set();
     timeRows.forEach(z => {
-      if (REPORTING_TAG_REGEX.test(String(z.tag))) vorhanden.add(z.tag);
+      if (istTag(z.tag)) vorhanden.add(z.tag);
     });
     if (!vorhanden.size) return { von: '', bis: '', tage: [], spanne: 0, lueckenlos: true };
     const sortiert = [...vorhanden].sort(strCmp);
     const von = sortiert[0];
     const bis = sortiert[sortiert.length - 1];
     // Echte Spanne des Berichts, unabhaengig davon, wie viele Tage der Verlauf
-    // am Ende auffuellt.
-    const spanne = Math.round(
-      (Date.parse(bis + 'T00:00:00Z') - Date.parse(von + 'T00:00:00Z')) / 86400000) + 1;
+    // am Ende auffuellt. Beide Endpunkte sind durch istTag() als echte Daten
+    // belegt, die Rechnung ist also endlich - der isFinite-Zweig unten ist das
+    // zweite Netz, nicht die Absicherung.
+    const spanne = tagEpoche(bis) - tagEpoche(von) + 1;
     // Ueber dem Deckel wird NICHT abgeschnitten: das Ende der Liste
     // abzuschneiden wuerde gemessene Tage samt ihren Attempts stillschweigend
     // verlieren - genau der Fehler, den die Luecken-Auffuellung verhindern
@@ -4064,11 +4087,26 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // Zeilen tragen: vollstaendig, aber nicht mehr lueckenlos. lueckenlos =
     // false sagt der Ausgabe, dass die x-Achse dann keine gleichmaessige
     // Tagesskala ist.
-    if (spanne > REPORTING_VERLAUF_MAX_TAGE) {
+    if (!Number.isFinite(spanne) || spanne > REPORTING_VERLAUF_MAX_TAGE) {
+      // spanne muss auch hier eine Zahl bleiben: ein NaN in zeitraum.tage
+      // waere genau die Sorte Fehler, gegen die betragOderNull antritt.
+      return {
+        von, bis, tage: sortiert,
+        spanne: Number.isFinite(spanne) ? spanne : sortiert.length,
+        lueckenlos: false,
+      };
+    }
+    // Die Schleife traegt ihre eigene harte Grenze, obwohl spanne sie bereits
+    // begrenzt: sie darf unter keinen Umstaenden der Grund sein, warum der
+    // Browser-Tab haengt. Greift sie doch, faellt der Verlauf auf die belegten
+    // Tage zurueck, statt abgeschnitten zu werden.
+    const tage = [];
+    for (let t = von; t <= bis && tage.length <= REPORTING_VERLAUF_MAX_TAGE; t = reportingTagPlus(t, 1)) {
+      tage.push(t);
+    }
+    if (tage.length > REPORTING_VERLAUF_MAX_TAGE) {
       return { von, bis, tage: sortiert, spanne, lueckenlos: false };
     }
-    const tage = [];
-    for (let t = von; t <= bis; t = reportingTagPlus(t, 1)) tage.push(t);
     return { von, bis, tage, spanne, lueckenlos: true };
   }
 
@@ -4270,7 +4308,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     let ohneTag = 0, ohneStunde = 0;
     timeRows.forEach(z => {
       spaces.add(z.spaceId);
-      if (REPORTING_TAG_REGEX.test(String(z.tag))) {
+      if (istTag(z.tag)) {
         let t = tagMap.get(z.tag);
         if (!t) { t = Object.assign({ waehrungMap: new Map() }, reportingLeerZaehler()); tagMap.set(z.tag, t); }
         reportingZaehle(t, z);

@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { loadBuilders, plain } = require('./harness');
 
 // Reihenfolge wie in der Query. Der Parser loest ueber den Header-Index auf,
@@ -953,4 +954,87 @@ test('C7: Haendler-Land wird normalisiert, ungueltiges faellt auf CH zurueck', (
     assert.strictEqual(m.merchantCountry, 'CH', 'Rueckfall fuer ' + String(wert));
     assert.strictEqual(m.kanaele.POS.herkunft.gruppen.find(g => g.schluessel === 'DOMESTIC').attempts, 5);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3, Fix-Runde 2: Daten, die dem Muster entsprechen, aber kein Datum sind.
+// Das Zeitlimit ist Teil der Zusicherung - eine Rueckkehr des Fehlers soll
+// schnell rot werden und nicht die CI blockieren.
+
+test('C8: unparsbares Datum haengt den Verlauf nicht auf', { timeout: 20000 }, () => {
+  // BEWUSST IM KINDPROZESS: der Fehler war eine SYNCHRONE Endlosschleife, und
+  // die kann das timeout-Optionsfeld von node:test nicht abbrechen - es greift
+  // nur zwischen den Ticks. Ein hier eingebauter Aufruf wuerde die CI
+  // blockieren statt rot zu werden. execFileSync mit Zeitlimit toetet den
+  // Prozess und laesst den Test in Sekunden fallen.
+  const skript = `
+    const { loadBuilders } = require(${JSON.stringify(path.join(__dirname, 'harness.js'))});
+    const { buildReportingModel } = loadBuilders();
+    const z = t => ({ spaceId: '90001', channel: 'POS', brand: 'Visa', waehrung: 'CHF',
+      attemptState: 'SUCCESSFUL', tag: t, stunde: 8, attempts: t === '9999-99-99' ? 6 : 4, betrag: 0 });
+    const m = buildReportingModel(
+      { dim: [], time: [z('2026-07-01'), z('9999-99-99')], conv: [] },
+      { merchantCountry: 'CH' });
+    process.stdout.write(JSON.stringify({
+      verlauf: m.kanaele.POS.verlauf.map(v => [v.tag, v.attempts]),
+      ohneTag: m.kanaele.POS.kpi.ohneTag,
+      tage: m.zeitraum.tage,
+      bis: m.zeitraum.bis,
+    }));
+  `;
+  let ausgabe;
+  try {
+    ausgabe = execFileSync(process.execPath, ['-e', skript], { timeout: 10000, encoding: 'utf8' });
+  } catch (e) {
+    assert.fail('buildReportingModel kehrte nicht zurueck (Endlosschleife?): ' + (e.signal || e.message));
+  }
+  const r = JSON.parse(ausgabe);
+  // Der unbrauchbare Tag zieht den Bereich nicht ins Endlose ...
+  assert.deepStrictEqual(r.verlauf, [['2026-07-01', 4]]);
+  // ... und verschwindet trotzdem nicht spurlos: seine Attempts stehen im
+  // Zaehler fuer Zeilen ohne verwertbaren Tag.
+  assert.strictEqual(r.ohneTag, 6);
+  assert.strictEqual(r.tage, 1);
+  assert.ok(Number.isFinite(r.tage), 'zeitraum.tage ist nicht endlich');
+  assert.strictEqual(r.bis, '2026-07-01');
+});
+
+test('C8: unmoegliches Datum ergibt kein NaN in zeitraum.tage', { timeout: 10000 }, () => {
+  const m = modell({ time: [
+    timeZeile({ tag: '2026-07-01', attempts: 3 }),
+    timeZeile({ tag: '2026-13-45', attempts: 2 }),
+  ] });
+  assert.ok(!Number.isNaN(m.zeitraum.tage), 'zeitraum.tage ist NaN');
+  assert.strictEqual(m.zeitraum.tage, 1);
+  assert.strictEqual(m.zeitraum.lueckenlos, true);
+  assert.strictEqual(m.kanaele.POS.kpi.ohneTag, 2);
+});
+
+test('C8: nur unparsbare Daten werfen nicht (RangeError)', { timeout: 10000 }, () => {
+  // Frueher lief reportingTagPlus auf ein Invalid Date und toISOString warf
+  // RangeError. Das Modell darf auf keiner lesbaren Eingabe werfen - dieselbe
+  // Regel, nach der die ganze Parser-Schicht gebaut ist.
+  const m = assert.doesNotThrow
+    ? modell({ time: [timeZeile({ tag: '9999-99-99', attempts: 5 })] })
+    : null;
+  assert.deepStrictEqual(plain(m.kanaele.POS.verlauf), []);
+  assert.strictEqual(m.kanaele.POS.kpi.ohneTag, 5);
+  assert.deepStrictEqual(plain(m.zeitraum), { von: '', bis: '', tage: 0, lueckenlos: true });
+  assert.ok(Number.isFinite(m.zeitraum.tage));
+  // Stunden bleiben trotzdem vollstaendig - der Tag ist unbrauchbar, die
+  // Stunde nicht.
+  assert.strictEqual(m.kanaele.POS.stunden.length, 24);
+  assert.strictEqual(m.kanaele.POS.stunden[8].attempts, 5);
+});
+
+test('C8: der Deckel bleibt wirksam, ohne Tage zu verlieren', { timeout: 10000 }, () => {
+  // Gegenprobe zu C2 mit einem PARSBAREN Ausreisser: die Schleife wird nicht
+  // durchlaufen, der Verlauf zeigt beide belegten Tage.
+  const m = modell({ time: [
+    timeZeile({ tag: '2026-07-01', attempts: 4 }),
+    timeZeile({ tag: '2999-01-01', attempts: 1 }),
+  ] });
+  assert.strictEqual(m.kanaele.POS.verlauf.length, 2);
+  assert.strictEqual(m.zeitraum.lueckenlos, false);
+  assert.ok(Number.isFinite(m.zeitraum.tage) && m.zeitraum.tage > 300000);
 });
