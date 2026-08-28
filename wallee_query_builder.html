@@ -3186,7 +3186,29 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     CAST(NULL AS varchar)                           AS terminal_name,` : '';
     const gruppeTerminal = mitTerminal ? `, terminal_identifier, terminal_name` : '';
 
-    return `WITH att AS (
+    // tipCte erwartet ein CTE tx mit der Spalte id und ist unveraendert
+    // wiederverwendet (P3, SPEC 4.2) - lineitem darf NIE direkt gejoint werden,
+    // eine Transaktion hat mehrere Line Items. tx kommt hier aus den Attempts
+    // des Zeitraums und bewusst NICHT aus txCte: txCte filtert auf
+    // t.completedon und t.state IN (FULFILL, COMPLETED), der Reporting-Modus
+    // filtert auf ca.createdon und kennt keinen Statusfilter. Mit txCte fiele
+    // das Trinkgeld genau der Transaktionen weg, deren Versuch im Zeitraum
+    // liegt, deren Abschluss aber nicht - ein anderer Zeitschnitt als der des
+    // Reports.
+    const txReporting = `tx AS (
+    SELECT DISTINCT c.transaction_id                    AS id
+    FROM chargeattempt ca
+    JOIN charge c
+      ON c.id      = ca.charge_id
+    WHERE ${spaceInClause(spaces, 'ca.spaceid')}
+      AND ca.createdon >= TIMESTAMP '${start}'
+      AND ca.createdon <  TIMESTAMP '${end}'
+      AND ca.environment = '${ATTEMPT_ENVIRONMENT}'
+)`;
+
+    return `WITH ${txReporting},
+${tipCte({ spaceIds: spaces })},
+att AS (
     -- Eine Zeile pro Charge Attempt. Alle abgeleiteten Spalten entstehen hier
     -- einmal, die drei Bloecke unten aggregieren nur noch darueber.
     SELECT
@@ -3226,6 +3248,15 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
         CASE WHEN ca.state = 'SUCCESSFUL' THEN t.completedamount     END AS amount,
         CASE WHEN ca.state = 'FAILED'     THEN t.authorizationamount END AS amount_failed,
         CASE WHEN ca.state = 'SUCCESSFUL' THEN t.refundedamount      END AS refund,
+        -- Trinkgeld (P3): tip ist pro TRANSAKTION vor-aggregiert, att hat aber
+        -- die Koernigkeit des Attempts. Der CASE ist deshalb NICHT optional:
+        -- ohne ihn zaehlte SUM(tip_amount) das Trinkgeld einer wiederholten
+        -- Transaktion einmal je Versuch - dieselbe Mehrfachzaehlung, die weiter
+        -- unten fuer summe_refund und summe_betrag_failed als unvermeidbar
+        -- vermerkt ist. Hier ist sie vermeidbar: pro Transaktion gibt es
+        -- hoechstens einen erfolgreichen Attempt, damit ist summe_tip exakt -
+        -- genau wie summe_betrag, das aus demselben Grund denselben Guard hat.
+        CASE WHEN ca.state = 'SUCCESSFUL' THEN tip.tip_amount        END AS tip_amount,
         t.id                                            AS transaction_id,
         ca.createdon                                    AS created_on${attTerminal}
     FROM chargeattempt ca
@@ -3240,7 +3271,9 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     LEFT JOIN paymentconnector pc
            ON pc.id       = pcc.connector
     LEFT JOIN wallettype wt
-           ON wt.id       = ca.wallet${terminalJoin}
+           ON wt.id       = ca.wallet
+    LEFT JOIN tip
+           ON tip.transaction_id = t.id${terminalJoin}
     WHERE ${spaceInClause(spaces, 'ca.spaceid')}
       AND ca.createdon >= TIMESTAMP '${start}'
       AND ca.createdon <  TIMESTAMP '${end}'
@@ -3283,9 +3316,11 @@ SELECT
     -- exakt (Task 0: 12'507 von 12'522 Transaktionen mit genau einem Attempt).
     -- Dasselbe gilt fuer summe_betrag_failed: jeder gescheiterte Versuch
     -- derselben Transaktion addiert authorizationamount erneut, und genau das
-    -- ist im E-Commerce mit Retries der Normalfall. Nur summe_betrag ist exakt
-    -- (pro Transaktion gibt es hoechstens einen erfolgreichen Attempt).
+    -- ist im E-Commerce mit Retries der Normalfall. Exakt sind nur summe_betrag
+    -- und summe_tip - beide haengen am CASE WHEN state = 'SUCCESSFUL', und pro
+    -- Transaktion gibt es hoechstens einen erfolgreichen Attempt.
     CAST(SUM(refund) AS decimal(38,8))              AS summe_refund,
+    CAST(SUM(tip_amount) AS decimal(38,8))          AS summe_tip,
     CAST(NULL AS bigint)                            AS tx_mit_attempt,
     CAST(NULL AS bigint)                            AS tx_erfolgreich
 FROM att
@@ -3321,6 +3356,7 @@ SELECT
     CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
     CAST(NULL AS decimal(38,8))                     AS summe_refund,
+    CAST(NULL AS decimal(38,8))                     AS summe_tip,
     CAST(NULL AS bigint)                            AS tx_mit_attempt,
     CAST(NULL AS bigint)                            AS tx_erfolgreich
 FROM att
@@ -3355,6 +3391,7 @@ SELECT
     CAST(NULL AS decimal(38,8))                     AS summe_betrag,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
     CAST(NULL AS decimal(38,8))                     AS summe_refund,
+    CAST(NULL AS decimal(38,8))                     AS summe_tip,
     -- COUNT(DISTINCT) gehoert in einen eigenen Block: ueber DIM-Tupel hinweg
     -- ist er nicht summierbar, weil dieselbe Transaktion in mehreren Tupeln
     -- steckt (Retry mit anderer Zahlungsmethode).
@@ -3563,7 +3600,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
     'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
     'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
-    'summe_refund', 'tx_mit_attempt', 'tx_erfolgreich',
+    'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
   ];
 
   // Fehlende Dimensionen landen im UNKNOWN-Eimer, nie als '' oder null. Sonst
@@ -3656,6 +3693,9 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
           betrag:           betrag(z, 'summe_betrag'),
           betragFailed:     betrag(z, 'summe_betrag_failed'),
           refund:           betrag(z, 'summe_refund'),
+          // Trinkgeld (P3) steht nur im DIM-Block und nur an erfolgreichen
+          // Attempts; sonst ist die Spalte NULL, also ein leeres Feld -> 0.
+          tip:              betrag(z, 'summe_tip'),
         });
       } else if (block === 'TIME') {
         const stunde = parseInt(roh(z, 'stunde'), 10);
@@ -3949,13 +3989,17 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     const w = zeile.waehrung;
     let e = map.get(w);
     if (!e) {
-      e = { waehrung: w, anzahlErfolgreich: 0, betrag: 0, anzahlFehlgeschlagen: 0, betragFailed: 0, refund: 0 };
+      e = { waehrung: w, anzahlErfolgreich: 0, betrag: 0, anzahlFehlgeschlagen: 0,
+        betragFailed: 0, refund: 0, tip: 0 };
       map.set(w, e);
     }
     if (zeile.attemptState === 'SUCCESSFUL') {
       e.anzahlErfolgreich += zeile.attempts;
       e.betrag += betragOderNull(zeile.betrag);
       e.refund += betragOderNull(zeile.refund);
+      // tip fuehrt nur der DIM-Block (P3) - TIME-Zeilen tragen das Feld
+      // ueberhaupt nicht, deshalb derselbe Schutz wie fuer refund.
+      e.tip += betragOderNull(zeile.tip);
     } else if (zeile.attemptState === 'FAILED') {
       e.anzahlFehlgeschlagen += zeile.attempts;
       e.betragFailed += betragOderNull(zeile.betragFailed);
@@ -3976,9 +4020,16 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         anzahlFehlgeschlagen: e.anzahlFehlgeschlagen,
         betragFailed: e.betragFailed,
         refund: e.refund,
+        tip: e.tip,
         schnitt: e.anzahlErfolgreich > 0 ? Math.round(e.betrag / e.anzahlErfolgreich) : null,
         schnittFailed: e.anzahlFehlgeschlagen > 0 ? Math.round(e.betragFailed / e.anzahlFehlgeschlagen) : null,
         refundQuote: reportingQuote(e.refund, e.betrag),
+        // P3 (SPEC 4.2): Trinkgeld ist im Bruttobetrag bereits ENTHALTEN (an
+        // Produktivdaten belegt, siehe CLAUDE.md) - die Quote ist also ein
+        // Anteil am Umsatz, nicht ein Aufschlag darauf. Ohne Umsatz null statt
+        // 0, wie bei jeder anderen Quote auch: "keine Grundlage" ist etwas
+        // anderes als "kein Trinkgeld".
+        tipQuote: reportingQuote(e.tip, e.betrag),
         anteilBetrag: gesamtProWaehrung ? reportingQuote(e.betrag, gesamtProWaehrung.get(e.waehrung) || 0) : null,
       }));
   }
@@ -5638,17 +5689,37 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // Der einzige Block, der Betraege ohne Begleitspalte fuehrt - hier IST die
     // Waehrung die Zeile, ueber Waehrungen hinweg wird nie summiert (SPEC 2.7).
     if (kanalModell.waehrungen.length) {
+      // P3 (SPEC 4.2, "nur wenn Space Trinkgeld-Lineitems hat"): die beiden
+      // Trinkgeld-Spalten erscheinen NUR, wo ueberhaupt Trinkgeld gebucht ist -
+      // nicht als Nullspalte und nicht als eigener Block. Eine Spalte mit
+      // lauter 0.00 behauptete, die Frage sei gestellt und die Antwort sei
+      // "keins"; im E-Commerce ist sie gar nicht gestellt. Datengetrieben statt
+      // auf POS verdrahtet, wie die Ablehncodes weiter oben: wo Trinkgeld
+      // ankommt, wird es ausgewiesen. Sie haengen hinten an, in derselben Form
+      // wie Rueckerstattungen + Refund-Quote - Betrag und Quote zum Umsatz
+      // DERSELBEN Waehrungszeile, nie ueber Waehrungen hinweg.
+      const mitTrinkgeld = kanalModell.waehrungen.some(w => w.tip > 0);
+      const tipKopf = mitTrinkgeld
+        ? [reportingSpalte('Trinkgeld', 'betrag'), reportingSpalte('Trinkgeld-Quote %', 'pct')]
+        : [];
+      const tipZellen = w => (mitTrinkgeld ? [w.tip, w.tipQuote] : []);
       bloecke.push(reportingBlock(kanal, t('Beträge je Währung'), [
         reportingSpalte('Währung'), reportingSpalte('Erfolgreich', 'zahl'),
         reportingSpalte('Umsatz', 'betrag'), reportingSpalte('Ø-Betrag', 'betrag'),
         reportingSpalte('Fehlgeschlagen', 'zahl'), reportingSpalte('Betrag fehlgeschlagen', 'betrag'),
         reportingSpalte('Ø fehlgeschlagen', 'betrag'), reportingSpalte('Rückerstattungen', 'betrag'),
         reportingSpalte('Refund-Quote %', 'pct'),
-      ], kanalModell.waehrungen.map(w => [w.waehrung, w.anzahlErfolgreich, w.betrag, w.schnitt,
-        w.anzahlFehlgeschlagen, w.betragFailed, w.schnittFailed, w.refund, w.refundQuote]),
+      ].concat(tipKopf),
+      kanalModell.waehrungen.map(w => [w.waehrung, w.anzahlErfolgreich, w.betrag, w.schnitt,
+        w.anzahlFehlgeschlagen, w.betragFailed, w.schnittFailed, w.refund, w.refundQuote]
+        .concat(tipZellen(w))),
       'tabelle',
       'Keine Zeile wird mit einer anderen summiert. Die Refund-Quote setzt die '
-      + 'Rückerstattungen ins Verhältnis zum Umsatz derselben Währung.'));
+      + 'Rückerstattungen ins Verhältnis zum Umsatz derselben Währung.'
+      + (mitTrinkgeld
+        ? ' Das Trinkgeld ist im Umsatz bereits enthalten und nicht dazuzuzählen; '
+          + 'die Trinkgeld-Quote ist sein Anteil daran.'
+        : '')));
     }
 
     // --- P2: Terminals -----------------------------------------------------

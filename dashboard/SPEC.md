@@ -85,6 +85,7 @@ Abgeleitete Spalten pro Attempt:
 | `tds_status` | **clientseitig** aus den drei Feldern: `AUTHENTICATED` (started ∧ cavv) / `FAILED_OR_ABANDONED` (started ∧ ¬cavv) / `WALLET_CRYPTOGRAM` (¬started ∧ eci vorhanden) / `NOT_REQUESTED` (sonst, nur Karten). Der Connector schreibt keine «Authenticated/Status/Liability-Shift»-Labels — Liability Shift wird nicht ausgewiesen |
 | `amount` | `CASE WHEN ca.state = 'SUCCESSFUL' THEN t.completedamount END` (Q6: bei SUCCESSFUL identisch mit `authorizationamount`, bei FAILED ist `completedamount` 0 und `authorizationamount` gefüllt) |
 | `amount_failed` | `CASE WHEN ca.state = 'FAILED' THEN t.authorizationamount END` — Ø abgelehnter Betrag (Q6 zeigt: am POS 24.04 vs. 20.98 erfolgreich) |
+| `tip_amount` | `CASE WHEN ca.state = 'SUCCESSFUL' THEN tip.tip_amount END` — Trinkgeld je Transaktion aus dem wiederverwendeten `tipCte` (`LEFT JOIN tip ON tip.transaction_id = t.id`). `lineitem` wird **nie** direkt gejoint (eine Transaktion hat mehrere Line Items); `tipCte` aggregiert pro Transaktion vor. Der `CASE` ist zwingend: `att` hat die Körnigkeit des Attempts, ohne ihn zählte die Summe das Trinkgeld einer wiederholten Transaktion einmal je Versuch. `tipCte` braucht ein CTE `tx`; es entsteht hier aus den Attempts des Zeitraums (`chargeattempt` + `charge`), **nicht** aus `txCte` — das filtert auf `t.completedon` und `t.state` und wäre ein anderer Zeitschnitt |
 | `currency` | `t.currency` |
 | `transaction_id` | `t.id` (nur für `COUNT(DISTINCT …)`, wird nicht ausgegeben) |
 | `terminal_id` | `ca.terminal_id` (POS; Terminal-Filter wie im Terminal-Modus optional) |
@@ -108,6 +109,7 @@ dcc, tds_started, tds_cavv, eci`
 | `summe_betrag` | `SUM(amount)` (nur SUCCESSFUL, sonst 0) |
 | `summe_betrag_failed` | `SUM(amount_failed)` (nur FAILED) |
 | `summe_refund` | `SUM(t.refundedamount)` je erfolgreichem Attempt (Refund-Quote) |
+| `summe_tip` | `SUM(tip_amount)` (nur SUCCESSFUL) — Grundlage von P3. Exakt wie `summe_betrag`, weil pro Transaktion höchstens ein erfolgreicher Attempt existiert; in TIME und CONV ein typisierter `CAST(NULL AS decimal(38,8))`-Platzhalter |
 
 **Block `TIME`** — `GROUP BY space_id, channel, brand, currency, attempt_state,
 date(ca.createdon) AS tag, hour(ca.createdon) AS stunde` mit `anzahl_attempts`,
@@ -152,7 +154,7 @@ Nachkommastelle, Schweizer Zahlformat (`formatZahlCH`, `CH_TAUSENDER`).
 | P6 | **Ablehncodes** | FAILED-Attempts nach `auth_response_code` (ISO-Code des Issuers, z. B. `51` = ungenügende Deckung) — am POS aussagekräftiger als `failurereason`, das dort nur «declined»/«cancelled» kennt; Namenstabelle `ISO_RESPONSE_CODES` im Code (statisch, ~30 Einträge) |
 | P7 | **DCC-Anteil** | Attempts mit `dcc = true` an erfolgreichen Karten-Attempts (Label vorhanden, am Referenz-Space 2 von 12'537) |
 | P2 | **Attempts pro Terminal** | Success Rate und Betrag pro Terminal (Terminal-Filter optional, Join `paymentterminal` wie Terminal-Modus) — zeigt auffällige Geräte (hohe Failure Rate = Hardware/Netz) |
-| P3 | **Trinkgeld-Quote** | `tipCte` wiederverwenden: `tip_total / summe_betrag` — nur wenn Space Trinkgeld-Lineitems hat (Gastro) |
+| P3 | **Trinkgeld-Quote** | `summe_tip / summe_betrag` je Währung (`tipCte` wiederverwendet, siehe §3.1). Trinkgeld ist im Bruttobetrag bereits **enthalten** (an Produktivdaten belegt), die Quote ist also ein Anteil am Umsatz, kein Aufschlag. Ausgewiesen als die beiden Spalten `Trinkgeld` / `Trinkgeld-Quote %` im Block «Beträge je Währung» — und nur dort, wo überhaupt Trinkgeld gebucht ist (`tip > 0`); sonst entfallen beide Spalten, statt eine Nullspalte zu zeigen. Datengetrieben statt auf POS verdrahtet |
 | P4 | **Stosszeiten** | K10 pro Stunde, als Balken |
 
 ### 4.3 E-Com-spezifisch

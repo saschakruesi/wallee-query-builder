@@ -20,7 +20,30 @@
 -- Dateien ausfuehren, sonst bleibt der paymentterminal-Join ungetestet.
 -- =============================================================================
 
-WITH att AS (
+WITH tx AS (
+    SELECT DISTINCT c.transaction_id                    AS id
+    FROM chargeattempt ca
+    JOIN charge c
+      ON c.id      = ca.charge_id
+    WHERE ca.spaceid IN (40402, 12622)
+      AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
+      AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
+      AND ca.environment = 'PRODUCTION'
+),
+tip AS (
+    SELECT
+        tl.transaction_id,
+        SUM(li.amountincludingtax) AS tip_amount
+    FROM transaction_lineitem tl
+    JOIN lineitem li
+      ON li.id      = tl.lineitems_id
+     AND li.spaceid = tl.spaceid
+    WHERE tl.spaceid IN (40402, 12622)
+      AND li.type = 'TIP'
+      AND tl.transaction_id IN (SELECT id FROM tx)
+    GROUP BY tl.transaction_id
+),
+att AS (
     -- Eine Zeile pro Charge Attempt. Alle abgeleiteten Spalten entstehen hier
     -- einmal, die drei Bloecke unten aggregieren nur noch darueber.
     SELECT
@@ -60,6 +83,15 @@ WITH att AS (
         CASE WHEN ca.state = 'SUCCESSFUL' THEN t.completedamount     END AS amount,
         CASE WHEN ca.state = 'FAILED'     THEN t.authorizationamount END AS amount_failed,
         CASE WHEN ca.state = 'SUCCESSFUL' THEN t.refundedamount      END AS refund,
+        -- Trinkgeld (P3): tip ist pro TRANSAKTION vor-aggregiert, att hat aber
+        -- die Koernigkeit des Attempts. Der CASE ist deshalb NICHT optional:
+        -- ohne ihn zaehlte SUM(tip_amount) das Trinkgeld einer wiederholten
+        -- Transaktion einmal je Versuch - dieselbe Mehrfachzaehlung, die weiter
+        -- unten fuer summe_refund und summe_betrag_failed als unvermeidbar
+        -- vermerkt ist. Hier ist sie vermeidbar: pro Transaktion gibt es
+        -- hoechstens einen erfolgreichen Attempt, damit ist summe_tip exakt -
+        -- genau wie summe_betrag, das aus demselben Grund denselben Guard hat.
+        CASE WHEN ca.state = 'SUCCESSFUL' THEN tip.tip_amount        END AS tip_amount,
         t.id                                            AS transaction_id,
         ca.createdon                                    AS created_on
     FROM chargeattempt ca
@@ -75,6 +107,8 @@ WITH att AS (
            ON pc.id       = pcc.connector
     LEFT JOIN wallettype wt
            ON wt.id       = ca.wallet
+    LEFT JOIN tip
+           ON tip.transaction_id = t.id
     WHERE ca.spaceid IN (40402, 12622)
       AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
       AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
@@ -117,9 +151,11 @@ SELECT
     -- exakt (Task 0: 12'507 von 12'522 Transaktionen mit genau einem Attempt).
     -- Dasselbe gilt fuer summe_betrag_failed: jeder gescheiterte Versuch
     -- derselben Transaktion addiert authorizationamount erneut, und genau das
-    -- ist im E-Commerce mit Retries der Normalfall. Nur summe_betrag ist exakt
-    -- (pro Transaktion gibt es hoechstens einen erfolgreichen Attempt).
+    -- ist im E-Commerce mit Retries der Normalfall. Exakt sind nur summe_betrag
+    -- und summe_tip - beide haengen am CASE WHEN state = 'SUCCESSFUL', und pro
+    -- Transaktion gibt es hoechstens einen erfolgreichen Attempt.
     CAST(SUM(refund) AS decimal(38,8))              AS summe_refund,
+    CAST(SUM(tip_amount) AS decimal(38,8))          AS summe_tip,
     CAST(NULL AS bigint)                            AS tx_mit_attempt,
     CAST(NULL AS bigint)                            AS tx_erfolgreich
 FROM att
@@ -155,6 +191,7 @@ SELECT
     CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
     CAST(NULL AS decimal(38,8))                     AS summe_refund,
+    CAST(NULL AS decimal(38,8))                     AS summe_tip,
     CAST(NULL AS bigint)                            AS tx_mit_attempt,
     CAST(NULL AS bigint)                            AS tx_erfolgreich
 FROM att
@@ -189,6 +226,7 @@ SELECT
     CAST(NULL AS decimal(38,8))                     AS summe_betrag,
     CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
     CAST(NULL AS decimal(38,8))                     AS summe_refund,
+    CAST(NULL AS decimal(38,8))                     AS summe_tip,
     -- COUNT(DISTINCT) gehoert in einen eigenen Block: ueber DIM-Tupel hinweg
     -- ist er nicht summierbar, weil dieselbe Transaktion in mehreren Tupeln
     -- steckt (Retry mit anderer Zahlungsmethode).

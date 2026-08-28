@@ -22,7 +22,7 @@ const KOPF = [
   'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
   'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
   'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
-  'summe_refund', 'tx_mit_attempt', 'tx_erfolgreich',
+  'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
 ];
 
 const q = v => '"' + String(v == null ? '' : v) + '"';
@@ -49,7 +49,7 @@ const DIM = {
   funding: 'DEBIT', pan_type: '', dcc: 'false', tds_started: 'false',
   tds_cavv: 'false', eci: '', anzahl_attempts: '10', anzahl_transaktionen: '10',
   summe_betrag: '200.00000000', summe_betrag_failed: '0.00000000',
-  summe_refund: '0.00000000',
+  summe_refund: '0.00000000', summe_tip: '0.00000000',
 };
 const TIME = {
   block: 'TIME', space_id: '90001', channel: 'POS', brand: 'Visa', waehrung: 'CHF',
@@ -201,6 +201,25 @@ test('parseReportingCsv: Betraege werden zu 1e-8-Ganzzahlen zerlegt', () => {
   assert.strictEqual(r.rows.dim[0].refund, 1999000000);
 });
 
+test('parseReportingCsv: summe_tip ist ein Betrag wie die uebrigen (P3)', () => {
+  const { parseReportingCsv } = loadBuilders();
+  // Trinkgeld haengt am CASE WHEN state = 'SUCCESSFUL': ausserhalb dessen ist
+  // die Spalte NULL und kommt als leeres Feld an - das muss 0 werden, nicht
+  // NaN. TIME- und CONV-Zeilen fuehren das Feld gar nicht (typisierter
+  // NULL-Platzhalter), genau wie refund und betragFailed.
+  const r = parseReportingCsv(csv([
+    Object.assign({}, DIM, { summe_tip: '12.35' }),
+    Object.assign({}, DIM, { summe_tip: '' }),
+    TIME,
+    CONV,
+  ]));
+  assert.strictEqual(r.error, null);
+  assert.strictEqual(r.rows.dim[0].tip, 1235000000);
+  assert.strictEqual(r.rows.dim[1].tip, 0);
+  assert.ok(!('tip' in r.rows.time[0]), 'TIME-Zeilen tragen kein tip-Feld');
+  assert.ok(!('tip' in r.rows.conv[0]), 'CONV-Zeilen tragen kein tip-Feld');
+});
+
 test('parseReportingCsv: Betragssummen bleiben exakt (kein float)', () => {
   const { parseReportingCsv } = loadBuilders();
   const r = parseReportingCsv(csv([
@@ -319,6 +338,10 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
   assert.strictEqual(summe(r.rows.dim, 'betrag'), 5441239000000);        // 54'412.39
   assert.strictEqual(summe(r.rows.dim, 'betragFailed'), 377444000000);   //  3'774.44
   assert.strictEqual(summe(r.rows.dim, 'refund'), 212143000000);         //  2'121.43
+  // Trinkgeld gibt es nur am POS und nur an erfolgreichen Attempts (Task 4b);
+  // die uebrigen Summen sind unveraendert, weil der Generator dafuer einen
+  // eigenen PRNG-Strom benutzt.
+  assert.strictEqual(summe(r.rows.dim, 'tip'), 152607000000);            //  1'526.07
   assert.strictEqual(summe(r.rows.dim, 'attempts'), 1854);
   assert.strictEqual(summe(r.rows.time, 'attempts'), 872);
   assert.strictEqual(summe(r.rows.time, 'betrag'), 1649053000000);       // 16'490.53
@@ -380,7 +403,7 @@ function dimZeile(over) {
     issuerCountry: 'CH', cardCategory: 'CLASSIC', funding: 'DEBIT', panType: 'UNKNOWN',
     eci: 'UNKNOWN', dcc: false, tdsStarted: false, tdsCavv: false,
     terminalIdentifier: 'UNKNOWN', terminalName: 'UNKNOWN',
-    attempts: 1, transaktionen: 1, betrag: 0, betragFailed: 0, refund: 0,
+    attempts: 1, transaktionen: 1, betrag: 0, betragFailed: 0, refund: 0, tip: 0,
   }, over);
 }
 function timeZeile(over) {
@@ -748,6 +771,49 @@ test('E6: PAN-Quelle mit Success Rate je Typ', () => {
     [['DEVICE_TOKEN_APPLE_PAY', 10, 90], ['UNKNOWN', 10, 100]]);
 });
 
+test('P3: Trinkgeld-Quote entsteht je Waehrung aus tip/betrag', () => {
+  const m = modell({ dim: [
+    dimZeile({ waehrung: 'CHF', attempts: 10, betrag: 200 * E8, tip: 10 * E8 }),
+    dimZeile({ waehrung: 'EUR', attempts: 5, betrag: 100 * E8, tip: 2 * E8 }),
+    // Gescheiterte Versuche tragen weder Umsatz noch Trinkgeld und duerfen
+    // keinen der beiden Nenner beruehren.
+    dimZeile({ waehrung: 'CHF', attemptState: 'FAILED', attempts: 3, betragFailed: 30 * E8 }),
+  ] });
+  const w = m.kanaele.POS.waehrungen;
+  assert.deepStrictEqual(plain(w.map(x => [x.waehrung, x.tip, x.tipQuote])), [
+    ['CHF', 10 * E8, 5],
+    ['EUR', 2 * E8, 2],
+  ]);
+});
+
+test('P3: ohne Umsatz gibt es keine Trinkgeld-Quote, mit Umsatz und ohne Trinkgeld 0 %', () => {
+  // Dieselbe Trennung wie bei der Refund-Quote: null heisst "keine Grundlage",
+  // 0 heisst "gemessen, es war nichts". Nur daran laesst sich spaeter
+  // unterscheiden, ob P3 ueberhaupt ausgewiesen werden darf (SPEC 4.2).
+  const m = modell({ dim: [
+    dimZeile({ attempts: 4, betrag: 80 * E8, tip: 0 }),
+    dimZeile({ channel: 'ECOM', attemptState: 'FAILED', attempts: 2, betragFailed: 20 * E8 }),
+  ] });
+  assert.strictEqual(m.kanaele.POS.waehrungen[0].tipQuote, 0);
+  assert.strictEqual(m.kanaele.ECOM.waehrungen[0].betrag, 0);
+  assert.strictEqual(m.kanaele.ECOM.waehrungen[0].tipQuote, null);
+});
+
+test('P3: das Trinkgeld folgt bis in Brand- und Terminal-Zeilen', () => {
+  const m = modell({ dim: [
+    dimZeile({ terminalIdentifier: 'T-1', terminalName: 'Kasse 1',
+      attempts: 10, betrag: 200 * E8, tip: 10 * E8 }),
+    dimZeile({ brand: 'TWINT', issuerCountry: 'UNKNOWN', cardCategory: 'UNKNOWN',
+      funding: 'UNKNOWN', terminalIdentifier: 'T-1', terminalName: 'Kasse 1',
+      attempts: 5, betrag: 100 * E8, tip: 0 }),
+  ] });
+  const visa = m.kanaele.POS.brands.find(b => b.brand === 'Visa');
+  assert.strictEqual(visa.waehrungen[0].tipQuote, 5);
+  const twint = m.kanaele.POS.brands.find(b => b.brand === 'TWINT');
+  assert.strictEqual(twint.waehrungen[0].tipQuote, 0);
+  assert.strictEqual(m.kanaele.POS.terminals[0].waehrungen[0].tip, 10 * E8);
+});
+
 test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   const { parseReportingCsv, buildReportingModel } = loadBuilders();
   const text = fs.readFileSync(path.join(__dirname, 'fixtures', 'reporting-beispiel.csv'), 'utf8');
@@ -784,6 +850,10 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   assert.strictEqual(unbekannt.attempts, 34);
   assert.ok(!pos.herkunft.gruppen.some(g => g.schluessel === 'INTER' && g.attempts > 0));
 
+  // P3: Trinkgeld gibt es nur am POS. 1'526.07 von 42'298.59 Umsatz.
+  assert.strictEqual(pos.waehrungen[0].tip, 152607000000);
+  assert.strictEqual(Math.round(pos.waehrungen[0].tipQuote * 10) / 10, 3.6);
+
   const ecom = m.kanaele.ECOM;
   assert.strictEqual(ecom.kpi.offen, 9);
   assert.strictEqual(ecom.kpi.attempts, 439);
@@ -791,6 +861,7 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   // Die Quoten lassen PENDING draussen, die Anteile decken alles ab.
   assert.strictEqual(ecom.brands.reduce((a, b) => a + b.anteilAttempts, 0), 100);
   assert.deepStrictEqual(plain(ecom.waehrungen.map(w => w.waehrung)), ['CHF', 'EUR']);
+  assert.ok(ecom.waehrungen.every(w => w.tip === 0), 'E-Com traegt kein Trinkgeld');
   assert.ok(ecom.tds.basis > 0);
   assert.ok(ecom.wallets.some(w => w.wallet === 'Apple Pay'));
 
@@ -817,14 +888,17 @@ test('C1: TIME-Zeilen erzeugen kein NaN im Verlauf', () => {
     timeZeile({ tag: '2026-07-01', attemptState: 'FAILED', attempts: 2 }),
   ] });
   const w = m.kanaele.POS.verlauf[0].waehrungen[0];
-  ['betrag', 'betragFailed', 'refund', 'schnitt', 'schnittFailed', 'refundQuote', 'anteilBetrag']
+  ['betrag', 'betragFailed', 'refund', 'tip', 'schnitt', 'schnittFailed',
+    'refundQuote', 'tipQuote', 'anteilBetrag']
     .forEach(feld => {
       assert.ok(!Number.isNaN(w[feld]), 'verlauf-Waehrung ' + feld + ' ist NaN');
     });
   assert.strictEqual(w.betrag, 50 * E8);
   assert.strictEqual(w.betragFailed, 0);
   assert.strictEqual(w.refund, 0);
+  assert.strictEqual(w.tip, 0);
   assert.strictEqual(w.refundQuote, 0);
+  assert.strictEqual(w.tipQuote, 0);
   assert.strictEqual(w.schnittFailed, 0);
   // Gegenprobe ueber die ganze Fixture: nirgends im Modell steckt ein NaN.
   const { parseReportingCsv, buildReportingModel } = loadBuilders();

@@ -247,9 +247,34 @@ test('failure_reason_id ist in allen Bloecken varchar (Typ unbelegt, SPEC 6.4)',
   assert.doesNotMatch(s, /CAST\(NULL AS bigint\)\s+AS failure_reason_id/);
 });
 
-test('Kein direkter lineitem-Join', () => {
+test('Trinkgeld kommt ueber tipCte, lineitem wird nie direkt gejoint', () => {
   const s = sql({ byTerminal: true, terminalIds: ['T-1'] });
-  assert.doesNotMatch(s, /lineitem/);
+  // lineitem darf ausschliesslich im vor-aggregierten tip-CTE vorkommen. Ein
+  // direkter Join - ob an att oder an transaction - vervielfachte die
+  // Attempt-Zeilen (eine Transaktion hat mehrere Line Items) und machte
+  // COUNT(*) und jede Summe falsch.
+  assert.match(s, /tip AS \(/);
+  assert.match(s, /GROUP BY tl\.transaction_id/);
+  assert.match(s, /LEFT JOIN tip\s+ON tip\.transaction_id = t\.id/);
+  const attCte = s.slice(s.indexOf('att AS ('), s.indexOf("\nSELECT\n"));
+  assert.doesNotMatch(attCte, /JOIN (?:transaction_)?lineitem/);
+  // tipCte braucht ein CTE tx mit der Spalte id. Es kommt aus den Attempts des
+  // Zeitraums, nicht aus txCte: txCte filtert auf t.completedon und t.state,
+  // der Reporting-Modus filtert auf ca.createdon und ohne Statusfilter.
+  assert.match(s, /WITH tx AS \(\n    SELECT DISTINCT c\.transaction_id\s+AS id/);
+});
+
+test('Trinkgeld zaehlt nur den erfolgreichen Attempt (CASE-Guard)', () => {
+  const s = sql();
+  // DIM hat die Koernigkeit des Attempts, tip die der Transaktion: ohne den
+  // Guard zaehlte SUM das Trinkgeld einer wiederholten Transaktion einmal je
+  // Versuch. Der Guard ist die EINZIGE Stelle, an der tip.tip_amount gelesen
+  // wird - ein direktes SUM(tip.tip_amount) im DIM-Block faellt hier auf.
+  assert.match(s, /CASE WHEN ca\.state = 'SUCCESSFUL' THEN tip\.tip_amount\s+END AS tip_amount/);
+  assert.strictEqual(s.split('tip.tip_amount').length - 1, 1,
+    'tip.tip_amount darf nur im CASE-Guard stehen');
+  assert.doesNotMatch(s, /SUM\(tip\.tip_amount\)/);
+  assert.match(block(s, 'DIM'), /CAST\(SUM\(tip_amount\) AS decimal\(38,8\)\)\s+AS summe_tip/);
 });
 
 test('NULL-Platzhalter sind typisiert (Athena verlangt gleiche UNION-Typen)', () => {
@@ -260,6 +285,10 @@ test('NULL-Platzhalter sind typisiert (Athena verlangt gleiche UNION-Typen)', ()
   assert.match(s, /CAST\(NULL AS bigint\)/);
   assert.match(s, /CAST\(NULL AS decimal\(38,\s?8\)\)/);
   assert.doesNotMatch(s, /,\s*NULL\s+AS /);
+  // summe_tip gibt es nur im DIM-Block; TIME und CONV fuehren ihn als
+  // typisierten Platzhalter, sonst findet Presto keinen gemeinsamen Supertyp.
+  assert.strictEqual(
+    s.split('CAST(NULL AS decimal(38,8))                     AS summe_tip').length - 1, 2);
 });
 
 test('Alle drei Existenz-Flags entstehen gleich (labelExpr + IS NOT NULL)', () => {

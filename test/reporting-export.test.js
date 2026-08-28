@@ -20,7 +20,7 @@ const KOPF = [
   'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
   'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
   'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
-  'summe_refund', 'tx_mit_attempt', 'tx_erfolgreich',
+  'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
 ];
 
 const q = v => '"' + String(v == null ? '' : v) + '"';
@@ -64,6 +64,11 @@ function fixturModell() {
   const res = parseReportingCsv(text);
   assert.strictEqual(res.error, null);
   return buildReportingModel(res.rows, { merchantCountry: 'CH' });
+}
+
+function reportingExportBloeckeFixtur() {
+  const { reportingExportBloecke } = loadBuilders();
+  return reportingExportBloecke(fixturModell(), {});
 }
 
 // Laeuft ueber jede Zelle jedes Blocks.
@@ -261,6 +266,40 @@ test('Waehrung steht in der Zeile, Betragsspalten mischen nie zwei Waehrungen', 
 
   const bw = b.find(x => x.titel === 'E-Com · Beträge je Währung');
   assert.deepStrictEqual(plain(bw.zeilen.map(z => z[0])), ['CHF', 'EUR']);
+});
+
+test('P3: Trinkgeld-Spalten haengen an "Betraege je Waehrung", wo es Trinkgeld gibt', () => {
+  const b = plain(reportingExportBloeckeFixtur());
+  const pos = b.find(x => x.titel === 'POS · Beträge je Währung');
+  assert.deepStrictEqual(pos.kopf.map(sp => `${sp.label}:${sp.format}`), [
+    'Währung:text', 'Erfolgreich:zahl', 'Umsatz:betrag', 'Ø-Betrag:betrag',
+    'Fehlgeschlagen:zahl', 'Betrag fehlgeschlagen:betrag', 'Ø fehlgeschlagen:betrag',
+    'Rückerstattungen:betrag', 'Refund-Quote %:pct',
+    'Trinkgeld:betrag', 'Trinkgeld-Quote %:pct',
+  ]);
+  // 1'526.07 von 42'298.59 Umsatz - roh, ungerundet, in 1e-8-Einheiten.
+  const zeile = pos.zeilen[0];
+  assert.strictEqual(zeile[0], 'CHF');
+  assert.strictEqual(zeile[9], 152607000000);
+  assert.strictEqual(Math.round(zeile[10] * 10) / 10, 3.6);
+  // Das Trinkgeld ist im Umsatz bereits enthalten (an Produktivdaten belegt) -
+  // der Hinweis muss das sagen, sonst wird es addiert.
+  assert.match(pos.hinweis, /Trinkgeld/);
+});
+
+test('P3 entfaellt, wo kein Trinkgeld vorkommt (SPEC 4.2)', () => {
+  // SPEC 4.2: "nur wenn Space Trinkgeld-Lineitems hat". Eine Spalte mit lauter
+  // 0.00 behauptete, es sei gemessen worden und es sei nichts gewesen - im
+  // E-Commerce ist die Frage aber gar nicht gestellt.
+  const b = plain(reportingExportBloeckeFixtur());
+  const ecom = b.find(x => x.titel === 'E-Com · Beträge je Währung');
+  assert.ok(!ecom.kopf.some(sp => /Trinkgeld/.test(sp.label)),
+    'E-Com traegt kein Trinkgeld und darf die Spalten nicht zeigen');
+  assert.strictEqual(ecom.zeilen[0].length, ecom.kopf.length);
+  // Auch am POS nicht, solange kein Trinkgeld gebucht ist.
+  const ohne = bloeckeAus([DIM_POS]).find(x => x.titel === 'POS · Beträge je Währung');
+  assert.ok(!ohne.kopf.some(sp => /Trinkgeld/.test(sp.label)));
+  assert.doesNotMatch(ohne.hinweis, /Trinkgeld/);
 });
 
 test('Kacheln: eigener typ und ein Zellformat je Zelle', () => {

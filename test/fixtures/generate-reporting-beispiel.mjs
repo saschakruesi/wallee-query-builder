@@ -21,6 +21,12 @@
 //   - SUCCESSFUL- und FAILED-Zeilen (FAILED traegt summe_betrag_failed,
 //     SUCCESSFUL traegt summe_betrag und summe_refund)
 //   - eine Zeile mit leerem issuer_country -> muss im Parser UNKNOWN werden
+//   - Trinkgeld (P3) NUR am POS und nur an erfolgreichen Attempts, dort aber
+//     nicht auf jeder Zeile: die Query fuehrt summe_tip als
+//     CASE WHEN state = 'SUCCESSFUL' ueber einen LEFT JOIN, ausserhalb dessen
+//     ist die Spalte NULL. So traegt die Fixture beide Faelle - und die
+//     Kanaele ECOM/OTHER ganz ohne Trinkgeld belegen die Regel aus SPEC 4.2
+//     ("nur wenn Space Trinkgeld-Lineitems hat")
 //   - alle drei 3DS-Auspraegungen: started+cavv, started ohne cavv, nur ECI
 //   - Bloecke TIME (Tag/Stunde) und CONV (COUNT(DISTINCT) je Brand)
 //
@@ -52,6 +58,12 @@ function prng(seed) {
   };
 }
 const rnd = prng(20260828);
+// Eigener Strom fuer die Trinkgeld-Spalte (Task 4b). Bewusst NICHT aus rnd
+// gezogen: jede zusaetzliche Ziehung aus rnd verschoebe alle nachfolgenden
+// Werte und damit saemtliche in test/reporting-model.test.js verankerten
+// Summen. Mit einem zweiten Strom bleibt der Diff der Fixture genau die neue
+// Spalte, und die alten Sollwerte bleiben als Gegenprobe gueltig.
+const rndTip = prng(20260904);
 
 // Spaltenreihenfolge 1:1 aus der SELECT-Liste von
 // dashboard/sql/01_reporting_reference.sql. Die Terminal-Variante (01b) haengt
@@ -63,7 +75,7 @@ const KOPF = [
   'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
   'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
   'anzahl_attempts', 'anzahl_transaktionen', 'summe_betrag', 'summe_betrag_failed',
-  'summe_refund', 'tx_mit_attempt', 'tx_erfolgreich',
+  'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
 ];
 
 const SPACE_POS = '90001';    // erfundener POS-Space
@@ -78,6 +90,9 @@ function betrag(rappen) {
 }
 function zufallsBetrag(min, max) {
   return betrag(min + Math.floor(rnd() * (max - min)));
+}
+function zufallsTrinkgeld(min, max) {
+  return betrag(min + Math.floor(rndTip() * (max - min)));
 }
 
 const zeilen = [];
@@ -101,8 +116,11 @@ const DIM_FAELLE = [
   // gibt den Rohwert durch; die Normalisierung gehoert ins Modell (Task 3) -
   // dort muss 'CHE' zu Inland werden oder zu UNKNOWN, NIE zu INTER. Ohne diesen
   // Fall in der Fixture liesse sich die Regel dort an nichts festmachen.
+  // ... und zugleich der POS-Fall OHNE Trinkgeld (ohneTip): auch in einem
+  // Space mit Trinkgeld-Lineitems bleibt summe_tip dort NULL, wo keine
+  // Transaktion des Tupels eines trug.
   { space: SPACE_POS, channel: 'POS', brand: 'Visa', waehrung: 'CHF', state: 'SUCCESSFUL',
-    arc: '00', land: 'CHE', kat: 'CLASSIC', funding: 'CREDIT', n: 34 },
+    arc: '00', land: 'CHE', kat: 'CLASSIC', funding: 'CREDIT', ohneTip: true, n: 34 },
   // Nicht-Karten-Brand: TWINT traegt keine Karten-Labels, alle bleiben leer.
   { space: SPACE_POS, channel: 'POS', brand: 'TWINT', waehrung: 'CHF', state: 'SUCCESSFUL',
     land: '', kat: '', funding: '', n: 137 },
@@ -187,6 +205,11 @@ DIM_FAELLE.forEach(f => {
     // Refund-Quote im Modell unterscheidbar von "alles 0". Ohne Erfolg gibt es
     // keinen Refund-Wert, nur NULL.
     summe_refund: erfolg ? (rnd() < 0.5 ? zufallsBetrag(0, f.n * 300) : betrag(0)) : '',
+    // Trinkgeld gibt es nur am POS (Gastro, SPEC 4.2 P3) und nur an
+    // erfolgreichen Attempts - der CASE-Guard der Query laesst nichts anderes
+    // durch. Ausserhalb: leeres Feld, nicht "0.00000000".
+    summe_tip: (erfolg && f.channel === 'POS' && !f.ohneTip)
+      ? zufallsTrinkgeld(f.n * 40, f.n * 220) : '',
   });
 });
 
