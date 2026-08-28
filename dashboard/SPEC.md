@@ -229,6 +229,9 @@ als Karte), `KARTEN_BUSINESS_REGEX`, `ISO_RESPONSE_CODES`, `ATTEMPT_ENVIRONMENT 
 
 ### 6.4 Proxy: Failure-Reason-Namen
 
+**Überholt (Task 6): die Route existiert nicht und wird nicht gebaut** — siehe CLAUDE.md,
+«Ablehngründe».
+
 Neue Route `GET /failure-reasons` → JSON `{ id: name }`, beim ersten Aufruf von der
 wallee-API geholt und im Prozess gecacht (Referenzdaten, ändern sich praktisch nie).
 Endpunkt in Task 6 verifizieren: Kandidaten `GET /api/v2.0/failure-reasons`
