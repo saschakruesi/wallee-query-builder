@@ -545,9 +545,17 @@ Alles clientseitig im Modell, aus den Rohwerten der Query:
   wäre eine Aussage, die aus einem Formatfehler entstünde. Das gilt für `'CHE'` (ISO-3)
   ebenso wie für einen Klarnamen oder ein leeres Feld, und ebenso für ein ungültiges
   **Händler**-Land — ohne Inland gibt es kein „domestisch".
-- **`istKartenBrand`** (`KARTEN_BRANDS`) trennt Karten von TWINT, PostFinance Card,
-  Lunch Check, Reka, PowerPay Invoice: die tragen keine Scheme-Labels. Nicht-Karten laufen
+- **`istKartenBrand`** (`KARTEN_BRANDS`) trennt Marken **mit** Issuer-Labels von TWINT,
+  Lunch Check, Reka, Boncard, PowerPay Invoice: die tragen keine. Label-lose Marken laufen
   gar nicht erst in die Karten-Eimer (K5/K6/P1/P7), statt den `UNKNOWN`-Eimer aufzublähen.
+  **`PostFinance` steht seit dem Referenzlauf mit in der Liste** — der Lauf hat gezeigt,
+  dass „steht nicht in der Liste" und „trägt keine Labels" **nicht** dasselbe sind (siehe
+  „Wallee-Referenzwissen"). Bewusst der **blosse Markenname**, nicht `PostFinance Card`:
+  derselbe Lauf zeigt daneben `PostFinance Apple Pay`, zwei Literale hätten die dritte
+  Schreibvariante wieder verpasst. Die Liste bleibt damit eine **Namensliste und
+  connectorabhängig** — die nächste lokale Debitkarte eines anderen Acquirers braucht
+  denselben Nachtrag; erkennbar ist der Fall daran, dass ein Brand ausserhalb der Liste
+  Issuer-Labels trägt.
 - **`klassifiziereKartentyp`** — `KARTEN_BUSINESS_REGEX` (`BUSINESS|CORPORATE|COMMERCIAL|
   PURCHASING|FLEET`) → `BUSINESS`; `NOT_SPECIFIED` (Konstante `KARTEN_KATEGORIE_UNBEKANNT`)
   oder fehlend → `UNKNOWN`, **nicht** `PRIVATE`; alles andere → `PRIVATE`. Der Wert ist
@@ -1371,10 +1379,21 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     `sonstige`. Success Rate im Referenzmonat: POS 98.6 %, E-Com 91.3 %.
   - **`environment` war durchgehend `PRODUCTION`**, `customerspresence` am POS durchgehend
     `PHYSICAL_PRESENT`, im E-Com `VIRTUAL_PRESENT`.
-  - **Abdeckung der Karten-Labels ≈ 89 % am POS** (11'193 von 12'537) — und das sind exakt
-    die Karten-Brands. TWINT, PostFinance Card, Lunch Check und Reka tragen **keine**
-    Scheme-Labels; deshalb ist der Nenner von K5/K6/P1/P7 „Karten-Attempts", nicht „alle
-    Attempts". `KARTEN_BRANDS` bildet genau diese Trennung ab.
+  - **Abdeckung der Karten-Labels ≈ 89 % am POS** (11'193 von 12'537). Der Nenner von
+    K5/K6/P1/P7 ist deshalb „Karten-Attempts", nicht „alle Attempts". **Achtung, hier stand
+    bis zum Referenzlauf ein Fehlschluss:** „das sind exakt die Karten-Brands". Label-
+    Abdeckung und `KARTEN_BRANDS` fallen **nicht** zusammen. Gemessen am Referenzlauf:
+    `PostFinance Card` trug am POS auf **1'097 von 1'113** Attempts Issuer-Land, Funding
+    und Kartenkategorie, stand aber nicht in der Liste — die Label-Menge (11'193) war
+    damit **959 Attempts grösser** als die Listen-Menge (10'234 = 81.6 %), und K5/K6/P1/P7
+    liessen rund 1'098 Attempts liegen, die genau die Labels trugen, die sie messen.
+    Seither steht `PostFinance` in `KARTEN_BRANDS` (POS-Kartenbasis damit 11'347 Attempts
+    / 11'193 erfolgreiche). **Label-los sind** TWINT, Lunch Check, Reka, Boncard und
+    PowerPay Invoice — auf **keinem** ihrer Attempts ein Karten-Label.
+    **Und es ist kanalabhängig:** dieselbe Marke trug im E-Commerce auf keinem ihrer
+    4 Attempts ein Label. Sie zählt dort trotzdem zur Kartenbasis und landet sichtbar in
+    den `UNKNOWN`-Eimern bzw. in `NOT_REQUESTED` — „kein Label" ist eine Messung, „nicht
+    gezählt" wäre keine.
   - **Issuer Country ist ISO-2** (POS 76 Länder, CH 83 %; E-Com CH 91 %) — Map-Key
     `countryContent`, **nicht** `shortTextContent`. Funding: POS 68 % Debit, E-Com 26 %.
   - **Card category kennt 37 Produktwerte**; `KARTEN_BUSINESS_REGEX` deckt davon 14 ab
@@ -1470,7 +1489,10 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    Zählwerte, Beträge und die Space-IDs (90001/90002) bleiben **erfunden** — das Repo ist
    öffentlich, aus den Referenzdaten darf kein Wert hierher wandern. Nicht belegt sind
    negative Beträge, `PENDING` und der dritte Verkaufskanal: die kamen in beiden Spaces
-   nicht vor, die Fixture führt sie als Struktur, weil der Code sie behandelt.
+   nicht vor, die Fixture führt sie als Struktur, weil der Code sie behandelt. Umgekehrt
+   bildet sie seit der `KARTEN_BRANDS`-Korrektur **beide Seiten** des Befunds ab, der die
+   frühere Annahme widerlegt hat: eine lokale Debitmarke **mit** Issuer-Labels am POS und
+   dieselbe Marke **ohne** Labels im E-Commerce.
    **Einschränkung:** Der einfache Stub liefert für **jede** ID irgendein Element — eine
    verwaiste DOM-Referenz fällt so nicht auf. `test/dom-ids.test.js` gleicht deshalb die per
    `getElementById` angefragten IDs statisch gegen das Markup ab; nach UI-Änderungen bleibt
@@ -1531,15 +1553,36 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     3DS-Akzeptanz 281/310 = 90.6 %, DCC 2 Attempts, 14 POS-Ablehncodes `00`…`Z3`,
     Retry-Rate POS 1.001, 10 Terminals in der `01b`-Variante; die Herkunfts-Eimer
     summieren exakt auf die Kartenbasis. Der Parser meldete **0 unbrauchbare Werte und 0
-    unbekannte Blöcke**. Wie überall in diesem Abschnitt: **ein Monat in zwei Spaces bei
-    einem Acquirer** — „bisher beobachtet", nicht „gilt immer".
-  - **Offen bleibt SPEC 8.3:** die Zahlungsmittel-Verteilung **nach Betrag** gegen den
-    `brand`-Modus über denselben Zeitraum wurde **nicht** gegengerechnet. Das ist der
-    verbleibende Teil der fachlichen Abnahme (SPEC 8.5 ist im Lauf ebenfalls nicht eigens
-    nachgerechnet worden; 8.1, 8.2, 8.4 und 8.6 sind gedeckt) und gehört zum
-    Abnahmeschritt am Produktivsystem. Erwartet werden dabei kleine Randabweichungen, weil
-    `reporting` auf `ca.createdon` und `brand` auf `t.completedon` filtert — sie sind zu
-    **dokumentieren, nicht wegzudiskutieren**.
+    unbekannte Blöcke**. *Kleine Abweichung, damit „reproduziert" nicht mehr verspricht,
+    als es hält:* Task 0 notierte als 3DS-Kartenbasis 424, der Lauf ergibt 422 (beides
+    rundet auf 73 % Angefordert-Anteil); nach der `KARTEN_BRANDS`-Korrektur sind es 427.
+    Wie überall in diesem Abschnitt: **ein Monat in zwei Spaces bei einem Acquirer** —
+    „bisher beobachtet", nicht „gilt immer".
+  - **Der Lauf hat auch etwas widerlegt** — dass Label-Abdeckung und `KARTEN_BRANDS`
+    dasselbe seien. `PostFinance` steht seither in der Liste; Belege und Zahlen unter
+    „Wallee-Referenzwissen". Das ist die einzige Code-Änderung, die aus dem Lauf folgte.
+  - **Gemessene Lücke in `FAILURE_REASONS`:** der Lauf zeigt im E-Commerce **9** verschiedene
+    `failure_reason_id`, die Tabelle trägt für den Kanal **5** — die übrigen **4** erscheinen
+    als `#<id>`. Das ist kein Fehler (die Tabelle führt bewusst nur belegte Namen, und
+    einen Failure-Reason-Dienst gibt es nicht, siehe oben), aber eine konkrete, nachtragbare
+    Lücke: die Namen lassen sich einzeln über
+    `GET /api/v2.0/payment/charge-attempts` an einem Attempt mit der jeweiligen ID ablesen.
+    Am POS ist die Tabelle mit 2 von 2 IDs vollständig.
+  - **Offen bleibt einzig SPEC 8.3:** die Zahlungsmittel-Verteilung **nach Betrag** gegen
+    den `brand`-Modus über denselben Zeitraum wurde nicht gegengerechnet. Das ist der
+    verbleibende Teil der fachlichen Abnahme und gehört zum Abnahmeschritt am
+    Produktivsystem. Erwartet werden dabei kleine Randabweichungen, weil `reporting` auf
+    `ca.createdon` und `brand` auf `t.completedon` filtert — sie sind zu **dokumentieren,
+    nicht wegzudiskutieren**. 8.1, 8.2, 8.4 und 8.6 sind durch den Lauf gedeckt.
+    **8.5 war keine offene Prüfung, sondern ein Widerspruch in der Spec:** sein Nenner
+    („alle Karten-Attempts mit 3DS-Status ≠ `NOT_REQUESTED`") ist
+    `AUTHENTICATED + FAILED_OR_ABANDONED + WALLET_CRYPTOGRAM` und ergibt am Lauf
+    281/423 = 66.4 %, während SPEC 4.3 für dieselbe Kennzahl `AUTHENTICATED /
+    (AUTHENTICATED + FAILED_OR_ABANDONED)` = 281/310 = 90.6 % verlangt — genau das, was
+    der Code rechnet und was 4.3 selbst zitiert. Die dritte Grösse ist der
+    Angefordert-Anteil. `dashboard/SPEC.md` §8.5 ist auf 4.3 korrigiert. Die
+    Doppelzählungs-Hälfte von 8.5 ist erfüllt und geprüft: `klassifiziereTds` vergibt je
+    Zeile genau einen Wert, die vier Eimer summieren restlos auf die Karten-Attempts.
   - **Die Fixture ist an die echte Schreibweise angeglichen** (siehe
     „Entwicklungs-Workflow"): NULL steht jetzt als unquotiertes Leerfeld, die
     Zeilenreihenfolge folgt dem `ORDER BY` der Query. Sollte ein anderer Connector oder
@@ -1547,6 +1590,13 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     steht in der Statuszeile „… Werte im unerwarteten Format", dann die Muster
     `REPORTING_MUSTER_BETRAG`/`REPORTING_MUSTER_ZAHL` bzw. `parseBool` nachziehen und die
     Fixture umstellen, nicht den Hinweis wegdrücken.
+  - **Veralteter Hinweistext unter K5/K6/P1 (`kartenHinweis`):** er nennt
+    „Zahlungsmittel ohne Karten-Labels (TWINT, **PostFinance Card**, Lunch Check, Reka,
+    Rechnung)" — seit der `KARTEN_BRANDS`-Korrektur zählt PostFinance Card mit, der Satz
+    widerspricht also der Tabelle darüber. Die Zahlen stimmen, nur der Fussnotentext nicht.
+    Bewusst in derselben Runde **nicht** mitgeändert (der Auftrag liess an der App allein
+    die Konstante zu); beim nächsten Anfassen des Reporting-Renders nachziehen — am besten
+    ohne Markennamen, sonst wandert dieselbe Liste an zwei Stellen auseinander.
   - **Conversion und Retry-Rate auf Kanal-Ebene** bleiben eine Obergrenze; exakt würden sie
     erst mit einem vierten Query-Block ohne Brand-Gruppierung.
   - Aus SPEC 4.4 bewusst **nicht** in v5.11: Vorperioden-Vergleich, Billing-Land ≠

@@ -264,8 +264,16 @@ fällt die App auf die ID zurück — der Report bleibt vollständig, nur ohne K
    Brand-Modus (gleicher Zeitraum, `t.completedon` vs. `ca.createdon` erklärt kleine
    Randabweichungen — dokumentieren, nicht wegdiskutieren).
 4. K5 + K6: Summe der Buckets = 100 % der erfolgreichen Karten-Attempts.
-5. E1: Nenner = alle Karten-Attempts mit 3DS-Status ≠ NOT_REQUESTED; kein Attempt zählt
-   doppelt.
+5. E1: Nenner = `AUTHENTICATED + FAILED_OR_ABANDONED`, wie in §4.3 definiert; kein Attempt
+   zählt doppelt (jeder Karten-Attempt bekommt genau einen der vier `tds_status`-Werte, die
+   Eimer summieren restlos auf die Karten-Attempts).
+   *Korrektur 2026-09-01:* hier stand „Nenner = alle Karten-Attempts mit 3DS-Status ≠
+   `NOT_REQUESTED`". Das ist `AUTHENTICATED + FAILED_OR_ABANDONED + WALLET_CRYPTOGRAM` und
+   widerspricht §4.3 — am Referenzlauf gemessen 281/423 = 66.4 % statt 281/310 = 90.6 %.
+   Die dritte Grösse, `(AUTHENTICATED + FAILED_OR_ABANDONED) / Karten-Attempts`, ist der
+   **Angefordert-Anteil**, den §4.3 gesondert führt; §8.5 hatte die beiden Nenner
+   vermischt. Der Code rechnet nach §4.3, die Spec ist daran angeglichen — es war eine
+   Inkonsistenz in der Spec, keine offene Prüfung.
 6. Referenzlauf mit echten Daten unter `dashboard/discovery-results/` (gitignored)
    dokumentieren: Space, Zeitraum, erwartete Werte.
 

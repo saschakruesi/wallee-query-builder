@@ -301,8 +301,13 @@ P2 (Terminals) → K10 Verlauf → Stunden. Pro Kanal ein Block-Set (Kanal-Titel
       prüfen, Ergebnis in `dashboard/discovery-results/ABNAHME.md`. **Teilweise erledigt:**
       der Referenzlauf vom 2026-09-01 deckt §8.1, §8.2, §8.4 und §8.6 (Attempt-Summe und
       Success Rate reproduzieren die Task-0-Werte, die Herkunfts-Eimer summieren exakt auf
-      die Kartenbasis). **Offen bleibt §8.3** — die Zahlungsmittel-Verteilung nach Betrag
-      gegen den `brand`-Modus; §8.5 wurde im Lauf nicht eigens nachgerechnet.
+      die Kartenbasis). **§8.5 war keine offene Prüfung, sondern ein Widerspruch in der
+      Spec** — sein Nenner meinte `AUTH + FAILED_OR_ABANDONED + WALLET_CRYPTOGRAM`
+      (am Lauf 281/423 = 66.4 %), §4.3 dagegen `AUTH / (AUTH + FAILED_OR_ABANDONED)`
+      (281/310 = 90.6 %, was der Code rechnet und §4.3 selbst zitiert); SPEC §8.5 ist auf
+      §4.3 korrigiert, die Doppelzählungs-Hälfte ist erfüllt und geprüft. **Offen bleibt
+      damit einzig §8.3** — die Zahlungsmittel-Verteilung nach Betrag gegen den
+      `brand`-Modus.
 - [ ] **Step 5 — Commit + Merge:** `docs(reporting): CLAUDE.md/README, Version v5.11.0`
 
 ---

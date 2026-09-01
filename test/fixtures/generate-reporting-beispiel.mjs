@@ -29,6 +29,12 @@
 // in beiden Spaces nicht vor. Die Fixture fuehrt sie trotzdem, weil der Code
 // sie behandelt - sie sind belegt gedacht, nicht belegt gemessen.
 //
+// Was der Lauf umgekehrt GEZEIGT und damit widerlegt hat: eine Marke ausserhalb
+// der damaligen KARTEN_BRANDS-Liste kann sehr wohl Issuer-Land, Funding und
+// Kartenkategorie tragen (PostFinance Card am POS auf fast allen Attempts, im
+// E-Commerce auf keinem). Die Fixture bildet beide Seiten davon ab - vorher
+// stand hier nur die widerlegte Form "Nicht-Karte also keine Labels".
+//
 // Nachgebildet sind die fachlich interessanten Faelle aus SPEC 3.2 und 7:
 //
 //   - alle drei Kanaele: POS, ECOM und OTHER (saleschannel weder POS noch ECOM;
@@ -83,6 +89,13 @@ const rnd = prng(20260828);
 // Summen. Mit einem zweiten Strom bleibt der Diff der Fixture genau die neue
 // Spalte, und die alten Sollwerte bleiben als Gegenprobe gueltig.
 const rndTip = prng(20260904);
+// Und ein dritter Strom fuer die Tag/Stunde-Verteilung des TIME-Blocks, aus
+// demselben Grund eine Ebene hoeher: der DIM-Block laeuft vollstaendig VOR dem
+// TIME-Block: jeder neue DIM-Fall verschob damit den Stromstand fuer saemtliche
+// TIME-Faecher, obwohl an den Tagen und Stunden gar nichts geaendert wurde.
+// Mit einem eigenen Strom bleibt der Diff einer neuen DIM-Zeile auf diese Zeile
+// und ihre eigenen TIME-Faecher beschraenkt.
+const rndTime = prng(20260905);
 
 // Spaltenreihenfolge 1:1 aus der SELECT-Liste von
 // dashboard/sql/01_reporting_reference.sql. Die Terminal-Variante (01b) haengt
@@ -148,10 +161,14 @@ const DIM_FAELLE = [
   // Nicht-Karten-Brand: TWINT traegt keine Karten-Labels, alle bleiben leer.
   { space: SPACE_POS, channel: 'POS', brand: 'TWINT', waehrung: 'CHF', state: 'SUCCESSFUL',
     land: '', kat: '', funding: '', n: 137 },
-  // PostFinance Card, ebenfalls ohne Issuer-Labels - deckt das leere
-  // issuer_country ein zweites Mal ab, diesmal mit gefuellter Kategorie.
+  // PostFinance Card MIT Issuer-Labels. Genau das hat der Referenzlauf
+  // gezeigt und damit die urspruengliche Annahme widerlegt, eine lokale
+  // Debitkarte trage keine Scheme-Labels: am POS trug sie Issuer-Land,
+  // Funding und Kategorie wie jede Scheme-Karte. Seither steht sie in
+  // KARTEN_BRANDS und faellt in die Karten-Eimer K5/K6/P1/P7. Ohne diese Zeile
+  // wuerde die Fixture die widerlegte Annahme weiter festschreiben.
   { space: SPACE_POS, channel: 'POS', brand: 'PostFinance Card', waehrung: 'CHF',
-    state: 'SUCCESSFUL', land: '', kat: 'NOT_SPECIFIED', funding: 'DEBIT', n: 96 },
+    state: 'SUCCESSFUL', land: 'CH', kat: 'NOT_SPECIFIED', funding: 'DEBIT', n: 96 },
 
   // E-Commerce, 3DS vollstaendig authentifiziert (started + cavv).
   { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF', state: 'SUCCESSFUL',
@@ -189,6 +206,16 @@ const DIM_FAELLE = [
   { space: SPACE_ECOM, channel: 'OTHER', brand: 'Visa', waehrung: 'CHF',
     state: 'SUCCESSFUL', arc: 'SUCCESSFUL', land: 'CH', kat: 'CLASSIC',
     funding: 'CREDIT', n: 12 },
+
+  // Die Kehrseite desselben Befunds: dieselbe Marke traegt im E-Commerce KEINE
+  // Labels (im Referenzlauf gar keine). Sie steht trotzdem in KARTEN_BRANDS,
+  // ihre Attempts landen also in den UNKNOWN-Eimern von K5/K6 und in
+  // NOT_REQUESTED statt aus der Kartenbasis zu verschwinden. Das ist die
+  // ehrliche Ausgabe - "kein Label" ist eine Messung, "nicht gezaehlt" waere
+  // keine. Bewusst als LETZTER Fall angehaengt: jede Ziehung aus rnd verschoebe
+  // sonst alle nachfolgenden Betraege und damit saemtliche verankerten Summen.
+  { space: SPACE_ECOM, channel: 'ECOM', brand: 'PostFinance Card', waehrung: 'CHF',
+    state: 'SUCCESSFUL', arc: 'SUCCESSFUL', land: '', kat: '', funding: '', n: 7 },
 ];
 
 DIM_FAELLE.forEach(f => {
@@ -289,7 +316,7 @@ zeilen.filter(z => z.block === 'DIM').forEach(z => {
 });
 
 TIME_GRUPPEN.forEach(g => {
-  const gewichte = TIME_SLOTS.map(() => 1 + rnd() * 9);
+  const gewichte = TIME_SLOTS.map(() => 1 + rndTime() * 9);
   const proSlot = verteile(g.attempts, gewichte);
   // Ein Fach ohne Attempt erzeugt in der echten Query gar keine Zeile. Der
   // Umsatz wird deshalb nur ueber die belegten Faecher verteilt, sonst fiele
@@ -325,7 +352,11 @@ TIME_GRUPPEN.forEach(g => {
 // mehr Wiederholungen als fehlgeschlagene Versuche geben. Die Fixture nimmt
 // bewusst ein Drittel davon: so liegt die Retry-Rate in einem Teil der Gruppen
 // sichtbar ueber 1 (sonst pruefte der Kennwert nichts) und in den uebrigen
-// genau auf 1, ohne die Obergrenze zu verletzen.
+// genau auf 1, ohne die Obergrenze zu verletzen. Die Rate liegt damit in der
+// kleinsten Gruppe bei bis zu 1.5 und also WEIT ueber allem, was der
+// Referenzlauf gezeigt hat (dort maximal 1.0048, am POS 1.001): das ist
+// Absicht, damit der Kennwert an der Fixture ueberhaupt von 1 abweicht - die
+// Fixture ist an dieser Stelle also bewusst kein Realitaetsabbild.
 //
 // Die Gruppen entstehen aus den DIM-Zeilen selbst, nicht aus einer zweiten
 // Liste: im Referenzlauf hat jede DIM-Gruppe genau eine CONV-Zeile, und umgekehrt.

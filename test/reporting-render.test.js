@@ -329,7 +329,7 @@ test('Balken-Bloecke zeichnen ein inline-SVG neben ihrer Tabelle', () => {
   // Die Bildunterschrift sagt, worauf der Balken skaliert - ohne sie laesst
   // sich seine Hoehe nicht lesen. Der Zaehler auf sein eigenes Maximum, die
   // Quote auf die feste 0-100-Achse.
-  assert.match(html, /Attempts · Maximum 793/);
+  assert.match(html, /Attempts · Maximum 707/);
   assert.match(html, /Erfolg % · Skala 0–100 %/);
   // Die Tabelle bleibt daneben stehen - das SVG ist die Zugabe, nicht der Ersatz.
   assert.match(html, /2026-07-01/);

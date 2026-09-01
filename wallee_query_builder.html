@@ -3988,12 +3988,23 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     'CH', 'GB',
   ]);
 
-  // Nur Scheme-Karten tragen die Issuer-Labels (Task 0: Abdeckung 89 % = genau
-  // die Karten-Brands). PostFinance Card, TWINT, Lunch Check, Reka und
-  // PowerPay Invoice zaehlen deshalb NICHT als Karte - sonst waere der Nenner
-  // von K5/K6/P1/P7 groesser als die Menge, ueber die es ueberhaupt eine
-  // Aussage gibt, und der UNKNOWN-Eimer bliebe dauerhaft aufgeblaeht.
-  const KARTEN_BRANDS = /Visa|Mastercard|Maestro|V PAY|American Express|Amex|Diners|Discover|JCB|UnionPay/i;
+  // Nur Marken mit Issuer-Labels gehoeren in den Nenner von K5/K6/P1/P7 - sonst
+  // waere er groesser als die Menge, ueber die es ueberhaupt eine Aussage gibt,
+  // und der UNKNOWN-Eimer bliebe dauerhaft aufgeblaeht. TWINT, Lunch Check,
+  // Reka, Boncard und PowerPay Invoice tragen im Referenzlauf kein einziges.
+  //
+  // Der Referenzlauf hat hier aber auch eine Annahme widerlegt: "traegt keine
+  // Scheme-Labels" und "steht nicht in dieser Liste" sind NICHT dasselbe.
+  // PostFinance Card trug am POS auf 1'097 von 1'113 Attempts Issuer-Land,
+  // Funding und Kartenkategorie - also genau die Labels, die K5/K6/P1/P7
+  // messen -, fiel aber mangels Eintrag aus deren Nenner heraus. 'PostFinance'
+  // steht deshalb als BLOSSER Markenname in der Liste, nicht als
+  // 'PostFinance Card': derselbe Lauf zeigt daneben 'PostFinance Apple Pay',
+  // und zwei Literale haetten die dritte Schreibvariante wieder verpasst.
+  // Die Liste bleibt bewusst eine Namensliste und damit connectorabhaengig -
+  // die naechste lokale Debitkarte eines anderen Acquirers braucht denselben
+  // Nachtrag, erkennbar an einem Brand mit Labels ausserhalb dieser Liste.
+  const KARTEN_BRANDS = /Visa|Mastercard|Maestro|V PAY|American Express|Amex|Diners|Discover|JCB|UnionPay|PostFinance/i;
 
   // Business-Karten aus der Kartenkategorie (SPEC 3.1, an 37 Produktwerten aus
   // Produktivdaten verifiziert - siehe DESCRIPTORS.md).

@@ -378,24 +378,24 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
   // nachgerechnet (Decimal-Summe der Spalten), nicht vom Parser uebernommen.
   // Zugleich die Basislinie fuer das Modell in Task 3.
   const summe = (liste, feld) => liste.reduce((a, z) => a + z[feld], 0);
-  assert.strictEqual(summe(r.rows.dim, 'betrag'), 3806115000000);        // 38'061.15
+  assert.strictEqual(summe(r.rows.dim, 'betrag'), 3828364000000);        // 38'283.64
   assert.strictEqual(summe(r.rows.dim, 'betragFailed'), 298879000000);   //  2'988.79
-  assert.strictEqual(summe(r.rows.dim, 'refund'), 63562000000);          //    635.62
+  assert.strictEqual(summe(r.rows.dim, 'refund'), 65394000000);          //    653.94
   // Trinkgeld gibt es nur am POS und nur an erfolgreichen Attempts (Task 4b);
   // die uebrigen Summen sind unveraendert, weil der Generator dafuer einen
   // eigenen PRNG-Strom benutzt.
   assert.strictEqual(summe(r.rows.dim, 'tip'), 152607000000);            //  1'526.07
-  assert.strictEqual(summe(r.rows.dim, 'attempts'), 1854);
+  assert.strictEqual(summe(r.rows.dim, 'attempts'), 1861);
   // DIM und TIME zaehlen in der echten Query dasselbe att-CTE, nur anders
   // gruppiert - ihre Summen muessen sich decken. Die Fixture leitet den
   // TIME-Block deshalb aus dem DIM-Block ab; ohne diese Zusicherung zeigte der
   // Report in den Kacheln eine andere Erfolgsquote als im Verlauf darunter.
-  assert.strictEqual(summe(r.rows.time, 'attempts'), 1854);
-  assert.strictEqual(summe(r.rows.time, 'betrag'), 3806115000000);       // 38'061.15
+  assert.strictEqual(summe(r.rows.time, 'attempts'), 1861);
+  assert.strictEqual(summe(r.rows.time, 'betrag'), 3828364000000);       // 38'283.64
   // CONV wird seit dem Referenzlauf ebenfalls aus dem DIM-Block abgeleitet
   // (siehe den Invarianten-Test unten), nicht mehr von Hand gesetzt.
-  assert.strictEqual(summe(r.rows.conv, 'txMitAttempt'), 1826);
-  assert.strictEqual(summe(r.rows.conv, 'txErfolgreich'), 1756);
+  assert.strictEqual(summe(r.rows.conv, 'txMitAttempt'), 1833);
+  assert.strictEqual(summe(r.rows.conv, 'txErfolgreich'), 1763);
 
   // Die Faelle, die die Fixture bewusst abdeckt (siehe
   // test/fixtures/generate-reporting-beispiel.mjs).
@@ -623,13 +623,20 @@ test('klassifiziereHerkunft: Inland, Europa, Rest, Unbekannt', () => {
   assert.strictEqual(klassifiziereHerkunft('CH', 'DE'), 'INTRA');
 });
 
-test('istKartenBrand trennt Scheme-Karten von TWINT und PostFinance', () => {
+test('istKartenBrand: PostFinance zaehlt mit, TWINT und Rechnung nicht', () => {
   const { istKartenBrand } = loadBuilders();
+  // PostFinance steht seit dem Referenzlauf in der Liste: die Marke trug am POS
+  // auf fast allen Attempts Issuer-Land, Funding und Kategorie und gehoert
+  // damit in den Nenner von K5/K6/P1/P7. Beide Schreibvarianten des Laufs
+  // muessen greifen - deshalb der blosse Markenname im Muster, kein Literal
+  // 'PostFinance Card'.
   ['Visa', 'Mastercard', 'Mastercard Maestro', 'Visa V PAY', 'American Express',
-    'Diners Club', 'JCB', 'UnionPay', 'Discover'].forEach(b => {
+    'Diners Club', 'JCB', 'UnionPay', 'Discover',
+    'PostFinance Card', 'PostFinance Apple Pay'].forEach(b => {
     assert.ok(istKartenBrand(b), b + ' sollte als Karte gelten');
   });
-  ['TWINT', 'PostFinance Card', 'Lunch Check', 'Reka', 'PowerPay Invoice',
+  // Diese tragen im Referenzlauf tatsaechlich kein einziges Karten-Label.
+  ['TWINT', 'Lunch Check', 'Reka', 'PowerPay Invoice', 'Boncard',
     'UNKNOWN', ''].forEach(b => {
     assert.ok(!istKartenBrand(b), b + ' sollte NICHT als Karte gelten');
   });
@@ -986,7 +993,7 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   const summeDim = p.rows.dim.reduce((a, z) => a + z.attempts, 0);
   const summeKanal = m.kanalListe.reduce((a, k) => a + m.kanaele[k].kpi.attempts, 0);
   assert.strictEqual(summeKanal, summeDim);
-  assert.strictEqual(summeDim, 1854);
+  assert.strictEqual(summeDim, 1861);
 
   const pos = m.kanaele.POS;
   assert.strictEqual(pos.kpi.attempts, 1403);
@@ -994,9 +1001,10 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   assert.strictEqual(pos.kpi.fehlgeschlagen, 23);
   assert.strictEqual(pos.kpi.offen, 0);
   assert.strictEqual(Math.round(pos.kpi.successRate * 10) / 10, 98.4);
-  // Karten-Attempts: Visa/Mastercard, ohne TWINT (137) und PostFinance (96).
-  assert.strictEqual(pos.kartentyp.basis, 1147);
-  assert.strictEqual(pos.herkunft.basis, 1147);
+  // Erfolgreiche Karten-Attempts: Visa/Mastercard UND PostFinance Card (96,
+  // seit dem Referenzlauf in KARTEN_BRANDS), ohne TWINT (137).
+  assert.strictEqual(pos.kartentyp.basis, 1243);
+  assert.strictEqual(pos.herkunft.basis, 1243);
   // SPEC 7: der ISO-3-Wert CHE ist unbekannt, nie INTER.
   const chE = pos.herkunft.laender.find(l => l.land === 'CHE');
   assert.strictEqual(chE, undefined);
@@ -1011,14 +1019,28 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
 
   const ecom = m.kanaele.ECOM;
   assert.strictEqual(ecom.kpi.offen, 9);
-  assert.strictEqual(ecom.kpi.attempts, 439);
-  assert.strictEqual(ecom.kpi.abgeschlossen, 430);
-  // Die Quoten lassen PENDING draussen, die Anteile decken alles ab.
-  assert.strictEqual(ecom.brands.reduce((a, b) => a + b.anteilAttempts, 0), 100);
+  assert.strictEqual(ecom.kpi.attempts, 446);
+  assert.strictEqual(ecom.kpi.abgeschlossen, 437);
+  // Die Quoten lassen PENDING draussen, die Anteile decken alles ab. Geprueft
+  // wird das auf den ZAEHLERN exakt - dort ist es eine echte Zusicherung; die
+  // Prozentsumme darf davon um Gleitkomma-Epsilon abweichen, weil das Modell
+  // Prozente bewusst ungerundet fuehrt und erst die Ausgabe rundet. Ein
+  // strictEqual(…, 100) waere nur so lange gruen, wie die Anteile zufaellig
+  // glatt aufgehen.
+  assert.strictEqual(
+    ecom.brands.reduce((a, b) => a + b.attempts, 0), ecom.kpi.attempts);
+  assert.ok(
+    Math.abs(ecom.brands.reduce((a, b) => a + b.anteilAttempts, 0) - 100) < 1e-9);
   assert.deepStrictEqual(plain(ecom.waehrungen.map(w => w.waehrung)), ['CHF', 'EUR']);
   assert.ok(ecom.waehrungen.every(w => w.tip === 0), 'E-Com traegt kein Trinkgeld');
   assert.ok(ecom.tds.basis > 0);
   assert.ok(ecom.wallets.some(w => w.wallet === 'Apple Pay'));
+  // Die Kehrseite des Referenzlaufs: dieselbe Marke traegt im E-Commerce keine
+  // Labels. Sie zaehlt trotzdem zur Kartenbasis und landet sichtbar in
+  // NOT_REQUESTED - "kein Label" ist eine Messung, "nicht gezaehlt" waere keine.
+  assert.strictEqual(
+    ecom.tds.gruppen.find(g => g.schluessel === 'NOT_REQUESTED').attempts, 7);
+  assert.ok(ecom.brands.some(b => b.brand === 'PostFinance Card'));
 
   // Alle drei Kanaele bekommen denselben, lueckenlosen Tagesbereich.
   m.kanalListe.forEach(k => {
