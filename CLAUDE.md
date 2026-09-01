@@ -556,6 +556,15 @@ Alles clientseitig im Modell, aus den Rohwerten der Query:
   connectorabhängig** — die nächste lokale Debitkarte eines anderen Acquirers braucht
   denselben Nachtrag; erkennbar ist der Fall daran, dass ein Brand ausserhalb der Liste
   Issuer-Labels trägt.
+  **Der Hinweistext unter K5/K6/P1 (`kartenHinweis`) nennt deshalb bewusst keine
+  Markenliste mehr**, sondern „Zahlungsmittel ohne Karten-Labels — zum Beispiel TWINT —
+  zählen hier nicht mit. Welche das sind, hängt vom Acquirer ab." Dort stand eine Liste,
+  und sie ist genau an dieser Korrektur veraltet: eine Fussnote, die eine mitzählende Marke
+  als ausgeschlossen nennt, ist schlimmer als gar keine, weil der Leser ihr die Erklärung
+  der Zahl darüber glaubt. TWINT bleibt als **ein** ausdrückliches Beispiel stehen (in
+  beiden Kanälen label-los gemessen), damit nicht offenbleibt, wohin der fehlende Umsatz
+  verschwunden ist. `test/reporting-render.test.js` nagelt fest, dass keine Liste
+  zurückkehrt — vorher prüfte den Satz nichts, deshalb fiel sein Veralten nicht auf.
 - **`klassifiziereKartentyp`** — `KARTEN_BUSINESS_REGEX` (`BUSINESS|CORPORATE|COMMERCIAL|
   PURCHASING|FLEET`) → `BUSINESS`; `NOT_SPECIFIED` (Konstante `KARTEN_KATEGORIE_UNBEKANNT`)
   oder fehlend → `UNKNOWN`, **nicht** `PRIVATE`; alles andere → `PRIVATE`. Der Wert ist
@@ -1590,13 +1599,6 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     steht in der Statuszeile „… Werte im unerwarteten Format", dann die Muster
     `REPORTING_MUSTER_BETRAG`/`REPORTING_MUSTER_ZAHL` bzw. `parseBool` nachziehen und die
     Fixture umstellen, nicht den Hinweis wegdrücken.
-  - **Veralteter Hinweistext unter K5/K6/P1 (`kartenHinweis`):** er nennt
-    „Zahlungsmittel ohne Karten-Labels (TWINT, **PostFinance Card**, Lunch Check, Reka,
-    Rechnung)" — seit der `KARTEN_BRANDS`-Korrektur zählt PostFinance Card mit, der Satz
-    widerspricht also der Tabelle darüber. Die Zahlen stimmen, nur der Fussnotentext nicht.
-    Bewusst in derselben Runde **nicht** mitgeändert (der Auftrag liess an der App allein
-    die Konstante zu); beim nächsten Anfassen des Reporting-Renders nachziehen — am besten
-    ohne Markennamen, sonst wandert dieselbe Liste an zwei Stellen auseinander.
   - **Conversion und Retry-Rate auf Kanal-Ebene** bleiben eine Obergrenze; exakt würden sie
     erst mit einem vierten Query-Block ohne Brand-Gruppierung.
   - Aus SPEC 4.4 bewusst **nicht** in v5.11: Vorperioden-Vergleich, Billing-Land ≠

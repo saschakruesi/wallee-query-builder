@@ -320,6 +320,32 @@ test('Prozente stehen mit einer Nachkommastelle da', () => {
   assert.doesNotMatch(html, /96\.70014/, 'Volle Genauigkeit gehoert ins Modell, nicht auf den Schirm');
 });
 
+test('Der Karten-Hinweis nennt keine Markenliste', () => {
+  const { el } = mitFixture();
+  const html = el('reportingReportOutput').innerHTML;
+
+  // Der Hinweis erklaert den Nenner von K5/K6/P1. Wer darin Marken aufzaehlt,
+  // schreibt eine Liste fest, die der Connector bestimmt und nicht die
+  // Zahlungsart: PostFinance Card trug am POS Karten-Labels und im
+  // E-Commerce keine - dieselbe Marke, zwei Antworten. Genau daran ist der
+  // alte Satz veraltet, und zwar unbemerkt, weil ihn nichts geprueft hat.
+  assert.match(html, /Zahlungsmittel ohne Karten-Labels/);
+  assert.match(html, /Welche das sind, hängt vom Acquirer ab/,
+    'der Hinweis muss sagen, dass die Menge connectorabhaengig ist');
+  ['PostFinance', 'Lunch Check', 'Reka', 'Boncard', 'PowerPay'].forEach(marke => {
+    assert.ok(!html.includes(marke + ') zählen') && !html.includes(', ' + marke),
+      'Der Karten-Hinweis darf ' + marke + ' nicht als Teil einer Liste nennen');
+  });
+  // Ein einzelnes Beispiel bleibt erlaubt und ist als solches gekennzeichnet -
+  // sonst bliebe offen, wohin der fehlende Umsatz verschwunden ist.
+  assert.match(html, /zum Beispiel TWINT/);
+
+  // Und die Gegenprobe, dass der Hinweis wirklich zur Tabelle gehoert, deren
+  // Nenner er erklaert: PostFinance Card steht im Zahlungsmittel-Block und
+  // zaehlt seit der KARTEN_BRANDS-Korrektur in die Kartenbasis hinein.
+  assert.match(html, /PostFinance Card/, 'die Marke selbst gehoert in die Tabellen');
+});
+
 test('Balken-Bloecke zeichnen ein inline-SVG neben ihrer Tabelle', () => {
   const { el } = mitFixture();
   const html = el('reportingReportOutput').innerHTML;
