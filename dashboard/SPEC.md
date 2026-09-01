@@ -229,9 +229,23 @@ account-übergreifend, nicht in der Händler-Query möglich).
 `DESC_TDS_STARTED = '1568637480278'` (Key `dateTimeContent`), `DESC_TDS_CAVV = '1569496536590'`
 (Key `longTextContent`, nur Existenz-Check), `DESC_ECI = '1634723429552'`,
 `EUROPA_REGION` (ISO-2-Set), `KARTEN_BRANDS` (Regex auf Brand-Name:
-`Visa|Mastercard|Maestro|V PAY|American Express|Amex|Diners|Discover|JCB|UnionPay` —
-PostFinance Card, TWINT, Lunch Check, Reka tragen keine Karten-Labels und zählen nicht
-als Karte), `KARTEN_BUSINESS_REGEX`, `ISO_RESPONSE_CODES`, `ATTEMPT_ENVIRONMENT = 'PRODUCTION'`.
+`Visa|Mastercard|Maestro|V PAY|American Express|Amex|Diners|Discover|JCB|UnionPay|PostFinance`),
+`KARTEN_BUSINESS_REGEX`, `ISO_RESPONSE_CODES`, `ATTEMPT_ENVIRONMENT = 'PRODUCTION'`.
+
+*Korrektur 2026-09-01 (Referenzlauf).* Hier stand „PostFinance Card, TWINT, Lunch Check,
+Reka tragen keine Karten-Labels und zählen nicht als Karte", und die Regex führte
+`PostFinance` nicht. Der Referenzlauf widerlegt das: `PostFinance Card` trug am POS auf
+**1'097 von 1'113** Attempts Issuer-Land, Funding und Kartenkategorie — genau die Labels,
+die K5/K6/P1/P7 messen. Die Marke steht seither in der Regex, und zwar als **blosser
+Markenname**, weil derselbe Lauf daneben `PostFinance Apple Pay` zeigt.
+
+Wirklich label-los sind **TWINT, Lunch Check, Reka, Boncard und PowerPay Invoice** — auf
+keinem ihrer Attempts ein Karten-Label. **Und die Antwort ist kanalabhängig:** dieselbe
+`PostFinance Card` trug im E-Commerce auf keinem ihrer 4 Attempts eines. Sie zählt dort
+trotzdem zur Kartenbasis und landet sichtbar in den `UNKNOWN`-Eimern bzw. in
+`NOT_REQUESTED` — „kein Label" ist eine Messung, „nicht gezählt" wäre keine. Die Liste
+bleibt damit eine Namensliste und **connectorabhängig**: ein anderer Acquirer mit einer
+lokalen Debitkarte braucht denselben Nachtrag.
 
 ### 6.4 Proxy: Failure-Reason-Namen
 

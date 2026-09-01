@@ -5767,9 +5767,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // schlimmer als gar keine: der Leser glaubt ihr die Erklaerung der Zahl
     // darueber. TWINT bleibt als EIN Beispiel stehen (in beiden Kanaelen
     // label-los gemessen) und ist als solches gekennzeichnet, weil sonst offen
-    // bliebe, wohin der fehlende Umsatz verschwunden ist. Kein Semikolon im
-    // Satz: die Report-CSV trennt mit ';', und Prosa mit Trennzeichen ist
-    // zwar korrekt quotiert, aber unnoetige Reibung fuer jeden Import.
+    // bliebe, wohin der fehlende Umsatz verschwunden ist.
     const kartenHinweis = `Grundlage: ${formatIntCH(kartenBasis)} erfolgreiche Karten-Attempts. `
       + 'Zahlungsmittel ohne Karten-Labels — zum Beispiel TWINT — zählen hier nicht mit. '
       + 'Welche das sind, hängt vom Acquirer ab.';

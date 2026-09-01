@@ -1396,8 +1396,14 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     und Kartenkategorie, stand aber nicht in der Liste — die Label-Menge (11'193) war
     damit **959 Attempts grösser** als die Listen-Menge (10'234 = 81.6 %), und K5/K6/P1/P7
     liessen rund 1'098 Attempts liegen, die genau die Labels trugen, die sie messen.
-    Seither steht `PostFinance` in `KARTEN_BRANDS` (POS-Kartenbasis damit 11'347 Attempts
-    / 11'193 erfolgreiche). **Label-los sind** TWINT, Lunch Check, Reka, Boncard und
+    Seither steht `PostFinance` in `KARTEN_BRANDS`. **Was sich dadurch verschiebt**
+    (am Referenzlauf nachgerechnet): POS-Kartenbasis 10'234 → **11'347** Attempts bzw.
+    10'096 → **11'193** erfolgreiche, E-Com 422 → **427** bzw. 378 → **383**. Von den
+    ausgewiesenen Kennzahlen bewegt sich **eine**: `tds.angefordertAnteil` im E-Commerce
+    73.5 % → **72.6 %** — derselbe Zähler (310), ein um 5 grösserer Nenner. Die
+    3DS-Akzeptanz E1 bleibt bei **90.6 %** (281/310), weil die neuen Attempts kein 3DS
+    starten, und die vier `tds`-Eimer summieren vorher wie nachher **restlos** auf die
+    Karten-Attempts. **Label-los sind** TWINT, Lunch Check, Reka, Boncard und
     PowerPay Invoice — auf **keinem** ihrer Attempts ein Karten-Label.
     **Und es ist kanalabhängig:** dieselbe Marke trug im E-Commerce auf keinem ihrer
     4 Attempts ein Label. Sie zählt dort trotzdem zur Kartenbasis und landet sichtbar in

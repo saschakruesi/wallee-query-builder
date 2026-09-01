@@ -329,20 +329,38 @@ test('Der Karten-Hinweis nennt keine Markenliste', () => {
   // Zahlungsart: PostFinance Card trug am POS Karten-Labels und im
   // E-Commerce keine - dieselbe Marke, zwei Antworten. Genau daran ist der
   // alte Satz veraltet, und zwar unbemerkt, weil ihn nichts geprueft hat.
-  assert.match(html, /Zahlungsmittel ohne Karten-Labels/);
-  assert.match(html, /Welche das sind, hängt vom Acquirer ab/,
-    'der Hinweis muss sagen, dass die Menge connectorabhaengig ist');
-  ['PostFinance', 'Lunch Check', 'Reka', 'Boncard', 'PowerPay'].forEach(marke => {
-    assert.ok(!html.includes(marke + ') zählen') && !html.includes(', ' + marke),
-      'Der Karten-Hinweis darf ' + marke + ' nicht als Teil einer Liste nennen');
-  });
-  // Ein einzelnes Beispiel bleibt erlaubt und ist als solches gekennzeichnet -
-  // sonst bliebe offen, wohin der fehlende Umsatz verschwunden ist.
-  assert.match(html, /zum Beispiel TWINT/);
+  //
+  // Geprueft wird der SATZ, nicht die Seite: eine Liste laesst sich in beliebiger
+  // Zeichensetzung schreiben ("TWINT und PostFinance Card und Lunch Check"), und
+  // jedes Muster auf Komma oder Klammer haette genau daran vorbeigesehen. Statt
+  // Schreibweisen zu erraten, darf in diesem Satz ueberhaupt kein Markenname
+  // ausser dem einen Beispiel vorkommen.
+  const hinweise = [...html.matchAll(/<p class="hint">([^<]*)<\/p>/g)].map(m => m[1])
+    .filter(h => h.includes('Zahlungsmittel ohne Karten-Labels'));
+  // K5 (Kartentyp), K6 (Kartenherkunft) und P1 (Debit/Kredit) teilen sich den
+  // Satz - findet die Suche weniger, prueft die Schleife unten zu wenig.
+  assert.ok(hinweise.length >= 3,
+    'erwartet: der Karten-Hinweis unter K5, K6 und P1, gefunden ' + hinweise.length);
 
-  // Und die Gegenprobe, dass der Hinweis wirklich zur Tabelle gehoert, deren
-  // Nenner er erklaert: PostFinance Card steht im Zahlungsmittel-Block und
-  // zaehlt seit der KARTEN_BRANDS-Korrektur in die Kartenbasis hinein.
+  hinweise.forEach(h => {
+    assert.match(h, /Welche das sind, hängt vom Acquirer ab/,
+      'der Hinweis muss sagen, dass die Menge connectorabhaengig ist');
+    // Ein einzelnes Beispiel bleibt erlaubt und ist als solches gekennzeichnet -
+    // sonst bliebe offen, wohin der fehlende Umsatz verschwunden ist.
+    assert.match(h, /zum Beispiel TWINT/);
+    ['PostFinance', 'Lunch Check', 'Reka', 'Boncard', 'PowerPay', 'Rechnung',
+      'Visa', 'Mastercard'].forEach(marke => {
+      assert.ok(!h.includes(marke),
+        `Der Karten-Hinweis darf ${marke} nicht nennen, in welcher Form auch immer: ${h}`);
+    });
+  });
+
+  // Gegenprobe, dass hier nicht bloss der Satz geprueft wird: die Marke selbst
+  // gehoert sehr wohl in die Tabellen. ACHTUNG - diese Zusicherung haelt die
+  // Kartenbasis NICHT: PostFinance Card steht im Zahlungsmittel-Block, ob es
+  // als Karte zaehlt oder nicht, und bleibt deshalb auch ohne den
+  // PostFinance-Token in KARTEN_BRANDS gruen. Die Kartenbasis nagelt
+  // test/reporting-model.test.js fest (pos.kartentyp.basis === 1243).
   assert.match(html, /PostFinance Card/, 'die Marke selbst gehoert in die Tabellen');
 });
 
@@ -409,8 +427,17 @@ test('Die CSV traegt maschinenlesbare Zahlen, keine formatierten Woerter', () =>
   assert.match(csv, /\r\nVisa;697;49\.7;96\.7;3\.3;CHF;16150\.7;52\.3;23\.96\r\n/,
     'Datenzeile durchgehend maschinenlesbar: keine Tausendertrennung, kein Prozentzeichen');
   // Tausendertrennung gibt es nur in der Hinweis-PROSA unter der Tabelle
-  // ("Grundlage: 1’147 …") - das ist Fliesstext, keine Zelle.
-  csv.split('\r\n').filter(z => z.indexOf(';') >= 0).forEach(z => {
+  // ("Grundlage: 1’243 …") - das ist Fliesstext, keine Zelle. Eine Prosa-Zeile
+  // ist genau EIN quotiertes Feld; erst mehrere Felder machen eine Datenzeile.
+  // Ohne diese zweite Bedingung schlug der Waechter an, sobald die Prosa selbst
+  // ein Semikolon enthielt - und meldete dann "Datenzeile mit Tausendertrennung"
+  // ueber korrekt quotierten Fliesstext, der jeden Import unbeschadet uebersteht.
+  // Er beschuldigte also das Falsche und zwang die Formulierung des Hinweises,
+  // statt die CSV zu schuetzen.
+  const istProsa = z => /^"[^"]*"$/.test(z);
+  const datenzeilen = csv.split('\r\n').filter(z => z.indexOf(';') >= 0 && !istProsa(z));
+  assert.ok(datenzeilen.length > 0, 'ohne Datenzeilen prueft die Schleife nichts');
+  datenzeilen.forEach(z => {
     assert.doesNotMatch(z, /’/, `Datenzeile mit Tausendertrennung bricht jeden Import: ${z}`);
   });
 });
