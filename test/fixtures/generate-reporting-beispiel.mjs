@@ -1,15 +1,33 @@
 // Erzeugt test/fixtures/reporting-beispiel.csv - den Testdatensatz fuer den
 // Reporting-Modus (parseReportingCsv, Task 2; Modell in Task 3).
 //
-// ACHTUNG - die Daten sind FREI ERFUNDEN und SYNTHETISCH. Der echte Portal-Lauf
-// von dashboard/sql/01_reporting_reference.sql hat zum Zeitpunkt von Task 2
-// noch NICHT stattgefunden. Diese Fixture bildet deshalb nur die STRUKTUR nach,
-// die die Query laut ihrer SELECT-Liste liefert - sie beweist nicht, wie wallee
-// die Werte wirklich formatiert. Nach dem echten Portal-Lauf ist sie gegen das
-// Ergebnis zu validieren und, wo sie abweicht, zu ersetzen. Space-IDs,
-// Terminal-Kennungen, Betraege und Zeitstempel sind erfunden; die realen
-// Referenz-Spaces (40402/12622) tauchen hier bewusst NICHT auf, weil dieses
-// Repository oeffentlich ist.
+// ACHTUNG - die Daten sind FREI ERFUNDEN und SYNTHETISCH. Space-IDs,
+// Terminal-Kennungen, Zaehlwerte, Betraege und Zeitstempel sind erfunden; die
+// realen Referenz-Spaces (40402/12622) tauchen hier bewusst NICHT auf, weil
+// dieses Repository oeffentlich ist.
+//
+// Die SCHREIBWEISE dagegen ist seit dem Portal-Referenzlauf vom 2026-09-01
+// nicht mehr geraten, sondern Feld fuer Feld gegen die echte Athena-Ausgabe
+// abgeglichen (welche Spaces und welcher Monat: siehe CLAUDE.md, hier bewusst
+// nicht wiederholt). Uebernommen ist genau das:
+//
+//   - NULL kommt als UNQUOTIERTES Leerfeld (,,), nie als "". Ein leeres, aber
+//     vorhandenes Textfeld kam im ganzen Referenzlauf nicht vor - Athena
+//     unterscheidet die beiden Formen also, die Fixture zeigt nur die belegte.
+//   - Jeder nicht-NULL-Wert steht in Anfuehrungszeichen, auch Zahlen, Datum
+//     und Boolean. Kein Escape, kein Komma, kein Anfuehrungszeichen im Wert.
+//   - Betraege: Punkt als Dezimaltrenner, IMMER 8 Nachkommastellen, keine
+//     Exponentialschreibweise, kein Tausendertrennzeichen.
+//   - Boolean als "true"/"false" (klein), Tag als "yyyy-mm-dd", Stunde als
+//     Ganzzahl 0..23 OHNE fuehrende Null.
+//   - LF als Zeilenende, kein BOM, abschliessender Zeilenumbruch, reines ASCII.
+//   - Zeilenreihenfolge wie das ORDER BY der Query: block, channel,
+//     anzahl_attempts DESC - die Bloecke erscheinen also als CONV, DIM, TIME.
+//
+// Was der Lauf NICHT beantwortet und was hier deshalb weiterhin nur Struktur
+// ist: negative Betraege, PENDING-Attempts und ein dritter Verkaufskanal kamen
+// in beiden Spaces nicht vor. Die Fixture fuehrt sie trotzdem, weil der Code
+// sie behandelt - sie sind belegt gedacht, nicht belegt gemessen.
 //
 // Nachgebildet sind die fachlich interessanten Faelle aus SPEC 3.2 und 7:
 //
@@ -30,8 +48,9 @@
 //   - alle drei 3DS-Auspraegungen: started+cavv, started ohne cavv, nur ECI
 //   - Bloecke TIME (Tag/Stunde) und CONV (COUNT(DISTINCT) je Brand)
 //
-// Die typisierten NULL-Platzhalter der Bloecke TIME und CONV kommen als leere
-// Felder in der CSV an - genau so schreibt die Analytics den CAST(NULL AS ...).
+// Die typisierten NULL-Platzhalter der Bloecke TIME und CONV kommen als leere,
+// unquotierte Felder in der CSV an - genau so schreibt die Analytics den
+// CAST(NULL AS ...), am Referenzlauf nachgeprueft.
 //
 // Deterministisch: gleicher Lauf -> gleiche Datei. Kein Math.random, sondern
 // ein kleiner Seed-Generator, damit die Sollzahlen in
@@ -290,25 +309,71 @@ TIME_GRUPPEN.forEach(g => {
 });
 
 // --- Block CONV -----------------------------------------------------------
-// COUNT(DISTINCT) je Space, Kanal, Brand, Waehrung - ueber DIM-Tupel hinweg
-// nicht summierbar, deshalb ein eigener Block.
-const CONV_BASIS = [
-  { space: SPACE_POS, channel: 'POS', brand: 'Visa', waehrung: 'CHF', mit: 663, ok: 640 },
-  { space: SPACE_POS, channel: 'POS', brand: 'Mastercard', waehrung: 'CHF', mit: 473, ok: 473 },
-  { space: SPACE_POS, channel: 'POS', brand: 'TWINT', waehrung: 'CHF', mit: 137, ok: 137 },
-  { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF', mit: 318, ok: 296 },
-  { space: SPACE_ECOM, channel: 'ECOM', brand: 'Mastercard', waehrung: 'EUR', mit: 79, ok: 64 },
-  { space: SPACE_ECOM, channel: 'OTHER', brand: 'Visa', waehrung: 'CHF', mit: 12, ok: 12 },
-];
-CONV_BASIS.forEach(b => {
+// ABGELEITET aus dem DIM-Block, wie schon TIME und aus demselben Grund: die
+// hand gesetzten Werte, die hier frueher standen, widersprachen der Invariante,
+// auf der die Query selbst aufbaut (POS-Visa zeigte 663 Transaktionen gegen 674
+// erfolgreiche Attempts - mehr Erfolge als Transaktionen).
+//
+// tx_erfolgreich = Anzahl der SUCCESSFUL-Attempts der Gruppe. Das ist keine
+// Naeherung, sondern folgt zwingend aus "pro Transaktion hoechstens ein
+// erfolgreicher Attempt" - derselben Zusicherung, auf der die Exaktheit von
+// summe_tip beruht: jeder Erfolg gehoert zu einer anderen Transaktion. Am
+// Referenzlauf gilt die Gleichheit in jeder einzelnen CONV-Gruppe exakt.
+//
+// tx_mit_attempt = alle Attempts der Gruppe minus die Wiederholungen. Ein Retry
+// setzt einen vorangegangenen FEHLGESCHLAGENEN Versuch voraus, es kann also nie
+// mehr Wiederholungen als fehlgeschlagene Versuche geben. Die Fixture nimmt
+// bewusst ein Drittel davon: so liegt die Retry-Rate in einem Teil der Gruppen
+// sichtbar ueber 1 (sonst pruefte der Kennwert nichts) und in den uebrigen
+// genau auf 1, ohne die Obergrenze zu verletzen.
+//
+// Die Gruppen entstehen aus den DIM-Zeilen selbst, nicht aus einer zweiten
+// Liste: im Referenzlauf hat jede DIM-Gruppe genau eine CONV-Zeile, und umgekehrt.
+// Eine gepflegte Zweitliste vergisst genau die Faelle, die man beim Ergaenzen
+// des DIM-Blocks nicht mitdenkt - hier waren das PostFinance Card und die
+// Zeile ohne aufloesbare Brand.
+const CONV_GRUPPEN = new Map();
+zeilen.filter(z => z.block === 'DIM').forEach(z => {
+  const schluessel = [z.space_id, z.channel, z.brand, z.waehrung].join('|');
+  const g = CONV_GRUPPEN.get(schluessel) || {
+    space_id: z.space_id, channel: z.channel, brand: z.brand, waehrung: z.waehrung,
+    attempts: 0, erfolge: 0, fehler: 0,
+  };
+  const n = Number(z.anzahl_attempts);
+  g.attempts += n;
+  if (z.attempt_state === 'SUCCESSFUL') g.erfolge += n;
+  if (z.attempt_state === 'FAILED') g.fehler += n;
+  CONV_GRUPPEN.set(schluessel, g);
+});
+
+CONV_GRUPPEN.forEach(g => {
+  const wiederholungen = Math.floor(g.fehler / 3);
   zeilen.push({
     block: 'CONV',
-    space_id: b.space, channel: b.channel, brand: b.brand, waehrung: b.waehrung,
-    tx_mit_attempt: String(b.mit), tx_erfolgreich: String(b.ok),
+    space_id: g.space_id, channel: g.channel, brand: g.brand, waehrung: g.waehrung,
+    tx_mit_attempt: String(g.attempts - wiederholungen),
+    tx_erfolgreich: String(g.erfolge),
   });
 });
 
-const q = v => '"' + String(v == null ? '' : v) + '"';
+// --- Reihenfolge ----------------------------------------------------------
+// Wie in der echten Ausgabe: die Query endet auf
+// ORDER BY block, channel, anzahl_attempts DESC, und der Referenzlauf haelt
+// sich exakt daran (Bloecke also CONV, DIM, TIME - alphabetisch, nicht in der
+// Reihenfolge des SELECT). Array.prototype.sort ist stabil, gleichrangige
+// Zeilen behalten damit ihre Aufbaureihenfolge und die Datei bleibt byteweise
+// reproduzierbar. Der CONV-Block traegt gar keine anzahl_attempts; dort greift
+// nur der stabile Rest.
+zeilen.sort((a, b) =>
+  (a.block < b.block ? -1 : a.block > b.block ? 1 : 0)
+  || (a.channel < b.channel ? -1 : a.channel > b.channel ? 1 : 0)
+  || (Number(b.anzahl_attempts || 0) - Number(a.anzahl_attempts || 0)));
+
+// NULL schreibt Athena als UNQUOTIERTES Leerfeld, jeden vorhandenen Wert
+// dagegen in Anfuehrungszeichen - auch Zahlen und Booleans. Beide Formen parst
+// der Reporting-Parser gleich; die Fixture bildet trotzdem die echte ab, weil
+// sie das Vergleichsstueck ist, an dem eine kuenftige Aenderung gemessen wird.
+const q = v => (v == null || v === '') ? '' : '"' + String(v) + '"';
 const csv = [
   KOPF.map(q).join(','),
   ...zeilen.map(z => KOPF.map(k => q(z[k] === undefined ? '' : z[k])).join(',')),

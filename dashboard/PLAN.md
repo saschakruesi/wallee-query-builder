@@ -129,12 +129,17 @@ Zeilen befüllt); `terminalIds` filtert wie `buildTerminalQuery` (leer = alle).
       `CAST(NULL AS date)`, `CAST(NULL AS integer)` — Athena verlangt gleiche Typen im
       UNION), `UNION ALL`, `ORDER BY block, channel, anzahl_attempts DESC`.
 - [ ] **Step 3 — Regressionsschutz:** Bestehende Query-Tests unverändert grün.
-- [ ] **Step 4 — Referenz-SQL:** Die generierte Query für einen Beispiel-Space in
+- [x] **Step 4 — Referenz-SQL:** Die generierte Query für einen Beispiel-Space in
       `dashboard/sql/01_reporting_reference.sql` ablegen und **im Portal ausführen**
       (Sascha). Läuft sie nicht (Typfehler im UNION, Label-Syntax), hier fixen, bevor
-      Task 2 beginnt. Ergebnis-CSV nach `dashboard/discovery-results/reporting_ref.csv`
-      — das ist die Test-Fixture-Vorlage für Task 2/3 (anonymisiert: nur Aggregate, keine
-      PII, kann als `test/fixtures/reporting-beispiel.csv` mit gerundeten Zahlen ins Repo).
+      Task 2 beginnt. Ergebnis-CSV nach `dashboard/discovery-results/reporting_ref.csv`.
+      **Erledigt am 2026-09-01** — beide Queries (`01` und die Terminal-Variante `01b`)
+      liefen fehlerfrei über Spaces 40402 + 12622, Juli 2026; UNION-Typen und Label-Syntax
+      halten, der Parser meldet 0 unbrauchbare Werte und 0 unbekannte Blöcke. Die
+      Ergebnis-CSVs bleiben **gitignored** (Produktivdaten). Die Fixture
+      `test/fixtures/reporting-beispiel.csv` ist **nicht** aus ihnen abgeleitet, sondern
+      bleibt frei erfunden — nur ihre *Schreibweise* wurde daran angeglichen (das Repo ist
+      öffentlich, gerundete Echtzahlen wären trotzdem Echtzahlen).
 - [ ] **Step 5 — Commit:** `feat(reporting): buildReportingQuery mit DIM/TIME/CONV-Bloecken`
 
 ---
@@ -184,7 +189,9 @@ Zählwerte → Integer, leere Dimensionen → `'UNKNOWN'` (nie `''`/`null` im Mo
       - Kartentyp: `NOT_SPECIFIED` → UNKNOWN (nicht PRIVATE); `WORLD_ELITE_BUSINESS` →
         BUSINESS; `CLASSIC` → PRIVATE.
       - Conversion (CONV): `tx_erfolgreich / tx_mit_attempt`; Retry-Rate =
-        `anzahl_attempts / anzahl_transaktionen`.
+        `anzahl_attempts / tx_mit_attempt` — der Nenner kommt ebenfalls aus CONV. Die
+        ursprünglich vorgesehene DIM-Spalte `anzahl_transaktionen` gibt es nicht mehr:
+        `COUNT(DISTINCT transaction_id)` ist über DIM-Tupel hinweg nicht summierbar.
       - Failure-Top-10: sortiert, Name aus `failureReasons[id]`, Fallback `#<id>`.
       - Verlauf: Tage lückenlos (fehlende Tage im Zeitraum mit 0), Stunden 0–23.
       - Terminal-Zeilen nur im POS-Kanal.
@@ -291,7 +298,11 @@ P2 (Terminals) → K10 Verlauf → Stunden. Pro Kanal ein Block-Set (Kanal-Titel
       CSV-Import im Kopieren-Modus.
 - [ ] **Step 3 — Version** `5.11.0` an allen drei Stellen + Proxy; Self-Update-Test grün.
 - [ ] **Step 4 — Fachliche Abnahme nach SPEC §8** (Sascha): Zahlen gegen Q1/Brand-Modus
-      prüfen, Ergebnis in `dashboard/discovery-results/ABNAHME.md`.
+      prüfen, Ergebnis in `dashboard/discovery-results/ABNAHME.md`. **Teilweise erledigt:**
+      der Referenzlauf vom 2026-09-01 deckt §8.1, §8.2, §8.4 und §8.6 (Attempt-Summe und
+      Success Rate reproduzieren die Task-0-Werte, die Herkunfts-Eimer summieren exakt auf
+      die Kartenbasis). **Offen bleibt §8.3** — die Zahlungsmittel-Verteilung nach Betrag
+      gegen den `brand`-Modus; §8.5 wurde im Lauf nicht eigens nachgerechnet.
 - [ ] **Step 5 — Commit + Merge:** `docs(reporting): CLAUDE.md/README, Version v5.11.0`
 
 ---

@@ -456,6 +456,13 @@ unterschieden durch die erste Spalte `block`:
   wechseln und stünde dann in zwei Tupeln. Aus derselben Ursache ist auch die
   Conversion/Retry-Rate auf Kanal-Ebene nur eine **Obergrenze des Nenners** (CONV ist nach
   Brand gruppiert); genau deshalb weist SPEC 3.2 den Block „nur pro Brand/Total" aus.
+  **Je Gruppe gilt `tx_erfolgreich` = Anzahl der `SUCCESSFUL`-Attempts** — nicht als
+  Näherung, sondern zwingend aus „pro Transaktion höchstens ein erfolgreicher Attempt"
+  (derselben Zusicherung, die P3 exakt macht): jeder Erfolg gehört zu einer anderen
+  Transaktion. Am Referenzlauf in allen 17 CONV-Gruppen exakt bestätigt, ebenso
+  `tx_erfolgreich ≤ tx_mit_attempt ≤ Attempts` und die 1:1-Entsprechung von DIM- und
+  CONV-Gruppen. Die Fixture leitet ihren CONV-Block seither daraus ab statt ihn zu setzen
+  (`test/reporting-model.test.js` nagelt die Invariante fest).
 
 Die Vor-Aggregation in SQL ist Absicht (SPEC 2.4): das CSV bleibt bei hunderten bis wenigen
 tausend Zeilen statt zehntausenden, es enthält **keine personenbezogenen Daten** — und genau
@@ -679,12 +686,18 @@ verliert vor allem der E-Commerce an Lesbarkeit, nicht der POS.
   nicht leeres Feld, das gegen `REPORTING_MUSTER_BETRAG`/`REPORTING_MUSTER_ZAHL` bzw. gegen
   `true`/`false` nicht ankommt, erhöht deshalb `unbrauchbareWerte`, und die Statuszeile des
   Panels nennt die Zahl (beide Zweige, auch „Keine Zahlungsversuche" — gerade dort tarnte
-  sich ein unlesbares Zahlenformat sonst als leeres Ergebnis). **Warum das nötig ist:** die
-  Query ist noch nie gegen echte Daten gelaufen (SPEC 8.6). Schriebe Athena `boolean` als
-  `1`/`0` oder Beträge mit Komma bzw. in Exponentialschreibweise, stünden `dcc`,
-  `tds_started`, `tds_cavv` und sämtliche Beträge dauerhaft auf `null` bzw. `0` — P7 läse
-  „DCC 0 %", E1/E2 „nicht angefordert 100 %", und zwar als gemessen aussehende Nullen. Der
-  Wert selbst bleibt trotzdem der defensive; gemeldet wird zusätzlich, nicht statt dessen.
+  sich ein unlesbares Zahlenformat sonst als leeres Ergebnis). **Warum das nötig war:**
+  als der Zähler entstand, war die Query noch nie gegen echte Daten gelaufen. Schriebe
+  Athena `boolean` als `1`/`0` oder Beträge mit Komma bzw. in Exponentialschreibweise,
+  stünden `dcc`, `tds_started`, `tds_cavv` und sämtliche Beträge dauerhaft auf `null` bzw.
+  `0` — P7 läse „DCC 0 %", E1/E2 „nicht angefordert 100 %", und zwar als gemessen
+  aussehende Nullen. **Der Referenzlauf vom 2026-09-01 hat die erwarteten Formate
+  bestätigt** (Spaces 40402 + 12622, Juli 2026): `true`/`false` klein, Punkt-Dezimalzahlen
+  mit acht Nachkommastellen, `yyyy-mm-dd`, Stunde ohne führende Null — der Parser meldete
+  über beide Ergebnisse **0 unbrauchbare Werte und 0 unbekannte Blöcke**. Das war vorher
+  offen und ist es nicht mehr; der Zähler bleibt trotzdem, weil er die Aussage erst
+  belegbar macht und ein anderer Connector oder eine Schema-Änderung sie wieder umwerfen
+  kann. Der Wert selbst bleibt der defensive; gemeldet wird zusätzlich, nicht statt dessen.
   `REPORTING_PFLICHT` ist die **vollständige SELECT-Liste** der Query (26 Spalten), nicht
   nur was das Modell braucht: die Query ist ein einziges `UNION ALL`, ihre Spalten kommen
   gemeinsam oder gar nicht — fehlt eine, stammt das CSV nicht aus diesem Modus. Nicht
@@ -1448,11 +1461,16 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    `embedding`/`dom-ids` (Struktur-/ID-Wächter).
    Die Reporting-Tests laufen gegen `test/fixtures/reporting-beispiel.csv` — eine
    **synthetische**, deterministisch erzeugte Fixture
-   (`test/fixtures/generate-reporting-beispiel.mjs`, fest verankerte Summen). Sie bildet die
-   Struktur nach, die die SELECT-Liste verspricht, beweist aber **nicht**, wie wallee die
-   Werte tatsächlich formatiert (Boolean-Schreibweise, NULL-Darstellung, Datumsformat). Nach
-   dem ersten echten Portal-Lauf ist sie dagegen zu halten. Die Space-IDs darin (90001/90002)
-   sind erfunden — das Repo ist öffentlich.
+   (`test/fixtures/generate-reporting-beispiel.mjs`, fest verankerte Summen). **Inhalt
+   erfunden, Schreibweise gemessen:** seit dem Referenzlauf vom 2026-09-01 ist ihr Format
+   Feld für Feld gegen die echte Athena-Ausgabe abgeglichen — NULL als **unquotiertes**
+   Leerfeld (`,,`, nie `""`), jeder vorhandene Wert in Anführungszeichen (auch Zahlen und
+   Booleans), acht Nachkommastellen, `true`/`false`, `yyyy-mm-dd`, Stunde ohne führende
+   Null, LF, kein BOM, und die Zeilenreihenfolge des `ORDER BY` (Blöcke CONV, DIM, TIME).
+   Zählwerte, Beträge und die Space-IDs (90001/90002) bleiben **erfunden** — das Repo ist
+   öffentlich, aus den Referenzdaten darf kein Wert hierher wandern. Nicht belegt sind
+   negative Beträge, `PENDING` und der dritte Verkaufskanal: die kamen in beiden Spaces
+   nicht vor, die Fixture führt sie als Struktur, weil der Code sie behandelt.
    **Einschränkung:** Der einfache Stub liefert für **jede** ID irgendein Element — eine
    verwaiste DOM-Referenz fällt so nicht auf. `test/dom-ids.test.js` gleicht deshalb die per
    `getElementById` angefragten IDs statisch gegen das Markup ab; nach UI-Änderungen bleibt
@@ -1503,19 +1521,32 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
 - Country-Breakdown.
 - Status-Auswahl im Export (aktuell fix FULFILL/COMPLETED) z. B. für FAILED-Analysen.
 - **Reporting-Modus (v5.11), offen:**
-  - **Der Referenzlauf gegen echte Daten steht aus** (SPEC 8.6). Die Query wurde noch nie
-    im Portal ausgeführt; verifiziert sind bislang nur Struktur und Rechenwege gegen die
-    synthetische Fixture. Zu prüfen sind dort: ob die UNION-Typen halten, ob die
-    Label-Syntax läuft, ob die Laufzeit des `tip`-Joins trägt — und die fachliche Abnahme
-    nach SPEC 8 (Attempt-Summe und Success Rate gegen die Task-0-Zahlen, Zahlungsmittel-
-    Verteilung gegen den `brand`-Modus, wobei `ca.createdon` vs. `t.completedon` kleine
-    Randabweichungen erklärt: **dokumentieren, nicht wegdiskutieren**).
-  - **Fixture danach gegen das echte Ergebnis halten** und ersetzen, wo sie abweicht
-    (Boolean-Schreibweise, NULL-Darstellung, Datums-/Dezimalformat). Der Parser meldet
-    solche Abweichungen seit v5.11 selbst: steht in der Statuszeile „… Werte im
-    unerwarteten Format", ist genau das eingetreten — dann die Muster
+  - **Der Referenzlauf hat am 2026-09-01 stattgefunden** — beide Referenz-Queries
+    (`dashboard/sql/01_reporting_reference.sql` und die Terminal-Variante `01b`) liefen im
+    Portal fehlerfrei über **Spaces 40402 + 12622, Juli 2026**, also dieselben zwei Spaces
+    und denselben Monat wie Task 0. **Belegt ist damit:** die typisierten
+    `UNION ALL`-Platzhalter halten, alle elf Descriptors lösen auf (keine Kennzahl steht
+    pauschal auf „Unbekannt"), der `tip`-Join trägt, und die Zahlen reproduzieren die
+    Task-0-Werte — POS 12'537 Attempts bei 98.63 % Erfolg, E-Com 1'855 bei 91.32 %,
+    3DS-Akzeptanz 281/310 = 90.6 %, DCC 2 Attempts, 14 POS-Ablehncodes `00`…`Z3`,
+    Retry-Rate POS 1.001, 10 Terminals in der `01b`-Variante; die Herkunfts-Eimer
+    summieren exakt auf die Kartenbasis. Der Parser meldete **0 unbrauchbare Werte und 0
+    unbekannte Blöcke**. Wie überall in diesem Abschnitt: **ein Monat in zwei Spaces bei
+    einem Acquirer** — „bisher beobachtet", nicht „gilt immer".
+  - **Offen bleibt SPEC 8.3:** die Zahlungsmittel-Verteilung **nach Betrag** gegen den
+    `brand`-Modus über denselben Zeitraum wurde **nicht** gegengerechnet. Das ist der
+    verbleibende Teil der fachlichen Abnahme (SPEC 8.5 ist im Lauf ebenfalls nicht eigens
+    nachgerechnet worden; 8.1, 8.2, 8.4 und 8.6 sind gedeckt) und gehört zum
+    Abnahmeschritt am Produktivsystem. Erwartet werden dabei kleine Randabweichungen, weil
+    `reporting` auf `ca.createdon` und `brand` auf `t.completedon` filtert — sie sind zu
+    **dokumentieren, nicht wegzudiskutieren**.
+  - **Die Fixture ist an die echte Schreibweise angeglichen** (siehe
+    „Entwicklungs-Workflow"): NULL steht jetzt als unquotiertes Leerfeld, die
+    Zeilenreihenfolge folgt dem `ORDER BY` der Query. Sollte ein anderer Connector oder
+    eine Schema-Änderung die Formate doch verschieben, meldet der Parser das selbst —
+    steht in der Statuszeile „… Werte im unerwarteten Format", dann die Muster
     `REPORTING_MUSTER_BETRAG`/`REPORTING_MUSTER_ZAHL` bzw. `parseBool` nachziehen und die
-    Fixture auf die echte Schreibweise umstellen, nicht den Hinweis wegdrücken.
+    Fixture umstellen, nicht den Hinweis wegdrücken.
   - **Conversion und Retry-Rate auf Kanal-Ebene** bleiben eine Obergrenze; exakt würden sie
     erst mit einem vierten Query-Block ohne Brand-Gruppierung.
   - Aus SPEC 4.4 bewusst **nicht** in v5.11: Vorperioden-Vergleich, Billing-Land ≠

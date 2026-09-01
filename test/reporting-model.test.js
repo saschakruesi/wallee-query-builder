@@ -392,8 +392,10 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
   // Report in den Kacheln eine andere Erfolgsquote als im Verlauf darunter.
   assert.strictEqual(summe(r.rows.time, 'attempts'), 1854);
   assert.strictEqual(summe(r.rows.time, 'betrag'), 3806115000000);       // 38'061.15
-  assert.strictEqual(summe(r.rows.conv, 'txMitAttempt'), 1682);
-  assert.strictEqual(summe(r.rows.conv, 'txErfolgreich'), 1622);
+  // CONV wird seit dem Referenzlauf ebenfalls aus dem DIM-Block abgeleitet
+  // (siehe den Invarianten-Test unten), nicht mehr von Hand gesetzt.
+  assert.strictEqual(summe(r.rows.conv, 'txMitAttempt'), 1826);
+  assert.strictEqual(summe(r.rows.conv, 'txErfolgreich'), 1756);
 
   // Die Faelle, die die Fixture bewusst abdeckt (siehe
   // test/fixtures/generate-reporting-beispiel.mjs).
@@ -457,6 +459,57 @@ test('Fixture: DIM und TIME zaehlen dasselbe - je Gruppe, nicht nur im Total', (
   });
   // Und die Gruppen sind wirklich mehr als eine - sonst prueft die Schleife nichts.
   assert.ok(Object.keys(ausDim).length >= 10);
+});
+
+test('Fixture: CONV haelt die Transaktions-Invariante gegen DIM ein', () => {
+  const { parseReportingCsv } = loadBuilders();
+  const text = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'reporting-beispiel.csv'), 'utf8');
+  const r = parseReportingCsv(text);
+  assert.strictEqual(r.error, null);
+
+  // "Pro Transaktion hoechstens ein erfolgreicher Attempt" ist keine Marotte
+  // der Fixture, sondern die Zusicherung, auf der der Code selbst aufbaut: sie
+  // traegt die Exaktheit von summe_tip (der CASE-Guard im att-CTE) und macht
+  // tx_erfolgreich ueberhaupt erst zu einer Transaktionszahl. Daraus folgt je
+  // Gruppe zwingend tx_erfolgreich == SUCCESSFUL-Attempts - am Referenzlauf in
+  // allen 17 CONV-Gruppen exakt bestaetigt. Eine Fixture, die mehr Erfolge als
+  // Transaktionen zeigt (so stand es bis zum Referenzlauf hier), laesst
+  // Conversion ueber 100 % und Retry-Raten unter 1 als plausibel durchgehen.
+  const schluessel = z => [z.spaceId, z.channel, z.brand, z.waehrung].join('|');
+  const ausDim = r.rows.dim.reduce((m, z) => {
+    const e = m[schluessel(z)] || (m[schluessel(z)] = { attempts: 0, erfolge: 0 });
+    e.attempts += z.attempts;
+    if (z.attemptState === 'SUCCESSFUL') e.erfolge += z.attempts;
+    return m;
+  }, {});
+  const ausConv = r.rows.conv.reduce((m, z) => {
+    const e = m[schluessel(z)] || (m[schluessel(z)] = { mit: 0, ok: 0 });
+    e.mit += z.txMitAttempt;
+    e.ok += z.txErfolgreich;
+    return m;
+  }, {});
+
+  // Jede DIM-Gruppe hat genau eine CONV-Gruppe und umgekehrt: im Referenzlauf
+  // stehen 17 gegen 17. Eine DIM-Gruppe ohne CONV-Zeile faellt im Report
+  // stillschweigend aus E3/E4 heraus (der Block filtert auf txMitAttempt > 0).
+  assert.deepStrictEqual(
+    plain(Object.keys(ausConv).sort()), plain(Object.keys(ausDim).sort()));
+
+  Object.keys(ausDim).forEach(k => {
+    const d = ausDim[k], c = ausConv[k];
+    assert.strictEqual(c.ok, d.erfolge, 'tx_erfolgreich != SUCCESSFUL-Attempts: ' + k);
+    // Transaktionen koennen nie mehr sein als Versuche und nie weniger als die
+    // erfolgreichen darunter - die Retry-Rate liegt damit zwingend bei >= 1.
+    assert.ok(c.ok <= c.mit && c.mit <= d.attempts,
+      `${k}: erwartet ok <= mit <= attempts, ist ${c.ok} / ${c.mit} / ${d.attempts}`);
+  });
+
+  // Und mindestens eine Gruppe hat wirklich einen Retry - sonst waere die
+  // Ungleichung ueberall trivial mit Gleichheit erfuellt und der Kennwert
+  // Retry-Rate an der Fixture nie von 1 verschieden.
+  assert.ok(Object.keys(ausDim).some(k => ausConv[k].mit < ausDim[k].attempts),
+    'keine einzige Gruppe mit Wiederholung - Retry-Rate bliebe ungeprueft');
 });
 
 // ---------------------------------------------------------------------------
