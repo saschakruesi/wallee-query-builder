@@ -1596,7 +1596,8 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     erfolgreichen Attempts. Ergebnis: **im E-Commerce stimmen beide Modi exakt überein**
     — 0.000 %, jede Marke auf den Rappen, gleiche Transaktionszahl —, **am POS weicht
     das Reporting um −1.102 % ab** (über beide Spaces zusammen −0.594 %); die Abweichungen
-    je Marke sind klein und **beidseitig** (grösste relative 2.6 %, mehrere Marken exakt).
+    je Marke sind klein und **beidseitig** (neben der einen ganz fehlenden Marke grösste
+    relative 2.6 %, mehrere Marken exakt).
     **Die Kanal-Asymmetrie ist die eigentliche Aussage und zugleich der Beleg für die
     Ursache:** derselbe Code, dieselbe Arithmetik — nur der Kanal weicht ab, in dem
     Autorisierung und Verbuchung auseinanderfallen. Am POS schliesst eine spät am

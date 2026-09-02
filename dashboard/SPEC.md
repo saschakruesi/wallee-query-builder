@@ -280,8 +280,10 @@ fällt die App auf die ID zurück — der Report bleibt vollständig, nur ohne K
    *Geprüft 2026-09-02*, Nachweis in `dashboard/discovery-results/ABNAHME.md`
    (gitignored — dort stehen die Zahlen je Marke). Ergebnis: **im E-Commerce stimmen
    beide Modi exakt überein** (0.000 %), **am POS weicht das Reporting um rund ein
-   Prozent ab** (−1.1 %), die Abweichungen je Marke sind klein und beidseitig. Genau
-   diese Kanal-Asymmetrie ist der Beleg für die Ursache: am POS fallen Autorisierung und
+   Prozent ab** (−1.1 %), die Abweichungen je Marke sind klein und beidseitig; **eine
+   Marke fehlt im Reporting ganz** (abweichende Schreibweise, Brand-Herkunft aus
+   `ca.connectorconfiguration`, §3.1). Genau diese Kanal-Asymmetrie ist der Beleg für
+   die Ursache: am POS fallen Autorisierung und
    Verbuchung auseinander (Trinkgeld-Anpassung, Tagesabschluss), im E-Commerce nicht.
    Praktische Folge: **der Report ist kein Umsatz-Abstimmungswerkzeug** — dafür `brand`
    oder `settlement`.

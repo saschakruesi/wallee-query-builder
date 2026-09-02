@@ -311,8 +311,10 @@ P2 (Terminals) → K10 Verlauf → Stunden. Pro Kanal ein Block-Set (Kanal-Titel
       Juli 2026, Zahlungsmittel-Verteilung nach Betrag für die erfolgreichen Attempts.
       **E-Commerce exakt (0.000 %), POS −1.102 %, beide Spaces zusammen −0.594 %**;
       Trinkgeld-Differenz in derselben Grössenordnung und Richtung. Abweichungen je Marke
-      klein und beidseitig, mehrere Marken exakt. **Ursache: die verschiedenen
-      Zeitstempel** (`reporting` auf `ca.createdon`, `brand` auf `t.completedon`) — am POS
+      klein und beidseitig, mehrere Marken exakt; **eine Marke fehlt im Reporting ganz**
+      (abweichende Schreibweise, Brand-Herkunft aus `ca.connectorconfiguration`, §3.1).
+      **Ursache: die verschiedenen Zeitstempel** (`reporting` auf `ca.createdon`,
+      `brand` auf `t.completedon`) — am POS
       fallen Autorisierung und Verbuchung auseinander (Trinkgeld-Anpassung, Tagesabschluss),
       im E-Commerce nicht; **genau diese Kanal-Asymmetrie ist der Beleg**. Daneben der
       Statusfilter von `brand` und die Brand-Herkunft aus `ca.connectorconfiguration`
