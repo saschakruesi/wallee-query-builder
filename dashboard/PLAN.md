@@ -297,17 +297,30 @@ P2 (Terminals) → K10 Verlauf → Stunden. Pro Kanal ein Block-Set (Kanal-Titel
 - [ ] **Step 2 — `README.md`:** Modus-Tabelle und Kurzbeschreibung Reporting inkl.
       CSV-Import im Kopieren-Modus.
 - [ ] **Step 3 — Version** `5.11.0` an allen drei Stellen + Proxy; Self-Update-Test grün.
-- [ ] **Step 4 — Fachliche Abnahme nach SPEC §8** (Sascha): Zahlen gegen Q1/Brand-Modus
-      prüfen, Ergebnis in `dashboard/discovery-results/ABNAHME.md`. **Teilweise erledigt:**
-      der Referenzlauf vom 2026-09-01 deckt §8.1, §8.2, §8.4 und §8.6 (Attempt-Summe und
-      Success Rate reproduzieren die Task-0-Werte, die Herkunfts-Eimer summieren exakt auf
-      die Kartenbasis). **§8.5 war keine offene Prüfung, sondern ein Widerspruch in der
-      Spec** — sein Nenner meinte `AUTH + FAILED_OR_ABANDONED + WALLET_CRYPTOGRAM`
-      (am Lauf 281/423 = 66.4 %), §4.3 dagegen `AUTH / (AUTH + FAILED_OR_ABANDONED)`
-      (281/310 = 90.6 %, was der Code rechnet und §4.3 selbst zitiert); SPEC §8.5 ist auf
-      §4.3 korrigiert, die Doppelzählungs-Hälfte ist erfüllt und geprüft. **Offen bleibt
-      damit einzig §8.3** — die Zahlungsmittel-Verteilung nach Betrag gegen den
-      `brand`-Modus.
+- [x] **Step 4 — Fachliche Abnahme nach SPEC §8** (Sascha): **erledigt am 2026-09-02**,
+      Nachweis in `dashboard/discovery-results/ABNAHME.md` (gitignored, nennt die echten
+      Zahlen je Marke). Der Referenzlauf vom 2026-09-01 deckt §8.1, §8.2, §8.4 und §8.6
+      (Attempt-Summe und Success Rate reproduzieren die Task-0-Werte, die Herkunfts-Eimer
+      summieren exakt auf die Kartenbasis). **§8.5 war keine offene Prüfung, sondern ein
+      Widerspruch in der Spec** — sein Nenner meinte
+      `AUTH + FAILED_OR_ABANDONED + WALLET_CRYPTOGRAM` (am Lauf 281/423 = 66.4 %), §4.3
+      dagegen `AUTH / (AUTH + FAILED_OR_ABANDONED)` (281/310 = 90.6 %, was der Code
+      rechnet und §4.3 selbst zitiert); SPEC §8.5 ist auf §4.3 korrigiert, die
+      Doppelzählungs-Hälfte ist erfüllt und geprüft.
+      **§8.3 ist gegengerechnet:** `brand`-Modus über dieselben Spaces 40402 + 12622,
+      Juli 2026, Zahlungsmittel-Verteilung nach Betrag für die erfolgreichen Attempts.
+      **E-Commerce exakt (0.000 %), POS −1.102 %, beide Spaces zusammen −0.594 %**;
+      Trinkgeld-Differenz in derselben Grössenordnung und Richtung. Abweichungen je Marke
+      klein und beidseitig, mehrere Marken exakt. **Ursache: die verschiedenen
+      Zeitstempel** (`reporting` auf `ca.createdon`, `brand` auf `t.completedon`) — am POS
+      fallen Autorisierung und Verbuchung auseinander (Trinkgeld-Anpassung, Tagesabschluss),
+      im E-Commerce nicht; **genau diese Kanal-Asymmetrie ist der Beleg**. Daneben der
+      Statusfilter von `brand` und die Brand-Herkunft aus `ca.connectorconfiguration`
+      statt `t.paymentconnectorconfiguration_id` (§3.1). **Nicht** transaktionsweise
+      zurückverfolgt — belegt sind Richtung, Grössenordnung, Asymmetrie und Mechanismus;
+      ein Monat, zwei Spaces, ein Acquirer.
+      **Praktische Folge:** der Reporting-Report ist **kein Umsatz-Abstimmungswerkzeug**
+      (dafür `brand`/`settlement`) — er misst Zahlungsversuche.
 - [ ] **Step 5 — Commit + Merge:** `docs(reporting): CLAUDE.md/README, Version v5.11.0`
 
 ---

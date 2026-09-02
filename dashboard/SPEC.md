@@ -277,6 +277,14 @@ fällt die App auf die ID zurück — der Report bleibt vollständig, nur ohne K
 3. Zahlungsmittel-Verteilung nach Betrag stimmt für erfolgreiche Attempts mit dem
    Brand-Modus (gleicher Zeitraum, `t.completedon` vs. `ca.createdon` erklärt kleine
    Randabweichungen — dokumentieren, nicht wegdiskutieren).
+   *Geprüft 2026-09-02*, Nachweis in `dashboard/discovery-results/ABNAHME.md`
+   (gitignored — dort stehen die Zahlen je Marke). Ergebnis: **im E-Commerce stimmen
+   beide Modi exakt überein** (0.000 %), **am POS weicht das Reporting um rund ein
+   Prozent ab** (−1.1 %), die Abweichungen je Marke sind klein und beidseitig. Genau
+   diese Kanal-Asymmetrie ist der Beleg für die Ursache: am POS fallen Autorisierung und
+   Verbuchung auseinander (Trinkgeld-Anpassung, Tagesabschluss), im E-Commerce nicht.
+   Praktische Folge: **der Report ist kein Umsatz-Abstimmungswerkzeug** — dafür `brand`
+   oder `settlement`.
 4. K5 + K6: Summe der Buckets = 100 % der erfolgreichen Karten-Attempts.
 5. E1: Nenner = `AUTHENTICATED + FAILED_OR_ABANDONED`, wie in §4.3 definiert; kein Attempt
    zählt doppelt (jeder Karten-Attempt bekommt genau einen der vier `tds_status`-Werte, die

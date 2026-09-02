@@ -34,7 +34,7 @@ Reporting-Report als vierter gebrandeter Ausgabe.
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
 | `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `settlement-report-spec/` | **Nur lokal, bewusst nicht im Git** (siehe `.gitignore`): fachliche Vorgabe des Settlement-Reports (seit v5.10 umgesetzt) — `SPEC.md` (Datenmodell, Aggregation, Aufbau, Edge Cases, Validierungen §7), `GAP-ANALYSIS.md` (was der Report vor v5.10 anders machte), `generate_report.py` (Referenz-Implementierung in Python) sowie die Referenz-Ausgaben `Settlement_Report_Juni-Juli_2026.pdf` / `Settlement_Detail_Juni-Juli_2026.xlsx`. Die Referenzdateien enthalten **echte Produktivdaten** (~69'000 Transaktionen mit Bankreferenzen, namentlich genannter Händler) — dieses Repo ist **öffentlich**, weil das Self-Update ohne Auth von `raw.githubusercontent.com` lädt, deshalb dürfen sie nicht eingecheckt werden. **Bei Änderungen am Settlement-Report zuerst hier nachlesen** — die Referenzdaten sind der Prüfstein (siehe „Gegen die Referenzdaten prüfen" unten). |
-| `dashboard/` | Fachliche Vorgabe des **Reporting-Modus** (v5.11): `SPEC.md` (Grundsatzentscheide, Datenmodell der Query, KPI-Katalog K1–K10 / P1–P7 / E1–E6, UI, Edge Cases, Validierung §8), `PLAN.md`/`README.md` sowie unter `sql/` die Discovery-Queries (`00_label_discovery.sql`, `00b_ecom_discovery_12622.sql`) und die **aus dem Builder generierten** Referenz-Queries (`01_reporting_reference.sql`, `01b_reporting_reference_terminal.sql` mit Terminal-Join). Diese Dateien sind im Git. **Nicht** im Git ist `dashboard/discovery-results/` (siehe `.gitignore`): dort liegen die Task-0-CSVs mit Produktivdaten sowie die Referenzausgaben des Reports. `DESCRIPTORS.md` darin ist die **Fundstelle aller Descriptor-IDs** — bei Änderungen am Reporting-Modus zuerst dort und in `SPEC.md` nachlesen. |
+| `dashboard/` | Fachliche Vorgabe des **Reporting-Modus** (v5.11): `SPEC.md` (Grundsatzentscheide, Datenmodell der Query, KPI-Katalog K1–K10 / P1–P7 / E1–E6, UI, Edge Cases, Validierung §8), `PLAN.md`/`README.md` sowie unter `sql/` die Discovery-Queries (`00_label_discovery.sql`, `00b_ecom_discovery_12622.sql`) und die **aus dem Builder generierten** Referenz-Queries (`01_reporting_reference.sql`, `01b_reporting_reference_terminal.sql` mit Terminal-Join). Diese Dateien sind im Git. **Nicht** im Git ist `dashboard/discovery-results/` (siehe `.gitignore`): dort liegen die Task-0-CSVs mit Produktivdaten sowie die Referenzausgaben des Reports. `DESCRIPTORS.md` darin ist die **Fundstelle aller Descriptor-IDs**, `ABNAHME.md` der **Abnahme-Nachweis nach SPEC §8** (inkl. der §8.3-Gegenrechnung gegen den `brand`-Modus, Belege `brand_ref_2026-07.csv` / `reporting_ref.csv` / `spec-8-3-vergleich.txt`) — bei Änderungen am Reporting-Modus zuerst dort und in `SPEC.md` nachlesen. |
 | `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
 
@@ -162,7 +162,11 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
    „SQL-Erzeugung"), und es bedeutet, dass der Zeitraum-Picker in diesem Modus etwas
    anderes meint als in allen übrigen: den Zeitpunkt des **Zahlungsversuchs**, nicht den
    des Abschlusses. Zahlen aus `reporting` und aus `brand` über denselben Zeitraum können
-   deshalb an den Rändern auseinanderlaufen — das ist erwartet, kein Fehler (SPEC 8.3).
+   deshalb an den Rändern auseinanderlaufen — das ist erwartet, kein Fehler (SPEC 8.3),
+   und seit der Abnahme vom 2026-09-02 auch **gemessen**: im E-Commerce stimmen beide
+   Modi auf den Rappen, am POS weicht der Reporting-Umsatz um **−1.1 %** ab (siehe
+   „Reporting-Modus (v5.11)" unter „Offene Punkte"). **Der Reporting-Report ist deshalb
+   kein Werkzeug zur Umsatz-Abstimmung** — dafür `brand` oder `settlement`.
    Der Modus filtert zusätzlich fest auf **`ca.environment = 'PRODUCTION'`**
    (`ATTEMPT_ENVIRONMENT`): Testtransaktionen verfälschen jede Quote.
 
@@ -1557,7 +1561,9 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
 - Refund-Berücksichtigung (`- SUM(t.refundedamount)`) als Option.
 - Country-Breakdown.
 - Status-Auswahl im Export (aktuell fix FULFILL/COMPLETED) z. B. für FAILED-Analysen.
-- **Reporting-Modus (v5.11), offen:**
+- **Reporting-Modus (v5.11) — Abnahme und Offenes** (die fachliche Abnahme nach SPEC §8 ist
+  seit 2026-09-02 **abgeschlossen**, siehe die ersten Punkte; offen ist nur, was darunter
+  ausdrücklich als offen steht):
   - **Der Referenzlauf hat am 2026-09-01 stattgefunden** — beide Referenz-Queries
     (`dashboard/sql/01_reporting_reference.sql` und die Terminal-Variante `01b`) liefen im
     Portal fehlerfrei über **Spaces 40402 + 12622, Juli 2026**, also dieselben zwei Spaces
@@ -1583,12 +1589,35 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     Lücke: die Namen lassen sich einzeln über
     `GET /api/v2.0/payment/charge-attempts` an einem Attempt mit der jeweiligen ID ablesen.
     Am POS ist die Tabelle mit 2 von 2 IDs vollständig.
-  - **Offen bleibt einzig SPEC 8.3:** die Zahlungsmittel-Verteilung **nach Betrag** gegen
-    den `brand`-Modus über denselben Zeitraum wurde nicht gegengerechnet. Das ist der
-    verbleibende Teil der fachlichen Abnahme und gehört zum Abnahmeschritt am
-    Produktivsystem. Erwartet werden dabei kleine Randabweichungen, weil `reporting` auf
-    `ca.createdon` und `brand` auf `t.completedon` filtert — sie sind zu **dokumentieren,
-    nicht wegzudiskutieren**. 8.1, 8.2, 8.4 und 8.6 sind durch den Lauf gedeckt.
+  - **SPEC 8.3 ist gegengerechnet — die fachliche Abnahme ist damit abgeschlossen**
+    (2026-09-02, Nachweis `dashboard/discovery-results/ABNAHME.md`, gitignored). Der
+    `brand`-Modus lief über **dieselben zwei Spaces 40402 + 12622 im Juli 2026** wie der
+    Referenzlauf; verglichen wurde die Zahlungsmittel-Verteilung **nach Betrag** für die
+    erfolgreichen Attempts. Ergebnis: **im E-Commerce stimmen beide Modi exakt überein**
+    — 0.000 %, jede Marke auf den Rappen, gleiche Transaktionszahl —, **am POS weicht
+    das Reporting um −1.102 % ab** (über beide Spaces zusammen −0.594 %); die Abweichungen
+    je Marke sind klein und **beidseitig** (grösste relative 2.6 %, mehrere Marken exakt).
+    **Die Kanal-Asymmetrie ist die eigentliche Aussage und zugleich der Beleg für die
+    Ursache:** derselbe Code, dieselbe Arithmetik — nur der Kanal weicht ab, in dem
+    Autorisierung und Verbuchung auseinanderfallen. Am POS schliesst eine spät am
+    Monatsletzten autorisierte Transaktion wegen Trinkgeld-Anpassung und Tagesabschluss
+    erst am Folgetag ab, wandert also über den Zeitraumrand; im E-Commerce fallen Versuch
+    und Abschluss zusammen. Dazu kommen zwei kleinere Unterschiede: `brand` filtert
+    zusätzlich auf `t.state IN ('FULFILL','COMPLETED')`, und die Marke stammt im
+    Reporting aus `ca.connectorconfiguration` statt aus
+    `t.paymentconnectorconfiguration_id` (SPEC 3.1) — Letzteres erklärt am ehesten die
+    eine Marke, die im `brand`-Ergebnis in abweichender Schreibweise auftaucht und im
+    Reporting gar nicht.
+    **Praktische Folge, so dem Kunden zu sagen: der Reporting-Report ist kein Werkzeug
+    zur Umsatz-Abstimmung.** Dafür nimmt der Händler `brand` oder `settlement`;
+    `reporting` misst **Zahlungsversuche**, und seine Umsatzzahl ist „Umsatz der
+    erfolgreichen Versuche im Versuchs-Fenster".
+    **Was damit nicht behauptet ist:** die Beträge je Marke sind **nicht** transaktions-
+    weise zurückverfolgt — festgestellt sind Richtung, Grössenordnung, Kanal-Asymmetrie
+    und Mechanismus, nicht die Herkunft jedes einzelnen Frankens. Und wie überall in
+    diesem Abschnitt: **ein Monat, zwei Spaces, ein Acquirer** — „bisher beobachtet",
+    nicht „gilt immer"; ein anderes POS-Setup kann eine andere Randabweichung zeigen.
+    8.1, 8.2, 8.4 und 8.6 sind durch den Referenzlauf gedeckt.
     **8.5 war keine offene Prüfung, sondern ein Widerspruch in der Spec:** sein Nenner
     („alle Karten-Attempts mit 3DS-Status ≠ `NOT_REQUESTED`") ist
     `AUTHENTICATED + FAILED_OR_ABANDONED + WALLET_CRYPTOGRAM` und ergibt am Lauf

@@ -159,6 +159,13 @@ Trinkgeld, Retries und Stosszeiten?
   übrigen Modi; an den Rändern des Zeitraums können die Zahlen deshalb leicht von der
   Brand-Auswertung abweichen. Gewertet werden nur produktive Versuche
   (`environment = PRODUCTION`).
+- **Kein Werkzeug zur Umsatz-Abstimmung.** Aus demselben Grund: gemessen an einem
+  Referenzmonat stimmt der ausgewiesene Umsatz im **E-Commerce auf den Rappen** mit dem
+  Brand-Modus überein, weicht am **POS** aber um **rund ein Prozent** ab — dort schliesst
+  eine spät am Monatsletzten autorisierte Zahlung wegen Trinkgeld-Anpassung und
+  Tagesabschluss erst am Folgetag ab und wandert über den Zeitraumrand. Wer Umsatz
+  abstimmen will, nimmt *Brand-Auswertung* oder *Settlement-Report*; *Reporting* misst
+  **Zahlungsversuche**.
 - **Einstellungen:** Kanal (POS / E-Commerce / Beide), Händler-Land für die
   Herkunfts-Einstufung (ISO-2, Default `CH`: domestisch / intra-europäisch / interkontinental
   / unbekannt) und optional eine Terminal-Aufschlüsselung (nur POS).
