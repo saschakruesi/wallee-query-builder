@@ -72,6 +72,22 @@ const EXPORTED = [
   'buildExportQuery',
   'buildCardQuery',
   'buildSettlementQuery',
+  // Reporting-Modus (v5.11), reine Funktionen
+  'buildReportingQuery',
+  'labelExpr',
+  'SALES_CHANNEL_POS',
+  'SALES_CHANNEL_ECOM',
+  'ATTEMPT_ENVIRONMENT',
+  'DESC_ISSUER_COUNTRY',
+  'DESC_CARD_TYPE',
+  'DESC_CARD_CATEGORY',
+  'DESC_AUTH_RESPONSE_POS',
+  'DESC_AUTH_RESPONSE_ECOM',
+  'DESC_DCC_CURRENCY',
+  'DESC_PAN_TYPE',
+  'DESC_TDS_STARTED',
+  'DESC_TDS_CAVV',
+  'DESC_ECI',
   'EXPORT_COLUMNS',
   'defaultColumns',
   'spaceInClause',
@@ -87,6 +103,53 @@ const EXPORTED = [
   'parseReportCsv',
   // Settlement-Report (v5.8), reine Funktionen
   'parseSettlementCsv',
+  // Reporting-Modus (v5.11), reine Funktionen
+  'parseReportingCsv',
+  'REPORTING_PFLICHT',
+  // Reporting-Modell (Task 3)
+  'buildReportingModel',
+  'klassifiziereHerkunft',
+  'klassifiziereKartentyp',
+  'klassifiziereTds',
+  'istKartenBrand',
+  'EUROPA_REGION',
+  'KARTEN_BRANDS',
+  'KARTEN_BUSINESS_REGEX',
+  'ISO_RESPONSE_CODES',
+  'FAILURE_REASONS',
+  // Reporting-Report Export-Bloecke (Task 4). Bewusst nur die beiden
+  // Funktionen: die Konstanten (REPORTING_TOP_N, REPORTING_KANAL_LABEL,
+  // REPORTING_TOP_JE_BRAND) haben ausserhalb der App keinen Konsumenten -
+  // Task 5 laeuft im selben Script-Block und sieht sie ohnehin.
+  'reportingExportBloecke',
+  'reportingZellFormat',
+  // Reporting-Verdrahtung (Task 5): zwei reine Regeln plus der Ingest-Pfad.
+  // reportingModellAktuell() ist die Testnaht auf das zuletzt gebaute Modell -
+  // gleiche Rolle wie getState() beim State.
+  'reportingKanalFilter',
+  'reportingTerminalPanelSichtbar',
+  'ingestReportingCsv',
+  'uebergibReportingCsv',
+  'renderReportingReport',
+  'reportingModellAktuell',
+  // Zeitraum/Spaces fuer die Bloecke - Step 7 haengt daran (siehe §6.2 des Berichts).
+  'reportingExportOptionen',
+  'aktualisiereReportingInputs',
+  // Reporting-Ausgabe (Task 5b): Zellformatierung, Balken-SVG, CSV und
+  // PDF-Layout. Alles reine Funktionen; nur der XLSX-Schreiber braucht den
+  // Vendor-Block und wird deshalb in test/reporting-xlsx.test.js separat
+  // geladen (Muster test/report-xlsx.test.js).
+  'formatProzentCH',
+  'reportingZellText',
+  'reportingZellZahl',
+  'svgBalken',
+  'reportingBalkenSerien',
+  'buildReportingReportCsv',
+  'reportingPdfBloecke',
+  // Naht auf die Ausgabe EINES Blocks - nur so laesst sich ein von Hand
+  // gebauter Block mit zellFormate durch den Bildschirm-Pfad schicken
+  // (reportingExportBloecke traegt zellFormate heute nur an den Kacheln).
+  'reportingBlockHtml',
   'buildSettlementReportModel',
   'settlementExportBloecke',
   'buildSettlementReportCsv',
@@ -145,6 +208,9 @@ const EXPORTED = [
   'historyFuerModus',
   'historyLaden',
   'historySpeichern',
+  // DOM-gebunden, aber ueber den DOM-Ersatz pruefbar: welche Knoepfe eine
+  // Verlaufszeile je Modus traegt (Task 5b, Step 8).
+  'renderHistory',
   'submitUndReport',
   // Self-Update (Task 3), reine Funktion
   'istNeuer',

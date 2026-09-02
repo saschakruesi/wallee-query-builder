@@ -1,6 +1,6 @@
 # Wallee Analytics Query Builder
 
-**Aktuelle Version: v5.10.1**
+**Aktuelle Version: v5.11.0**
 
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies
@@ -12,8 +12,11 @@ Zwei Betriebsmodi:
   unter **Account > Analytics > Submit Query** ausführen; das Ergebnis kommt dort als CSV.
 - **API-Modus** (opt-in): Query direkt aus der App absetzen — über einen kleinen lokalen
   Proxy (siehe unten). Das Ergebnis landet im modus-eigenen **Abfrage-Verlauf** (CSV/Excel
-  per Klick abrufbar) und, in den Modi Terminal-Report und Settlement-Report, zusätzlich
-  sofort als aufbereiteter Report (Gruppen-Auswertung bzw. Settlement-Übersicht).
+  per Klick abrufbar) und, in den Modi Terminal-Report, Settlement-Report und Reporting,
+  zusätzlich sofort als aufbereiteter Report (Gruppen-Auswertung, Settlement-Übersicht bzw.
+  Händler-Kennzahlen). Der Modus *Reporting* lässt sich als einziger auch im Kopieren-Modus
+  vollständig nutzen — sein Ergebnis enthält keine personenbezogenen Daten und kann per
+  **„CSV importieren"** aus dem Portal geladen werden.
 
 ## Nutzung — drei Wege
 
@@ -80,6 +83,7 @@ Gerät. Zugangsdaten für den API-Modus liegen ausschliesslich beim Proxy, nie i
 | **Transaktions-Export** | eine Zeile pro Transaktion, Spalten frei wählbar — u. a. `tip_amount` (Trinkgeld) und `gross_excl_tip` (Brutto ohne Trinkgeld) |
 | **Kartensuche** | Transaktionen zu den letzten vier Kartenziffern (für Streitfälle) |
 | **Settlement-Report** | **account-basiert** (nicht space-basiert): was ist bereits ausbezahlt, was steht noch aus, was ist ganz ohne Settlement-Record — im API-Modus wird das Ergebnis der eigenen Query automatisch zum Settlement-Report (siehe unten) |
+| **Reporting** | Händler-Kennzahlen über **Zahlungsversuche** (Charge Attempts), getrennt nach POS und E-Commerce: Success Rate, Zahlungsmittel-Mix, Karten-Herkunft, Business/Privat, Debit/Kredit, Ø-Beträge, Ablehngründe, 3DS-Akzeptanz, Verlauf und Stosszeiten — als Report auf dem Bildschirm, in Excel, PDF und CSV (siehe unten) |
 
 ## Abfrage-Verlauf
 
@@ -87,9 +91,9 @@ Jeder erfolgreiche Submit im API-Modus landet im **Abfrage-Verlauf** — pro Mod
 maximal 50 Einträge. Gespeichert werden nur Token und Anzeige-Metadaten (Spaces, Zeitraum,
 Filter, Zeitstempel), **nie** die SQL und **nie** das Ergebnis selbst; das wird bei Bedarf
 über den Token neu vom Proxy geholt. Aus der Tabelle heraus lässt sich pro Zeile das rohe
-CSV oder eine Excel-Datei herunterladen. In den Modi Terminal-Report und Settlement-Report
-bietet die Verlaufszeile bewusst nur den Roh-CSV-Download — Excel (mit gebrandetem Titel),
-PDF und die Report-Ansicht laufen dort über das jeweilige Report-Panel selbst. Jeder erneute
+CSV oder eine Excel-Datei herunterladen. In den Modi Terminal-Report, Settlement-Report und
+Reporting bietet die Verlaufszeile bewusst nur den Roh-CSV-Download — Excel (mit gebrandetem
+Titel), PDF und die Report-Ansicht laufen dort über das jeweilige Report-Panel selbst. Jeder erneute
 Abruf über den Token zählt bei wallee als Download.
 
 ## Terminal-Report
@@ -139,6 +143,45 @@ am Ende. Zusätzlich zeigt der Report eine Aufschlüsselung nach Zahlungsmittel.
   Banktransaktions-Beträge gemischt haben.
 - **Eingabe:** ausschliesslich über den API-Modus, wie beim Terminal-Report — kein
   CSV-Upload für die Report-Daten selbst.
+
+## Reporting
+
+Der Modus *Reporting* beantwortet die Fragen, die ein Händler an seine Zahlungsabwicklung
+hat — getrennt nach **POS** und **E-Commerce**: Wie viele Zahlungsversuche gelingen? Womit
+wird bezahlt, und was scheitert woran? Woher kommen die Karten, wie viele sind
+Firmenkarten, wie viele Debit? Wie hoch ist der Durchschnittsbetrag, wie steht es um 3DS,
+Trinkgeld, Retries und Stosszeiten?
+
+- **Gezählt wird der Zahlungsversuch (Charge Attempt), nicht die Transaktion.** Im
+  E-Commerce entsteht eine Transaktion schon beim Befüllen des Warenkorbs — eine
+  Erfolgsquote über Transaktionen wäre systematisch falsch. Entsprechend bezieht sich der
+  **Zeitraum auf den Zahlungsversuch**, nicht auf den Abschluss der Transaktion wie in den
+  übrigen Modi; an den Rändern des Zeitraums können die Zahlen deshalb leicht von der
+  Brand-Auswertung abweichen. Gewertet werden nur produktive Versuche
+  (`environment = PRODUCTION`).
+- **Kein Werkzeug zur Umsatz-Abstimmung.** Aus demselben Grund: gemessen an einem
+  Referenzmonat stimmt der ausgewiesene Umsatz im **E-Commerce auf den Rappen** mit dem
+  Brand-Modus überein, weicht am **POS** aber um **rund ein Prozent** ab — dort schliesst
+  eine spät am Monatsletzten autorisierte Zahlung wegen Trinkgeld-Anpassung und
+  Tagesabschluss erst am Folgetag ab und wandert über den Zeitraumrand. Wer Umsatz
+  abstimmen will, nimmt *Brand-Auswertung* oder *Settlement-Report*; *Reporting* misst
+  **Zahlungsversuche**.
+- **Einstellungen:** Kanal (POS / E-Commerce / Beide), Händler-Land für die
+  Herkunfts-Einstufung (ISO-2, Default `CH`: domestisch / intra-europäisch / interkontinental
+  / unbekannt) und optional eine Terminal-Aufschlüsselung (nur POS).
+- **Vier Ausgaben aus einer Quelle:** Bildschirm (mit Balken als Inline-SVG), CSV, Excel
+  (ein Blatt je Kanal) und PDF (ein Kapitel je Kanal) — gebrandet wie die anderen Reports.
+- **CSV-Import im Kopieren-Modus:** Anders als Terminal- und Settlement-Report lässt sich
+  dieser Report auch **ohne API-Modus** vollständig nutzen. Die Query liefert bereits
+  verdichtete Zählwerte — keine Kartennummern, keine Kundendaten. Also: SQL kopieren, im
+  Portal unter *Account > Analytics > Submit Query* ausführen, das Ergebnis-CSV
+  herunterladen und im Report-Panel über **„CSV importieren"** laden.
+- **Grenzen:** Chargebacks und Disputes gibt es in der wallee Analytics nicht (keine
+  Tabelle dafür), ebenso wenig eine IC++-Aufschlüsselung der Gebühren; ein Liability Shift
+  wird nicht ausgewiesen, weil das Label fehlt. Die Karten-Attribute (Issuer-Land,
+  Kartentyp, 3DS) stammen aus Labels, die der **Connector** schreibt — bei einem anderen
+  Acquirer können andere Label-IDs vorkommen; die betroffenen Kennzahlen stehen dann auf
+  „Unbekannt", der Report wird nicht falsch, aber blind.
 
 ## API-Modus und lokaler Proxy
 
@@ -267,6 +310,8 @@ Kartennummer noch Autorisierungscode.
 - Keine IC++-Aufschlüsselung (DCC, Interchange, Scheme, Acquirer) —
   nur `totalappliedfees` als Gesamtwert bzw. die Settlement-Gebühren
   aus der Banktransaktion.
+- Keine Chargebacks und Disputes — es gibt keine Analytics-Tabelle dafür. Betrifft vor allem
+  den Modus *Reporting*, wo sie fachlich hingehörten.
 - Eine Query läuft in **einem** Account. Mehrere Spaces gehen nur innerhalb
   desselben Accounts; Spaces fremder Accounts erzeugen einen Permission Error.
 - Die Zuordnung der Auszahlungsreferenz im **Transaktions-Export** ist zeitbasiert-heuristisch
@@ -292,9 +337,11 @@ node --test "test/*.test.js"
 Das Harness (`test/harness.js`) extrahiert den App-Logik-Block aus der HTML-Datei, stubbt
 DOM und `localStorage` und prüft die reinen Funktionen. Abgedeckt sind die SQL-Builder
 (`test/queries.test.js`), der Terminal-Report-Kern und sein Render-/Export-Pfad
-(`test/report*.test.js`), der Settlement-Report-Kern und sein Render-/Export-Pfad
+(`test/report.test.js`, `test/report-render.test.js`, `test/report-xlsx.test.js`), der
+Settlement-Report-Kern und sein Render-/Export-Pfad
 (`test/settlement-report.test.js`, `test/settlement-export.test.js`,
-`test/settlement-render.test.js`), die Betriebsmodi und die API-Anbindung
+`test/settlement-render.test.js`), der Reporting-Modus von der Query bis zur Ausgabe
+(`test/reporting-*.test.js`), die Betriebsmodi und die API-Anbindung
 (`test/betriebsmodus.test.js`, `test/api-anbindung.test.js`) sowie der Proxy
 (`test/proxy.test.js`, u. a. die JWT-Signatur gegen den RFC-7515-Testvektor, die
 ausgehende Anfrage an wallee und die Account-Header-Logik). Der XLSX-Export wird

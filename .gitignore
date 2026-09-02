@@ -17,3 +17,16 @@ archive/
 # dieses Repo ist oeffentlich, weil das Self-Update ohne Auth von
 # raw.githubusercontent.com laedt. Der Ordner bleibt lokale Referenz.
 settlement-report-spec/
+
+# Reporting-Modus: Discovery- und Referenzlaeufe mit Produktivdaten (siehe dashboard/README.md)
+dashboard/discovery-results/
+
+# Backups des Self-Updates. POST /update legt vor dem Ersetzen
+# wallee_query_builder.html.bak und wallee-proxy.mjs.bak neben die Originale
+# (CLAUDE.md, "Recovery") - sie gehoeren dem jeweiligen Rechner und nie dem
+# Repo. Eingecheckt liesse ein git checkout ein fremdes, veraltetes Backup ueber
+# die echte Wiederherstellungskopie eines Nutzers laufen.
+*.bak
+
+# Sperrdateien von LibreOffice/OpenOffice neben geoeffneten Tabellen.
+.~lock.*#

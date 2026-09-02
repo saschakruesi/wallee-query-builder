@@ -5,8 +5,9 @@ SQL-Queries für **wallee Analytics** (PrestoDB / Amazon Athena) generiert. Zwei
 Betriebsmodi: **Kopieren-Modus** (Default) — SQL kopieren und im Portal unter
 **Account > Analytics > Submit Query** ausführen; **API-Modus** (opt-in) — Query direkt über
 einen lokalen Proxy absetzen. Das Ergebnis landet im modus-eigenen **Abfrage-Verlauf**
-(CSV/Excel per Klick abrufbar) und, in den Modi `terminal` und `settlement`, zusätzlich als
-gebrandeter Report (Terminal-Report bzw. Settlement-Report).
+(CSV/Excel per Klick abrufbar) und, in den Modi `terminal`, `settlement` und `reporting`,
+zusätzlich als gebrandeter Report (Terminal-Report, Settlement-Report bzw.
+Reporting-Report).
 
 Entstanden aus einer Kundenanfrage im Gastronomie-Umfeld: Tagesabschluss-Abgleich pro
 Terminal, Auszahlungs-Nachvollzug und Kartensuche bei Streitfällen. Seit v4 zusätzlich der
@@ -17,13 +18,15 @@ die Zugangsdaten lassen sich direkt im Einstellungs-Dialog pflegen. Seit v5.5 pr
 selbst auf neuere Releases und kann sich im API-Modus per Klick selbst aktualisieren (siehe
 „Self-Update" unten). Seit v5.8 ist der `settlement`-Modus **account-** statt space-basiert
 und hat mit dem Settlement-Report (Bildschirm, CSV, Excel, PDF) eine eigene Ausgabe erhalten,
-analog zum Terminal-Report.
+analog zum Terminal-Report. Seit v5.11 gibt es als sechsten Modus `reporting` (Händler-KPIs
+über **Zahlungsversuche** statt Transaktionen, POS und E-Commerce getrennt) mit dem
+Reporting-Report als vierter gebrandeter Ausgabe.
 
 ## Dateien
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.10.1).** Fünf Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.11.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -31,6 +34,7 @@ analog zum Terminal-Report.
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
 | `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `settlement-report-spec/` | **Nur lokal, bewusst nicht im Git** (siehe `.gitignore`): fachliche Vorgabe des Settlement-Reports (seit v5.10 umgesetzt) — `SPEC.md` (Datenmodell, Aggregation, Aufbau, Edge Cases, Validierungen §7), `GAP-ANALYSIS.md` (was der Report vor v5.10 anders machte), `generate_report.py` (Referenz-Implementierung in Python) sowie die Referenz-Ausgaben `Settlement_Report_Juni-Juli_2026.pdf` / `Settlement_Detail_Juni-Juli_2026.xlsx`. Die Referenzdateien enthalten **echte Produktivdaten** (~69'000 Transaktionen mit Bankreferenzen, namentlich genannter Händler) — dieses Repo ist **öffentlich**, weil das Self-Update ohne Auth von `raw.githubusercontent.com` lädt, deshalb dürfen sie nicht eingecheckt werden. **Bei Änderungen am Settlement-Report zuerst hier nachlesen** — die Referenzdaten sind der Prüfstein (siehe „Gegen die Referenzdaten prüfen" unten). |
+| `dashboard/` | Fachliche Vorgabe des **Reporting-Modus** (v5.11): `SPEC.md` (Grundsatzentscheide, Datenmodell der Query, KPI-Katalog K1–K10 / P1–P7 / E1–E6, UI, Edge Cases, Validierung §8), `PLAN.md`/`README.md` sowie unter `sql/` die Discovery-Queries (`00_label_discovery.sql`, `00b_ecom_discovery_12622.sql`) und die **aus dem Builder generierten** Referenz-Queries (`01_reporting_reference.sql`, `01b_reporting_reference_terminal.sql` mit Terminal-Join). Diese Dateien sind im Git. **Nicht** im Git ist `dashboard/discovery-results/` (siehe `.gitignore`): dort liegen die Task-0-CSVs mit Produktivdaten sowie die Referenzausgaben des Reports. `DESCRIPTORS.md` darin ist die **Fundstelle aller Descriptor-IDs**, `ABNAHME.md` der **Abnahme-Nachweis nach SPEC §8** (inkl. der §8.3-Gegenrechnung gegen den `brand`-Modus, Belege `brand_ref_2026-07.csv` / `reporting_ref.csv` / `spec-8-3-vergleich.txt`) — bei Änderungen am Reporting-Modus zuerst dort und in `SPEC.md` nachlesen. |
 | `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
 
@@ -76,6 +80,16 @@ Kein Framework, keine Dependencies, läuft offline per Doppelklick.
   jede Prüfung mit „schon migriert" beantworten und die Migration liefe nie. Ein bewusstes
   Abschalten nach der Migration bleibt erhalten (beides in `test/betriebsmodus.test.js`
   festgenagelt). Rein additiv, **kein** `STORAGE_KEY`-Bump.
+- Seit v5.11 kommen für den Reporting-Modus `reportingChannel` (`'BOTH'`),
+  `reportingMerchantCountry` (`'CH'`) und `reportingByTerminal` (`false`) dazu — rein
+  additiv, **kein** `STORAGE_KEY`-Bump und **kein** Migrations-Marker: ein alter State
+  kennt die Felder schlicht nicht und bekommt die Defaults. `loadState()` prüft sie
+  allerdings nicht bloss auf Vorhandensein, sondern **auf Gültigkeit** — ein unbekannter
+  Kanal fällt auf `'BOTH'` zurück (`REPORTING_KANAL_WAHL`), das Händler-Land läuft durch
+  `normLand()` (ISO-2, Grossbuchstaben) mit Rückfall auf `REPORTING_DEFAULT_LAND`. Beides
+  scheiterte sonst lautlos: ein unbekannter Kanal würde in `generate()` still zum
+  Vollfilter (kein Fehler, nur ein anderer Bericht), und ein Land wie `'Schweiz'` oder
+  `'CHE'` würfe im Modell **jede** Karte auf `UNKNOWN`, ohne dass irgendwo etwas rot wird.
 
 Seit v4 enthält die HTML-Datei mehrere `<script>`-Blöcke: den eingebetteten XLSX-Vendor
 (`<script id="vendor-xlsx">`, nur für den XLSX-Export), seit v5.8 zusätzlich den eingebetteten
@@ -91,7 +105,7 @@ der beiden Vendoren. Beim Einbetten minifizierten Codes muss die
 Ersetzung eine Replacer-**Funktion** nutzen — String-Ersatz deutet `$&`/`` $` ``/`$1` als
 Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
 
-### Fünf Modi
+### Sechs Modi
 
 1. **`brand`** – Aggregat pro Space × Brand × Währung (`GROUP BY`). Spalten: Anzahl,
    `unsettled_anzahl` (keine Gebühr UND kein Settlement-Record = wartet noch auf die
@@ -130,18 +144,56 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
    verschmilzt diese Auszahlungen zu einer und macht den Bankabgleich unmöglich) sowie
    `t.createdon AS created_on` (Erfassungsbeginn im Titelblock, Sortierung des
    Transaktionsdetails).
+6. **`reporting`** ("Reporting" im Mode-Selector, seit v5.11) – Händler-KPIs pro Kanal
+   (POS / E-Commerce). **Basis ist der Charge Attempt, nie die Transaktion** (SPEC 2.1):
+   im E-Commerce entsteht eine Transaktion bereits beim Befüllen des Warenkorbs, eine
+   Erfolgsquote über Transaktionen wäre also systematisch falsch — sie zählte
+   Warenkörbe, nicht Zahlungsversuche. Der Entscheid gilt bewusst für **beide** Kanäle,
+   damit POS und E-Com dieselbe Definition haben und die Query nur einmal existiert.
+   `buildReportingQuery({ spaceIds, start, end, channels, byTerminal, terminalIds })`
+   liefert **ein** CSV mit drei per `UNION ALL` verbundenen Blöcken (`DIM`/`TIME`/`CONV`,
+   Details unter „Reporting-Report" unten), also vor-aggregierte Zählwerte statt einer
+   Zeile je Versuch. Space-Filter wie in `brand`, Terminal-Filter optional. Ausgabe ist
+   der **Reporting-Report** (eigener Abschnitt unten).
+   **Zeitfilter auf `ca.createdon`, nicht auf `t.completedon`** (SPEC 2.2) — ein
+   gescheiterter Attempt hat gar kein `completedon`, über `t.completedon` gefiltert
+   verschwänden genau die Versuche, um die es geht. Das ist die **einzige Ausnahme** von
+   der sonst durchgehenden Regel „Zeitfilter immer auf `t.completedon`" (siehe
+   „SQL-Erzeugung"), und es bedeutet, dass der Zeitraum-Picker in diesem Modus etwas
+   anderes meint als in allen übrigen: den Zeitpunkt des **Zahlungsversuchs**, nicht den
+   des Abschlusses. Zahlen aus `reporting` und aus `brand` über denselben Zeitraum können
+   deshalb an den Rändern auseinanderlaufen — das ist erwartet, kein Fehler (SPEC 8.3),
+   und seit der Abnahme vom 2026-09-02 auch **gemessen**: im E-Commerce stimmen beide
+   Modi auf den Rappen, am POS weicht der Reporting-Umsatz um **−1.1 %** ab (siehe
+   „Reporting-Modus (v5.11)" unter „Offene Punkte"). **Der Reporting-Report ist deshalb
+   kein Werkzeug zur Umsatz-Abstimmung** — dafür `brand` oder `settlement`.
+   Der Modus filtert zusätzlich fest auf **`ca.environment = 'PRODUCTION'`**
+   (`ATTEMPT_ENVIRONMENT`): Testtransaktionen verfälschen jede Quote.
 
 Sichtbarkeit der Panels steuert `setMode()` über die CSS-Klasse `.cond-section.active`
 bzw. `.hidden`. Terminal-Panel aktiv in `terminal`/`export`/`card` (seit v5.8 **nicht** mehr
 in `settlement`), Spalten-Panel nur `export`, Kartensuche-Panel nur `card`,
 Settlement-Panel (`settlementSection`, Account/Super-User/Detail) nur `settlement`,
 Report-Panel (Terminal-Report) nur `terminal`, Settlement-Report-Panel
-(`settlementReportSection`) nur `settlement`. Das Space-Panel (`spaceSection`) wird im
+(`settlementReportSection`) nur `settlement`, Reporting-Panel (`reportingSection`, Kanal/
+Händler-Land/Terminal-Aufschlüsselung) und Reporting-Report-Panel
+(`reportingReportSection`) nur `reporting`. Das Space-Panel (`spaceSection`) wird im
 Modus `settlement` zusätzlich per `.hidden` ausgeblendet — der Modus ist account-, nicht
-space-basiert, eine Space-Auswahl wäre dort irreführend. Die Modus-Whitelist in
-`loadState()` ist `['brand','terminal','export','card','settlement']` — ein alter State mit
+space-basiert, eine Space-Auswahl wäre dort irreführend; in `reporting` bleibt es sichtbar
+(der Modus filtert nach Space). Die Modus-Whitelist in `loadState()` ist
+`['brand','terminal','export','card','settlement','reporting']` — ein alter State mit
 `mode: 'report'` wird gezielt auf `terminal` migriert statt auf `brand` zurückzufallen
 (siehe „State & Persistenz" oben).
+
+**Das Terminal-Panel ist im Modus `reporting` als einziges *dynamisch* geschaltet:** nicht
+am Modus, sondern an `reportingTerminalPanelSichtbar(kanal, byTerminal)` =
+`byTerminal && kanal !== 'ECOM'`. Dieselbe reine Funktion sitzt an drei Stellen — in
+`setMode()` (als Teil von `showTerminal`), in `aktualisiereReportingTerminalPanel()`
+(Handler von Checkbox und Kanal-Radios) und in `generate()`, wo sie entscheidet, ob die
+Terminal-Auswahl überhaupt in die Query geht. Der dritte Aufruf ist der wichtige: ohne
+ihn filterte eine im `terminal`- oder `export`-Modus stehengebliebene Terminal-Auswahl
+unsichtbar mit, obwohl das Panel gar nicht eingeblendet ist. Ein Klick auf Checkbox oder
+Radio blendet das Panel sofort ein bzw. aus, ohne Moduswechsel.
 
 **Terminal-Filter befüllen (`#terminalSection`, seit v5.4):** drei Wege, kombinierbar —
 manuell hinzufügen, CSV-Import, und **„🔄 Synchronisieren"**. Synchronisieren holt über die
@@ -373,6 +425,460 @@ Fees `16'900.34`, Netto `1'535'046.12`, 23 Referenzen + 1 Sammelzeile ohne Refer
 diese Zahlen exakt, ebenso die Space- und Zahlungsmittel-Summen und die einzelnen
 `BG-nn`-Zeilen des Referenz-Reports.
 
+### Reporting-Report (Ausgabe des Modus `reporting`, seit v5.11)
+
+Fachliche Vorgabe: **`dashboard/SPEC.md`**, Fundstelle aller Descriptor-IDs:
+`dashboard/discovery-results/DESCRIPTORS.md` (Task 0, nicht im Git). Gebaut wie die beiden
+anderen Reports: reine, DOM-freie Funktionen plus eine dünne UI-Schicht, harness-getestet in
+`test/reporting-queries.test.js`, `test/reporting-model.test.js` (enthält auch die
+Parser-Tests), `test/reporting-export.test.js`, `test/reporting-render.test.js`,
+`test/reporting-ui.test.js` und `test/reporting-xlsx.test.js`. Wie der Settlement-Report hat
+er **keine** persistente Gruppen-Konfiguration — er ist eine reine Auswertung des
+Query-Ergebnisses. Anders als die beiden anderen kennt er einen **CSV-Import**
+(Kopieren-Modus, siehe „UI" unten).
+
+#### Die Query: drei Blöcke in einem CSV
+
+`buildReportingQuery` baut ein CTE `att` (eine Zeile je Charge Attempt, alle abgeleiteten
+Spalten entstehen dort einmal) und darüber **drei** per `UNION ALL` verbundene `SELECT`s,
+unterschieden durch die erste Spalte `block`:
+
+- **`DIM`** — `GROUP BY` über 16 Dimensionen (Space, Kanal, Brand, Wallet, Währung,
+  `attempt_state`, Ablehngrund, Ablehncode, Issuer-Land, Kartenkategorie, Funding,
+  PAN-Typ, DCC, 3DS-Start, CAVV, ECI; mit Terminal-Aufschlüsselung 18). Trägt
+  `anzahl_attempts`, `summe_betrag`, `summe_betrag_failed`, `summe_refund`, `summe_tip`.
+  **Kein `anzahl_transaktionen`** — die Spalte gab es bis v5.11 und niemand las sie:
+  `COUNT(DISTINCT transaction_id)` ist über DIM-Tupel hinweg nicht summierbar (dieselbe
+  Transaktion steckt beim Retry in mehreren Tupeln), deshalb kommen Transaktionszahl und
+  Retry-Rate ausschliesslich aus `CONV`. Sie kostete in Athena ein `DISTINCT` über 16–18
+  Gruppierungsspalten und im Parser eine Pflichtspalte, die nichts absicherte.
+- **`TIME`** — `GROUP BY` Space, Kanal, Brand, Währung, `attempt_state`, `date(ca.createdon)`,
+  `hour(ca.createdon)`. Verlauf und Stosszeiten.
+- **`CONV`** — `GROUP BY` Space, Kanal, Brand, Währung mit `tx_mit_attempt` und
+  `tx_erfolgreich`. **Warum ein eigener Block:** `COUNT(DISTINCT transaction_id)` ist über
+  DIM-Tupel hinweg **nicht summierbar** — eine Transaktion kann beim Retry die Brand
+  wechseln und stünde dann in zwei Tupeln. Aus derselben Ursache ist auch die
+  Conversion/Retry-Rate auf Kanal-Ebene nur eine **Obergrenze des Nenners** (CONV ist nach
+  Brand gruppiert); genau deshalb weist SPEC 3.2 den Block „nur pro Brand/Total" aus.
+  **Je Gruppe gilt `tx_erfolgreich` = Anzahl der `SUCCESSFUL`-Attempts** — nicht als
+  Näherung, sondern zwingend aus „pro Transaktion höchstens ein erfolgreicher Attempt"
+  (derselben Zusicherung, die P3 exakt macht): jeder Erfolg gehört zu einer anderen
+  Transaktion. Am Referenzlauf in allen 17 CONV-Gruppen exakt bestätigt, ebenso
+  `tx_erfolgreich ≤ tx_mit_attempt ≤ Attempts` und die 1:1-Entsprechung von DIM- und
+  CONV-Gruppen. Die Fixture leitet ihren CONV-Block seither daraus ab statt ihn zu setzen
+  (`test/reporting-model.test.js` nagelt die Invariante fest).
+
+Die Vor-Aggregation in SQL ist Absicht (SPEC 2.4): das CSV bleibt bei hunderten bis wenigen
+tausend Zeilen statt zehntausenden, es enthält **keine personenbezogenen Daten** — und genau
+deshalb ist der CSV-Import im Kopieren-Modus überhaupt vertretbar.
+
+**`UNION ALL` verlangt identische Spaltenlisten in identischer Reihenfolge — und Presto
+zusätzlich denselben Typ je Position.** Deshalb führen `TIME` und `CONV` jede DIM-Spalte als
+**typisierten Platzhalter** mit (`CAST(NULL AS varchar|date|integer|bigint|boolean|
+decimal(38,8))`), und auch die echten Betragssummen sind explizit auf `decimal(38,8)`
+gecastet, statt sich auf die Typ-Herleitung des Optimizers zu verlassen — bei Decimals kann
+die an der Präzisionsgrenze scheitern. Ein untypisiertes `NULL` an einer Position ist kein
+kleiner Schönheitsfehler: findet Presto keinen gemeinsamen Supertyp, scheitert die **ganze**
+Query. Aus demselben Grund steht `failure_reason_id` in allen drei Blöcken als `varchar`
+(`CAST(failure_reason_id AS varchar)` im DIM-Block) — der Typ von `chargeattempt.failurereason`
+ist nicht belegt, und die ID ist ohnehin nur ein Nachschlageschlüssel, nie ein Rechenwert.
+
+#### Descriptor-Konstanten und der Map-Key
+
+Karten-Attribute kommen ausschliesslich aus `chargeattempt.labels` — das Analytics-Schema hat
+keine Karten-/Issuer-Tabelle. Der Zugriff läuft über den Helfer
+
+```js
+labelExpr(id, key)  // element_at(filter(ca.labels, l -> l['descriptor'] = '<id>'), 1)['<key>']
+```
+
+— dasselbe Muster wie im `cardCte`. **Der Map-Key ist descriptorabhängig**, und das ist der
+zentrale Fallstrick dieses Modus: `countryContent` (Issuer Country), `dateTimeContent`
+(3-D Secure Process Started), `longTextContent` (CAVV), sonst `shortTextContent` (Default des
+Helfers). Ein falsch geratener Key wirft **nicht** — er liefert `NULL`, und zwar dauerhaft
+und ohne jede Meldung: die KPI steht dann für immer auf „Unbekannt", und niemand merkt es.
+Genauso verhält sich eine falsch geratene Descriptor-ID. Deshalb ist **jede** Konstante an
+Produktivdaten ermittelt (Task 0) und trägt ihren Key als Kommentar — **auch der Key ist
+gemessen, nicht angenommen.** Belegstelle ist die Spalte `ohne_shorttext` der
+Discovery-Query Q2 (`dashboard/sql/00_label_discovery.sql`): sie zählt die Attempts, bei
+denen `shortTextContent` `NULL` ist, und steht in der Ergebnistabelle unten für jeden
+Descriptor mit dem Default-Key auf **0**, zusammen mit den erwarteten Werten. Umgekehrt
+steht sie bei Issuer-Land, 3-D-Secure-Start und CAVV auf der vollen Attempt-Zahl bei 0
+gefundenen Werten — genau daran wurden deren abweichende Keys überhaupt erst erkannt. Die
+Zusammenfassung in `dashboard/discovery-results/DESCRIPTORS.md` führt die Key-Spalte nur
+dort, wo der Key vom Default abweicht; **das ist eine Kürzung der Darstellung, kein
+fehlender Beleg** — der Beleg steht in den Q2-CSVs daneben.
+
+| Konstante | ID | Map-Key |
+|---|---|---|
+| `SALES_CHANNEL_POS` / `SALES_CHANNEL_ECOM` | `1582819151330` / `1582816223150` | — (`ca.saleschannel`) |
+| `DESC_ISSUER_COUNTRY` | `1474552618629` | **`countryContent`** |
+| `DESC_CARD_TYPE` (Funding CREDIT/DEBIT) | `1474552618699` | `shortTextContent` |
+| `DESC_CARD_CATEGORY` (Business/Privat) | `1474552618999` | `shortTextContent` |
+| `DESC_AUTH_RESPONSE_POS` (ISO-8583) | `1579287790513` | `shortTextContent` (Q2: 14 Werte `00`…`Z3`) |
+| `DESC_AUTH_RESPONSE_ECOM` (Processor) | `15537739985478` | `shortTextContent` (Q2: 5 Werte) |
+| `DESC_DCC_CURRENCY` (nur Existenz) | `1695119783358` | `shortTextContent` (Q2: `EUR`/`SEK`) |
+| `DESC_PAN_TYPE` | `1634723429555` | `shortTextContent` (Q2: 5 Werte) |
+| `DESC_TDS_STARTED` | `1568637480278` | **`dateTimeContent`** |
+| `DESC_TDS_CAVV` (nur Existenz) | `1569496536590` | **`longTextContent`** |
+| `DESC_ECI` | `1634723429552` | `shortTextContent` |
+
+Die beiden Ablehncode-Descriptors stehen in einem `COALESCE` — ein Attempt trägt immer nur
+eines der beiden Labels (POS: Issuer-Code, E-Commerce: Processor-Code).
+
+**PII-Sperrliste (SPEC 9): `1456765000789` (Card Holder Name) und `1456765125779`
+(Masked Card Number, `DESC_MASKED_CARD`) dürfen in der Reporting-Query nie vorkommen** —
+weder in einer Ausgabespalte noch in einem `GROUP BY`. Beide sind an Produktivdaten belegt
+vorhanden (Card Holder Name im Klartext, 245 Attempts im Referenzmonat); die Query gibt
+ausschliesslich Aggregate aus, und das soll so bleiben. Im Code steht die Sperrliste als
+Kommentar direkt bei den Konstanten. **CAVV wird ausschliesslich als Existenzprüfung
+verwendet** (`… ['longTextContent'] IS NOT NULL AS tds_cavv`) — das Kryptogramm selbst ist
+ein Sicherheitsmerkmal und darf nie in eine Spalte geraten; ein Test zählt deshalb, dass der
+Descriptor im gesamten SQL genau **einmal** vorkommt.
+
+#### Herkunft, Kartentyp, 3DS — die Klassifikation
+
+Alles clientseitig im Modell, aus den Rohwerten der Query:
+
+- **`klassifiziereHerkunft(issuerCountry, merchantCountry)`** → `DOMESTIC` (gleich) /
+  `INTRA` (Issuer-Land in `EUROPA_REGION`) / `INTER` / `UNKNOWN`. `EUROPA_REGION` ist ein
+  ausgeschriebenes 32-Element-ISO-2-Set (EU-27 + IS/LI/NO + CH/GB) — es folgt dem
+  **Interchange-Regime**, nicht der EU-Mitgliedschaft (daher GB), und eine Herleitung zur
+  Laufzeit würde bei politischen Änderungen stumm mitwandern.
+  **Ein Wert, der kein ISO-2-Code ist, ergibt `UNKNOWN` — nie `INTER`** (SPEC 7): „Ausland"
+  wäre eine Aussage, die aus einem Formatfehler entstünde. Das gilt für `'CHE'` (ISO-3)
+  ebenso wie für einen Klarnamen oder ein leeres Feld, und ebenso für ein ungültiges
+  **Händler**-Land — ohne Inland gibt es kein „domestisch".
+- **`istKartenBrand`** (`KARTEN_BRANDS`) trennt Marken **mit** Issuer-Labels von TWINT,
+  Lunch Check, Reka, Boncard, PowerPay Invoice: die tragen keine. Label-lose Marken laufen
+  gar nicht erst in die Karten-Eimer (K5/K6/P1/P7), statt den `UNKNOWN`-Eimer aufzublähen.
+  **`PostFinance` steht seit dem Referenzlauf mit in der Liste** — der Lauf hat gezeigt,
+  dass „steht nicht in der Liste" und „trägt keine Labels" **nicht** dasselbe sind (siehe
+  „Wallee-Referenzwissen"). Bewusst der **blosse Markenname**, nicht `PostFinance Card`:
+  derselbe Lauf zeigt daneben `PostFinance Apple Pay`, zwei Literale hätten die dritte
+  Schreibvariante wieder verpasst. Die Liste bleibt damit eine **Namensliste und
+  connectorabhängig** — die nächste lokale Debitkarte eines anderen Acquirers braucht
+  denselben Nachtrag; erkennbar ist der Fall daran, dass ein Brand ausserhalb der Liste
+  Issuer-Labels trägt.
+  **Der Hinweistext unter K5/K6/P1 (`kartenHinweis`) nennt deshalb bewusst keine
+  Markenliste mehr**, sondern „Zahlungsmittel ohne Karten-Labels — zum Beispiel TWINT —
+  zählen hier nicht mit. Welche das sind, hängt vom Acquirer ab." Dort stand eine Liste,
+  und sie ist genau an dieser Korrektur veraltet: eine Fussnote, die eine mitzählende Marke
+  als ausgeschlossen nennt, ist schlimmer als gar keine, weil der Leser ihr die Erklärung
+  der Zahl darüber glaubt. TWINT bleibt als **ein** ausdrückliches Beispiel stehen (in
+  beiden Kanälen label-los gemessen), damit nicht offenbleibt, wohin der fehlende Umsatz
+  verschwunden ist. `test/reporting-render.test.js` nagelt fest, dass keine Liste
+  zurückkehrt — vorher prüfte den Satz nichts, deshalb fiel sein Veralten nicht auf.
+- **`klassifiziereKartentyp`** — `KARTEN_BUSINESS_REGEX` (`BUSINESS|CORPORATE|COMMERCIAL|
+  PURCHASING|FLEET`) → `BUSINESS`; `NOT_SPECIFIED` (Konstante `KARTEN_KATEGORIE_UNBEKANNT`)
+  oder fehlend → `UNKNOWN`, **nicht** `PRIVATE`; alles andere → `PRIVATE`. Der Wert ist
+  häufig (siehe „Wallee-Referenzwissen"), ihn als privat durchgehen zu lassen wäre eine
+  erfundene Aussage über jede siebte bis dritte Karte.
+- **`klassifiziereTds`** — `AUTHENTICATED` (Start ∧ CAVV) / `FAILED_OR_ABANDONED`
+  (Start ohne CAVV) / `WALLET_CRYPTOGRAM` (kein Start, aber ECI — Apple/Google Pay bringen
+  ihr eigenes Kryptogramm) / `NOT_REQUESTED`. Ein **Liability Shift wird nicht ausgewiesen**:
+  der Connector schreibt kein solches Label (Task 0).
+
+#### Quoten, Anteile und die drei Zähler-Eimer
+
+Nenner der **Erfolgs- und Fehlerquote** sind die Attempts mit Endzustand
+(`SUCCESSFUL + FAILED`, in `reportingQuoten` als `abgeschlossen`): `PENDING` zählt separat
+als „offen" und bleibt dort draussen (SPEC 4), ein unbekannter `attempt_state` landet im
+eigenen Eimer `sonstige` — ihn zu `SUCCESSFUL` oder `FAILED` zu schlagen wäre erfunden, ihn
+wegzuwerfen ein stiller Verlust. **Das ist die Regel für die Erfolgs-/Fehlerquote, nicht für
+jede Quote:** die übrigen haben je einen eigenen, fachlich passenden Nenner —
+`walletAnteil` misst gegen **alle** Attempts des Kanals (`kpi.attempts`, `offen` und
+`sonstige` eingeschlossen: die Frage lautet „wie viel läuft über ein Wallet"),
+`dccAnteil` und die Karten-Verteilungen gegen `kartenErfolgreich`, `tds.akzeptanz` gegen
+`AUTHENTICATED + FAILED_OR_ABANDONED` und `tds.angefordertAnteil` gegen `kartenAttempts`.
+Wer eine KPI ergänzt, wählt den Nenner also aus der Frage, nicht aus dieser Regel.
+**Anteile** (Verteilungen)
+haben dagegen alle Attempts im Nenner, sonst summierten die Brand-Anteile nicht auf 100 %.
+Der Unterschied ist der Grund für zwei Helfer statt einem: `reportingQuote` gibt bei Nenner 0
+**`null`** zurück („kein Messwert"), `reportingAnteil` **`0`** („nichts, wovon es ein Teil
+wäre"). Prozentwerte liegen im Modell als Zahlen **0–100 in voller Genauigkeit** vor;
+gerundet wird erst in der Ausgabe.
+
+**Beträge nie über Währungen hinweg** (SPEC 2.7): es gibt bewusst **kein** `kpi.betrag` —
+Beträge stehen ausschliesslich in `waehrungen[]`, je Währung. Zählwerte und Quoten sind
+währungsübergreifend.
+
+Der `verlauf` entsteht ohne `start`/`end`: `reportingTagesbereich` nimmt Minimum und Maximum
+der belegten Tage und füllt lückenlos auf, damit das Modell dieselbe Antwort gibt, ob die
+Zeilen aus der API oder aus einem importierten CSV kommen. Ein Tag ohne Attempts steht mit 0
+da (gemessen, nicht unbekannt) — **ausser oberhalb von `REPORTING_VERLAUF_MAX_TAGE = 400`**:
+dort fällt der Verlauf auf die belegten Tage zurück und meldet das über
+`zeitraum.lueckenlos: false`, worauf die Ausgabe ihren Hinweis „keine lückenlose Tagesachse"
+setzt. Der Deckel begrenzt bewusst nur das **Auffüllen**, nie die Daten — abgeschnitten wird
+nichts, sonst verlöre ein einzelner Ausreisser-Tag (`2999-01-01`) gemessene Attempts, statt
+bloss Leerzeilen zu sparen. `stunden[]` hat immer alle 24 Einträge. Gültigkeit eines
+Datums prüft **ein** Prädikat (`tagEpoche`/`istTag`: Muster **und** `Date.parse`) für
+Bereichsbildung und Zeilenzuordnung — liefen die beiden auseinander, landete eine Zeile in
+einem Eimer, den der Bereich nie ausgibt, und verschwände spurlos. Unbrauchbare Werte fallen
+sichtbar in `kpi.ohneTag` / `kpi.ohneStunde`.
+
+#### P3 Trinkgeld — derselbe Fallstrick wie in den Aggregat-Modi, eine Ebene tiefer
+
+Die Query bindet **`tipCte` unverändert** ein (kein zweites Trinkgeld-CTE) und hängt es per
+`LEFT JOIN tip ON tip.transaction_id = t.id` an `att`. `lineitem` erscheint damit
+ausschliesslich im vor-aggregierten `tip`-CTE — der bekannte Fallstrick aus „SQL-Erzeugung"
+(eine Transaktion hat mehrere Line Items, ein direkter Join vervielfacht die Zeilen).
+
+**Hier kommt eine zweite Ausprägung desselben Problems dazu, und sie ist neu:** `tip` ist pro
+**Transaktion** vor-aggregiert, `att` hat aber die Körnigkeit des **Attempts**. Ohne Guard
+zählte `SUM(tip_amount)` das Trinkgeld einer wiederholten Transaktion einmal je Versuch.
+Deshalb steht in `att`
+
+```sql
+CASE WHEN ca.state = 'SUCCESSFUL' THEN tip.tip_amount END AS tip_amount
+```
+
+Der `CASE` ist **nicht** optional. Er ist zugleich der Grund, warum `summe_tip` — anders als
+`summe_refund` und `summe_betrag_failed` — **exakt** ist: pro Transaktion gibt es höchstens
+einen erfolgreichen Attempt. Bei den beiden anderen ist die Mehrfachzählung unvermeidbar
+(die Werte hängen an der Transaktion, gescheiterte Versuche gibt es mehrere), sie sind
+deshalb als Obergrenze zu lesen; das steht als Kommentar im SQL. Ein Test verlangt, dass
+`tip.tip_amount` im **gesamten** SQL genau einmal vorkommt, und verbietet
+`SUM(tip.tip_amount)` — die unbewachte Form fällt damit sofort auf.
+
+`tipCte` erwartet ein CTE `tx` mit der Spalte `id`. Der Reporting-Modus baut es **selbst**
+aus den Attempts des Zeitraums und benutzt bewusst **nicht** `txCte`: das filtert auf
+`t.completedon` und `t.state IN ('FULFILL','COMPLETED')` und legte damit einen anderen
+Zeitschnitt an als der Report. Der Kanalfilter läuft in diesem `tx`-CTE mit — sonst suchte
+ein E-Commerce-Bericht das Trinkgeld sämtlicher POS-Umsätze zusammen, also gerade den teuren
+Teil, den der `LEFT JOIN` danach wegwirft.
+
+Ausgewiesen wird P3 als **zwei Spalten** (`Trinkgeld`, `Trinkgeld-Quote %`) am Ende des
+Blocks „Beträge je Währung" — dort stehen Zähler und Nenner ohnehin nebeneinander, in
+derselben Form wie `Rückerstattungen` + `Refund-Quote %`. Die Spalten erscheinen **nur, wo
+Trinkgeld vorkommt** (`waehrungen.some(w => w.tip > 0)`), also datengetrieben statt auf POS
+verdrahtet. Der Hinweis des Blocks sagt dann ausdrücklich, dass das Trinkgeld im Umsatz
+**bereits enthalten** ist (an Produktivdaten belegt, siehe „Wallee-Referenzwissen") — ohne
+den Satz läse sich eine Spalte neben „Umsatz" wie ein Aufschlag.
+
+#### Ablehngründe: `FAILURE_REASONS` und `ISO_RESPONSE_CODES` — statisch, und warum
+
+**Es gibt in der wallee-Web-Service-API keinen Failure-Reason-Dienst.** Das war 2026-08-28
+Gegenstand einer eigenen Untersuchung (Task 6, Bericht
+`.superpowers/sdd/PLAN/task-6-report.md`) und ist der Grund, warum die in SPEC 6.4
+vorgesehene Proxy-Route `GET /failure-reasons` **nicht existiert und nicht gebaut wurde**:
+
+- Die Web-Service-Doku enthält **98 Service-Abschnitte**, keiner davon betrifft Failure
+  Reasons; das offizielle Java-SDK hat **ebenfalls 98** Service-Klassen und keine dafür.
+  Die übereinstimmende Zahl belegt, dass die Liste vollständig ist. Failure Reason kommt nur
+  als **Modell** vor (eingebetteter Datentyp), nicht als Dienst.
+- Beide Plan-Kandidaten antworten **404**: `GET /api/v2.0/failure-reasons` und
+  `GET /api/failure-reason/all`. Und zwar als **HTML**-Fehlerseite — eine existierende Route
+  mit falschem Parameter oder fehlender Berechtigung antwortet bei wallee mit JSON
+  (`{"code":"resource_missing",…}`). HTML heisst: der Pfad wird gar nicht erst geroutet.
+- `GET /api/v2.0/static-values` (der generische ID→Name-Dienst) kennt die IDs nicht, und
+  das Analytics-Schema führt `failurereason` nur als `bigint`-Spalte ohne
+  Nachschlagetabelle.
+- Der Name existiert ausschliesslich **eingebettet im einzelnen Charge Attempt**
+  (`GET /api/v2.0/payment/charge-attempts`) — und der braucht einen `Space`-Header statt
+  `Account`, liefert nur die zufällig vorkommenden Gründe statt des Katalogs, und
+  `limit=100` läuft in ein **504 (Cloudflare)**; nutzbar war nur `limit=20`.
+
+**Bitte den Endpunkt nicht erneut suchen** — derselbe Hinweis steht als Kommentar im Code.
+Stattdessen: `FAILURE_REASONS` als statische Tabelle mit **nur den sieben IDs, deren Name an
+echten Daten belegt ist** (2 POS, 5 E-Commerce). Eine erratene Bezeichnung wäre schlimmer als
+die rohe ID; unbekannte IDs erscheinen als `#<id>` und lassen sich unter
+`https://app-wallee.com/en-us/doc/api/failure-reason/list` nachschlagen (>2000 Einträge, ohne
+IDs in der Tabelle — als Datenquelle unbrauchbar). Die Option `failureReasons` von
+`buildReportingModel` überschreibt und ergänzt die Tabelle. Daneben steht
+`ISO_RESPONSE_CODES` (36 Einträge, deutsche Bezeichnungen, `51` = „Ungenügende Deckung") für
+den Ablehncode — ein genormter, seit Jahrzehnten stabiler Katalog, kein Datenbestand eines
+Händlers. Am POS ist der Ablehncode ohnehin die aussagekräftigere Achse; ohne Klartext-Namen
+verliert vor allem der E-Commerce an Lesbarkeit, nicht der POS.
+
+#### Parser, Blöcke, vier Ausgaben
+
+- **`parseReportingCsv(text)`** → `{ rows: { dim, time, conv }, headers, unbekannteBloecke,
+  unbrauchbareWerte, error }`, wirft nie. Nutzt den gemeinsamen Zerleger `csvZuZeilen` und `parseAmount`
+  (Beträge als ganzzahlige **1e-8-Einheiten**, per String zerlegt) wie der Settlement-Parser.
+  **Jeder Block hat seine eigene Zeilenform** statt aller Spalten überall: in `TIME`/`CONV`
+  sind die DIM-Spalten keine *fehlenden* Werte, sondern **gar keine** — sie auf `'UNKNOWN'`
+  zu setzen wäre eine erfundene Aussage. Dimensionen leer → `'UNKNOWN'`; `stunde` leer →
+  `null`, **nicht** `0` (0 ist eine gültige Stunde); Booleans nur `true`/`false`, alles
+  andere `null`. Eine Zeile mit unbekanntem `block` wird nicht stumm verworfen, sondern in
+  `unbekannteBloecke` gezählt.
+  **Seit v5.11 ist auch der letzte stille Verlustkanal gezählt:** `parseBool`, `parseAmount`
+  und `parseCount` können „nicht lesbar" nicht von „leer" bzw. „0" unterscheiden. Ein
+  nicht leeres Feld, das gegen `REPORTING_MUSTER_BETRAG`/`REPORTING_MUSTER_ZAHL` bzw. gegen
+  `true`/`false` nicht ankommt, erhöht deshalb `unbrauchbareWerte`, und die Statuszeile des
+  Panels nennt die Zahl (beide Zweige, auch „Keine Zahlungsversuche" — gerade dort tarnte
+  sich ein unlesbares Zahlenformat sonst als leeres Ergebnis). **Warum das nötig war:**
+  als der Zähler entstand, war die Query noch nie gegen echte Daten gelaufen. Schriebe
+  Athena `boolean` als `1`/`0` oder Beträge mit Komma bzw. in Exponentialschreibweise,
+  stünden `dcc`, `tds_started`, `tds_cavv` und sämtliche Beträge dauerhaft auf `null` bzw.
+  `0` — P7 läse „DCC 0 %", E1/E2 „nicht angefordert 100 %", und zwar als gemessen
+  aussehende Nullen. **Der Referenzlauf vom 2026-09-01 hat die erwarteten Formate
+  bestätigt** (Spaces 40402 + 12622, Juli 2026): `true`/`false` klein, Punkt-Dezimalzahlen
+  mit acht Nachkommastellen, `yyyy-mm-dd`, Stunde ohne führende Null — der Parser meldete
+  über beide Ergebnisse **0 unbrauchbare Werte und 0 unbekannte Blöcke**. Das war vorher
+  offen und ist es nicht mehr; der Zähler bleibt trotzdem, weil er die Aussage erst
+  belegbar macht und ein anderer Connector oder eine Schema-Änderung sie wieder umwerfen
+  kann. Der Wert selbst bleibt der defensive; gemeldet wird zusätzlich, nicht statt dessen.
+  `REPORTING_PFLICHT` ist die **vollständige SELECT-Liste** der Query (26 Spalten), nicht
+  nur was das Modell braucht: die Query ist ein einziges `UNION ALL`, ihre Spalten kommen
+  gemeinsam oder gar nicht — fehlt eine, stammt das CSV nicht aus diesem Modus. Nicht
+  Pflicht sind nur `terminal_identifier`/`terminal_name` (nur in der Terminal-Variante).
+  **Folge, die zu kennen ist:** `summe_tip` ist seit dem P3-Nachtrag Pflichtspalte, ein
+  **vorher** abgesetzter Reporting-`queryToken` lässt sich deshalb nicht mehr nachparsen
+  („Im Ergebnis fehlen Pflichtspalten"). Die Verlaufszeile bietet für solche Einträge
+  weiterhin das Roh-CSV an; der Report darüber nicht.
+- **`buildReportingModel(rows, { merchantCountry, failureReasons })`** → `{ merchantCountry,
+  kanaele: {POS, ECOM, OTHER}, kanalListe, zeitraum, spaces, waehrungen, hatDaten,
+  hatTerminals, fremdeKanaele }`, je Kanal `{ kpi, brands, wallets, herkunft, kartentyp,
+  funding, tds, failures, failuresProBrand, responseCodes, panTypes, verlauf, stunden,
+  terminals, waehrungen }`. **Wallets stehen neben den Brands, nicht zwischen ihnen** — ein
+  Wallet liegt quer zu den Brands (Apple Pay *auf* Visa) und triebe deren Anteilssumme über
+  100 %. Terminal-Zeilen gibt es **nur** im POS-Kanal.
+- **`reportingExportBloecke(modell, optionen)`** ist die gemeinsame Quelle für **alle vier
+  Ausgaben** (Bildschirm, CSV, Excel, PDF) — dasselbe Muster wie bei den beiden anderen
+  Reports. Ein Block trägt `{ titel, kanal, kopf, zeilen, typ, hinweis, zellFormate? }`;
+  `typ` ∈ `tabelle | kacheln | balken`. Der `kopf` ist ein **Deskriptor je Spalte**
+  (`{ label, format }`) statt zweier Parallel-Arrays wie beim Settlement-Report: bei zwei
+  Arrays lässt sich eine Spalte halb einfügen und alles Weitere verschiebt sich still um
+  eins.
+  `format` ∈ `text | zahl | betrag | pct | faktor | gemischt`. **Zellformate immer über
+  `reportingZellFormat(block, r, c)` lesen, nie über `block.kopf[c].format`** — der
+  Kachel-Block mischt in seiner Wert-Spalte Zähler, Prozente und Beträge und trägt deshalb
+  `zellFormate`. Seine Spalte steht bewusst auf dem **nicht renderbaren** `'gemischt'`: wer
+  den Zugriff vergisst, bekommt ein Format, das er nicht kennt, statt eines plausiblen, und
+  schreibt nicht versehentlich `4229859000000` unter „Anzahl". Ein unbekanntes Format ergibt
+  in der Ausgabe `#FORMAT?` (`REPORTING_FORMAT_UNBEKANNT`) — bewusst ein **eigenes** Zeichen,
+  denn `—` bedeutet bereits „keine Grundlage" (`null`) und `''` bereits „gehört zur Zeile
+  darüber" (Fortsetzungszeile einer Währungsgruppe).
+  In den Blöcken stehen **Rohwerte**: Beträge als 1e-8-Einheiten, Prozente ungerundet.
+  Formatiert und gerundet wird ausschliesslich in der Ausgabeschicht
+  (`reportingZellText` für Bildschirm/PDF, `reportingZellZahl` für CSV/Excel — dort bleiben
+  Zahlen Zahlen). Gerundet wird auch in CSV und Excel, damit alle vier Ausgaben dieselbe
+  Zahl zeigen.
+  **Mehrere Währungen** trägt eine `Währung`-Spalte mit einer Zeile je (Eintrag, Währung);
+  die währungsfreien Zellen stehen nur in der ersten. Ein Block je Währung hätte Attempts
+  und Quoten je Währung wiederholt — genau die Doppelzählung, die vermieden werden soll.
+  **Ein Block ohne Grundlage entfällt**, statt leer dazustehen (eine leere Tabelle behauptet,
+  es sei gemessen worden und nichts gewesen); die zwei Ausnahmen, wo die Abwesenheit selbst
+  die Aussage ist, bekommen einen Hinweisblock (`<K> · Keine Daten` bzw. `Keine Daten`) —
+  dieselbe Haltung wie das „Keine." des Settlement-Reports.
+- **Bildschirm:** Kanal-Abschnitte unter `<h2 class="report-kanal">`, Kacheln, Tabellen
+  (ab `REPORTING_TABELLE_OFFEN = 20` Zeilen in `<details>` eingeklappt — die Schwelle liegt
+  bewusst unter den 24 Stunden), und für `typ: 'balken'` ein **Inline-SVG** über der Tabelle
+  (`svgBalken`, kein Chart-Vendor — die Datei ist schon ~1.06 MB). Farben ausschliesslich
+  über die Whitelist `SVG_BALKEN_FARBEN` (genau die zwei Farben, die
+  `reportingBalkenHtml` wählt — Einträge auf Vorrat sehen nur benutzt aus) → `var(--…)`;
+  eine freie Farbangabe wäre der Weg,
+  über den doch ein Inline-Hex ins Markup käme. Balken bekommen nur Zähler und — **nur wenn
+  jede Zeile eine Zahl trägt** — die Erfolgsquote: bei `null` (Stunde ganz ohne Versuch)
+  behauptete ein Nullbalken 0 % Erfolg, eine Messung, die es nicht gibt.
+- **Excel:** **ein Blatt je Kanal**, Abschnitte darin gestapelt (Muster Terminal-Report) —
+  ein Blatt je Block ergäbe an der Fixture 34 Register; der kanalübergreifende Titelblock
+  bekommt ein eigenes vorangestelltes Blatt (`Reporting | POS | E-Com | Andere`). Zahlformat
+  `pct` = `0.0"%"` — **nicht** das eingebaute `0.0%`, das mit 100 multipliziert; die Blöcke
+  führen bereits 0–100.
+- **PDF:** ein Kapitel je Kanal auf frischer Seite, Titelblock als Dokumentenkopf, seine
+  Prosa als Abschnitt „Grundlagen". **Balken stehen bewusst nicht im PDF** (autotable kann
+  kein SVG, ein Rasterbild wäre ein dritter Vendor) — die Zahlen stehen vollständig in der
+  Tabelle daneben.
+
+#### UI und Ingest — mit zwei Regeln, die leicht zu übersehen sind
+
+- Panel `reportingSection`: Kanal-Radios (POS / E-Commerce / Beide), Händler-Land (ISO-2,
+  Default `CH`), Checkbox „Terminal-Aufschlüsselung", dazu die Hinweise zur Attempt-Basis
+  und dazu, dass **der Zeitraum sich auf den Zahlungsversuch bezieht**. Panel
+  `reportingReportSection`: Statuszeile, **„CSV importieren"**, Export-Leiste (CSV/Excel/PDF),
+  Ausgabe. Der Import-Button liegt **ausserhalb** von `reportingReportActions`, weil die
+  Leiste versteckt ist, solange kein Modell existiert — der Import ist aber genau der Weg,
+  im Kopieren-Modus überhaupt zu einem Modell zu kommen. Er ist ein echter Button (kein
+  `<label for>`), sonst wäre er mit der Tastatur nicht erreichbar.
+- **Ingest:** `uebergibReportingCsv` → `ingestReportingCsv` → `setMode('reporting')`,
+  gespeist aus drei Quellen: Submit, „Vorhandenen queryToken abrufen" und CSV-Import.
+  Submit und Token-Abruf laufen über die gemeinsame Tabelle `BERICHT_INGEST`
+  (`settlement`/`reporting`); der Terminal-Report bleibt bewusst draussen, er wertet die
+  Antwort selbst aus. Die geparsten Zeilen bleiben in `reportingRohzeilen` liegen: ein
+  Wechsel des Händler-Landes baut das Modell **daraus** neu, statt das Ergebnis erneut
+  abzurufen — bei wallee zählt jeder Abruf als Download.
+- **Kanal-Abbildung `reportingKanalFilter`: `'BOTH'` → `[]`, nicht `['POS','ECOM']`.** Eine
+  leere Liste erzeugt in `buildReportingQuery` **gar keinen** `ca.saleschannel`-Filter; nur
+  so bleibt ein Versuch mit einem dritten Verkaufskanal als `OTHER` sichtbar (SPEC 7).
+  `['POS','ECOM']` würde ihn still herausfiltern und den `ELSE 'OTHER'`-Zweig der `CASE` zu
+  totem Code machen. Eine ausdrückliche Auswahl filtert dagegen exakt auf die genannten
+  Kanäle.
+- **Der Account-Override gilt weiterhin nur im Settlement-Modus.** `reporting` filtert wie
+  `brand`/`terminal` nach `spaceid`, also gibt `aktiverAccount()` für den Modus `''` zurück.
+  Das ist keine Nebensächlichkeit, sondern genau die Regression aus v5.10.0 (siehe
+  „Account-Override gilt nur im Settlement-Modus" oben): ein fremder Account kennt diese
+  Spaces nicht, die Query liefe im falschen Kontext und käme mit **null Zeilen** zurück —
+  der Report meldete dann bloss, das Ergebnis sei leer. `test/reporting-ui.test.js` nagelt
+  beides fest (`aktiverAccount()` und `historyEintragBauen('reporting', …).account` bleiben
+  leer, während der Settlement-Modus den Override behält).
+- **Abfrage-Verlauf:** wie bei Terminal- und Settlement-Report zeigt die Verlaufszeile im
+  Modus `reporting` nur den Roh-CSV-Download; Excel und PDF laufen über das Report-Panel.
+  Die Unterdrückung läuft über `MODI_MIT_REPORT_PANEL = ['terminal','settlement','reporting']`
+  statt einer wachsenden Oder-Kette. `MODUS_LABELS.reporting = 'Reporting'`.
+  `historyEintragBauen` hat seit v5.11 einen eigenen `filterSummary`-Zweig für den Modus:
+  er nennt die **Kanalwahl** (`REPORTING_KANAL_WAHL_LABEL`, `'BOTH'` → „alle Kanäle" — der
+  Kanal ist hier der eigentliche Filter) und die Terminal-Auswahl **nur dann**, wenn
+  `reportingTerminalPanelSichtbar` sie gelten lässt, also mit derselben Bedingung wie
+  `generate()`. Sonst versprächen die Zeilen eine Einschränkung, die die Query nicht trägt.
+
+#### Bewusste Abweichungen von `dashboard/SPEC.md`
+
+Jede offengelegt, keine übersehen:
+
+1. **Der CSV-Knopf des Panels liefert den Report als CSV, nicht das Rohergebnis** (SPEC 5
+   sagt „CSV (Rohergebnis)"). Grund: alle vier Ausgaben sollen aus `reportingExportBloecke`
+   kommen. Das **Rohergebnis bleibt erreichbar** — über die Verlaufszeile
+   (`data-act="csv"` → `holeErgebnisText`). Genau die Aufteilung, die der Settlement-Report
+   schon hat; beide Wege existieren, keiner fehlt.
+2. **Kanal-Abschnitte statt Kanal-Tabs** (SPEC 5). Tabs zeigen immer nur einen Kanal,
+   brechen damit den Ausdruck und die Browser-Suche über alle Kanäle — und sie hätten in
+   XLSX und PDF keine Entsprechung, die sind linear (ein Blatt bzw. ein Kapitel je Kanal).
+   Gestapelte Abschnitte halten die Gliederung über alle vier Ausgaben gleich.
+3. **E5 (Ablehngründe je Zahlungsmittel) erscheint datengetrieben**, sobald ein Kanal
+   **mindestens zwei** fehlschlagende Brands hat — SPEC 4.3 führt ihn unter E-Commerce. Bei
+   genau einem Brand wäre die Kreuztabelle Zeile für Zeile der K8-Block darüber, nur mit
+   einer Spalte, in der immer dasselbe steht. Am POS ist „Visa scheitert an X, TWINT an Y"
+   dieselbe brauchbare Aussage. Präzedenz ist P6 (Ablehncodes), der aus demselben Grund in
+   beiden Kanälen läuft; P3 (Trinkgeld) folgt derselben Haltung.
+4. **`summe_tip` ist Pflichtspalte** — siehe Parser oben: ein vor dem P3-Nachtrag
+   abgesetzter Reporting-Token lässt sich nicht mehr nachparsen. Unkritisch, solange der
+   Modus frisch ist; hier festgehalten, damit die Meldung „Im Ergebnis fehlen
+   Pflichtspalten" an einem alten Token nicht als Fehler untersucht wird.
+5. **Die Proxy-Route `GET /failure-reasons` aus SPEC 6.4 existiert nicht** und wird nicht
+   gebaut — siehe „Ablehngründe" oben. SPEC 6.4 ist insoweit überholt und trägt seit v5.11
+   einen entsprechenden Vermerk.
+
+Nicht in dieser Liste, weil es **keine** SPEC-Abweichung ist: **KPI P5 (Authorization
+Method, Kontaktlos/Chip) wurde bereits in Task 0 verworfen** und steht deshalb gar nicht
+erst in der eingecheckten SPEC (§4.2 führt P1, P6, P7, P2, P3, P4; §6.3 kennt kein
+`DESC_AUTH_METHOD`). Der Grund gehört trotzdem festgehalten, damit die Kennzahl nicht
+irgendwann „nachgetragen" wird: das Label `1761481788939` trägt unter
+`staticValueContent` nur eine Static-Value-ID, und im ganzen Referenzmonat kommt an POS
+**und** E-Com genau **ein** Wert vor. Eine Kennzahl mit einem einzigen Wert misst nichts.
+
+#### Grenzen (dem Kunden so kommunizieren)
+
+- **Keine Chargebacks/Disputes** — das Analytics-Schema hat keine Tabelle dafür (SPEC 4.4).
+  Nicht „noch nicht gebaut", sondern nicht verfügbar.
+- **Keine IC++-Aufschlüsselung** (DCC/Interchange/Scheme/Acquirer) — dieselbe Grenze wie in
+  allen übrigen Modi. Der **DCC-Anteil** (P7) ist davon unberührt: er zählt nur, *ob* in
+  Fremdwährung abgerechnet wurde (Label `DESC_DCC_CURRENCY`), nicht was das gekostet hat.
+- **Labels sind connectorabhängig.** Alle Descriptor-IDs stammen aus **einem** Acquirer-Setup
+  (Task 0). Schreibt ein anderer Connector andere IDs, zeigt der Report für die betroffenen
+  Kennzahlen `UNKNOWN` — er wird nicht falsch, aber blind. Dann ist
+  `dashboard/sql/00_label_discovery.sql` erneut zu fahren und die Konstanten sind
+  nachzuziehen.
+- **Kein Liability-Shift-Ausweis** — es existiert kein solches Label (Task 0); der
+  3DS-Abschnitt endet bei Authentifizierung/Abbruch.
+- **Die Withdrawal-/`payoutref`-Heuristik ist unverändert** und betrifft diesen Modus nicht:
+  der Reporting-Modus fasst `currentaccountwithdrawal` nicht an.
+- **`summe_refund` und `summe_betrag_failed` sind Obergrenzen** (Mehrfachzählung über
+  Attempts derselben Transaktion, siehe P3 oben); `summe_betrag` und `summe_tip` sind exakt.
+- **Conversion und Retry-Rate auf Kanal-Ebene** sind eine Obergrenze des Nenners (CONV ist
+  nach Brand gruppiert). Eine exakte Zahl bräuchte einen vierten Query-Block.
+
 ### Abfrage-Verlauf (seit v5)
 
 Eigener, von `state` unabhängiger `localStorage`-Key `wallee_query_history_v1`
@@ -401,16 +907,18 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   `^-?\d+\.\d+$`; Zähler = Kopf matcht `anzahl|count|records|number|nummer` **und** alle Werte
   ganzzahlig; Währungsspalte = Kopf `waehrung|währung|currency`), damit derselbe Export
   brand/export/card/settlement mit ihren unterschiedlichen Spalten bedient. Kopfzeile türkis, Zebra,
-  Rahmen wie beim Report. **In den Modi `terminal` und `settlement` zeigt die Verlaufszeile nur
-  den Roh-CSV-Download** — Excel (und im Settlement-Fall auch PDF) sowie die Report-Ansicht
-  laufen dort über das jeweilige Report-Panel selbst (`exportReportXlsx`/`exportSettlementXlsx`/
-  `exportSettlementPdf` mit gebrandetem Titel bzw. der nach dem Submit automatisch gezeigte
-  Report), deshalb kein Excel-Button in der Verlaufszeile dieser beiden Modi.
+  Rahmen wie beim Report. **In den Modi `terminal`, `settlement` und `reporting` zeigt die
+  Verlaufszeile nur den Roh-CSV-Download** — Excel (und im Settlement-/Reporting-Fall auch
+  PDF) sowie die Report-Ansicht laufen dort über das jeweilige Report-Panel selbst
+  (`exportReportXlsx`/`exportSettlementXlsx`/`exportSettlementPdf`/`exportReportingXlsx`/
+  `exportReportingPdf` mit gebrandetem Titel bzw. der nach dem Submit automatisch gezeigte
+  Report), deshalb kein Excel-Button in der Verlaufszeile dieser drei Modi. Die Liste steht
+  seit v5.11 als Konstante `MODI_MIT_REPORT_PANEL` statt als Oder-Kette in `renderHistory`.
   Jeder erneute Abruf über den Token zählt bei wallee als Download (siehe „Wallee-
   Referenzwissen").
 - **Befüllt wird der Verlauf bei jedem erfolgreichen Submit** (unabhängig vom Modus); die Modi
-  `terminal` und `settlement` speisen zusätzlich sofort ihr jeweiliges Report-Panel, um einen
-  weiteren Result-Abruf zu sparen. Der Verlaufseintrag merkt seit v5.8 zusätzlich den Account,
+  `terminal`, `settlement` und `reporting` speisen zusätzlich sofort ihr jeweiliges
+  Report-Panel, um einen weiteren Result-Abruf zu sparen. Der Verlaufseintrag merkt seit v5.8 zusätzlich den Account,
   in dessen Kontext die Query lief (`e.account`) — im `settlement`-Modus kann das ein anderer
   als der konfigurierte Account sein (Super-User). **Nur dort**: `historyEintragBauen` setzt
   `account` ausschliesslich bei `mode === 'settlement'`, analog zu `aktiverAccount()` (siehe
@@ -506,8 +1014,8 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
 ### SQL-Erzeugung
 
 - `buildBrandQuery`, `buildTerminalQuery`, `buildExportQuery`, `buildCardQuery`,
-  `buildSettlementQuery` sind reine Funktionen (Input-Objekt → SQL-String) — bewusst so
-  gehalten, damit sie ohne DOM testbar sind.
+  `buildSettlementQuery`, `buildReportingQuery` sind reine Funktionen (Input-Objekt →
+  SQL-String) — bewusst so gehalten, damit sie ohne DOM testbar sind.
 - `txCte({ spaceIds, start, end })` grenzt die Transaktionen (Space + Zeitraum + Status)
   einmal gemeinsam ein; `card`-, `settle`- und `payoutref`-CTE im Transaktions-Export filtern
   darüber, statt die teuren Joins über die gesamte Tabellenhistorie laufen zu lassen.
@@ -517,12 +1025,23 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
   `spaceIds`-Parameter mehr) und baut sein eigenes, kleineres `tx`-CTE (nur Zeitraum +
   Status, kein Space-Filter) sowie ein eigenes `settle_tx`-CTE inline auf. Kein Join mehr auf
   `currentaccountwithdrawal` (ausser bei aktiver Referenz-Option, seit v5.9 — siehe
-  „Settlement-Report" oben).
+  „Settlement-Report" oben). **`buildReportingQuery` nutzt `txCte` ebenfalls nicht** — es
+  filtert auf `t.completedon` und `t.state`, der Reporting-Modus auf `ca.createdon` und ohne
+  Statusfilter; sein eigenes, sehr schmales `tx`-CTE (nur `DISTINCT c.transaction_id` aus
+  den Attempts des Zeitraums) existiert allein, damit `tipCte` unverändert darauf aufsetzen
+  kann. `cardCte` wird dort nicht verwendet — die Labels holt `labelExpr(id, key)` direkt,
+  nach demselben `element_at(filter(...))`-Muster, aber mit explizitem, descriptorabhängigem
+  Map-Key (siehe „Reporting-Report" oben).
 - `spaceInClause(ids, col)`: 0 Spaces → `col = -1 -- BITTE ... AUSWÄHLEN` (Query läuft leer
   statt zu crashen), 1 Space → `=`, mehrere → `IN (...)`.
 - Zeitfilter immer auf `t.completedon` (Tagesabschluss, nicht Erstellung!) mit
-  `>= TIMESTAMP ... AND < TIMESTAMP ...`.
-- Statusfilter fix `t.state IN ('FULFILL', 'COMPLETED')`.
+  `>= TIMESTAMP ... AND < TIMESTAMP ...`. **Einzige Ausnahme: `buildReportingQuery`**
+  filtert auf `ca.createdon` — ein gescheiterter Charge Attempt hat kein `completedon`
+  (siehe „Sechs Modi", Punkt 6). Der Zeitraum-Picker bedeutet dort also etwas anderes als in
+  allen übrigen Modi.
+- Statusfilter fix `t.state IN ('FULFILL', 'COMPLETED')` — **ausser im Reporting-Modus**:
+  der zählt Versuche, auch gescheiterte, und filtert stattdessen fest auf
+  `ca.environment = 'PRODUCTION'`.
 - CTEs (in `buildExportQuery` je nach `needs*`-Flag, in `buildCardQuery` fest eingebaut;
   `buildSettlementQuery` hat seit v5.8 sein eigenes, nicht mit den folgenden geteiltes
   `settle_tx`-CTE, siehe „Fünf Modi" und „Settlement-Report" oben):
@@ -564,6 +1083,10 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
     `tip_total`** — der Modus wurde beim Umbau auf Account-Basis auf die Banktransaktions-
     Beträge reduziert (siehe „Settlement-Report" oben); Trinkgeld bleibt weiterhin über
     `brand`, `terminal` und den Transaktions-Export einsehbar.
+    **`buildReportingQuery` nutzt seit v5.11 dasselbe `tipCte` unverändert** (Spalte
+    `summe_tip`, KPI P3) — mit einem eigenen `tx`-CTE als Unterbau und einem zusätzlichen
+    `CASE WHEN ca.state = 'SUCCESSFUL'`-Guard, weil dort die Attempt-Körnigkeit eine zweite
+    Ausprägung desselben Fallstricks erzeugt (siehe „Reporting-Report" oben).
     **Zentraler Fallstrick:** Eine Transaktion hat mehrere Line Items. `lineitem` darf
     **niemals** direkt ins `FROM`/`JOIN` der Aggregat-Modi (`brand`, `terminal`) gehängt
     werden — das vervielfacht die Zeilen pro Transaktion und macht `COUNT(*)`,
@@ -698,8 +1221,12 @@ CI-Aufwand). Sicherheitsmodell unverändert: Bind nur `127.0.0.1`, Secret lokal 
     wartet über `WALLEE_RESTART_DELAY_MS` (vom Elternprozess auf `1200` ms gesetzt), bis der
     alte Prozess seinen Port sicher freigegeben hat, bevor er selbst `listen()` aufruft.
   - Reine Funktionen (`tagValide`, `updatePfad`, `sanityHtml`, `sanityProxy`,
-    `ladeUndSchreibeUpdate`, `starteNeustart`) sind getestet, u. a. gegen einen gestubbten
-    `fetch` (`test/self-update.test.js`).
+    `ladeUndSchreibeUpdate`) sind getestet, u. a. gegen einen gestubbten `fetch` — **alle in
+    `test/proxy.test.js`**, zusammen mit `POST /update` am Route-Dispatch und der
+    Header-Abweisung. `test/self-update.test.js` enthält nur `istNeuer` (die App-Seite des
+    Vergleichs), nicht die Proxy-Seite des Updates. **`starteNeustart` ist nicht getestet** —
+    die Funktion startet einen detached Kindprozess und beendet den eigenen, das lässt sich
+    im Test-Runner nicht ohne Nebenwirkung ausführen.
 - **Missbrauchsschutz** (ein lokaler Server ist von jeder offenen Webseite erreichbar):
   Bindung nur auf `127.0.0.1`; Herkunft nur `null` (per `file://` geöffnete App) und die
   eigenen Proxy-Origins, **nie** `*`; zusätzlicher Header `X-Wallee-Proxy`, den eine fremde
@@ -748,6 +1275,16 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
   - Masked Card Number: `1456765125779` (Konstante `DESC_MASKED_CARD`)
   - Authorization Code: `1579287795628` (Konstante `DESC_AUTH_CODE`) — leer bei TWINT
   - PAR: `1739873828282` · Expiry (yearMonthContent): `1456765711187`
+  - **Card Holder Name: `1456765000789`** — Klartext-Name, **PII**. Zusammen mit der Masked
+    Card Number die Sperrliste des Reporting-Modus (SPEC 9); beide dürfen dort nie
+    vorkommen, auch nicht in einem `GROUP BY`.
+  - Die Descriptors des Reporting-Modus (Issuer-Land, Kartentyp, Kartenkategorie,
+    Ablehncodes, 3DS, ECI, PAN-Typ, DCC) stehen mit ihren **Map-Keys** in der Tabelle unter
+    „Reporting-Report" oben.
+  - **Der Map-Key ist descriptorabhängig** — `shortTextContent` ist nur der häufigste Fall,
+    daneben kommen `countryContent`, `dateTimeContent`, `longTextContent`,
+    `staticValueContent`, `integerContent`, `yearMonthContent` vor. Ein falscher Key wirft
+    nicht, er liefert dauerhaft `NULL`.
   - Nachschlagen: `https://app-wallee.com/en-us/doc/api/label-descriptor/view/<ID>`
 - **Sales-Channel-IDs:** Ecommerce `1582816223150`, Physical Terminal `1582819151330`.
 - **Terminal-Liste:** `GET /api/v2.0/payment/terminals`, Header `Space: <id>` (nicht
@@ -842,8 +1379,81 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     (SPEC 2.2). An den Referenzdaten hält die Heuristik: jedes `(spaceid, valuedate)`-Paar
     bildet auf **genau eine** Referenz ab (über alle 82 Settlements geprüft). Wer die
     Kosten sparen will, schaltet die Checkbox ab — der Report degradiert dann sauber.
+- **Charge-Attempt-Befunde (Task 0, v5.11) — bisher beobachtet, nicht „gibt es nicht".**
+  Grundlage sind **zwei** Spaces über **einen** Monat: POS **Space 40402** (12'537 Attempts)
+  und E-Commerce **Space 12622** (1'855 Attempts), jeweils **Juli 2026**, ausgewertet mit
+  `dashboard/sql/00_label_discovery.sql` und `00b_ecom_discovery_12622.sql`; die Rohdaten und
+  die Auswertung liegen in `dashboard/discovery-results/DESCRIPTORS.md` (nicht im Git). Ein
+  anderer Space, ein anderer Acquirer oder eine Schema-Änderung kann das verschieben — dann
+  sind die Discovery-Queries erneut zu fahren.
+  - **`ca.state` kam nur als `SUCCESSFUL` und `FAILED` vor — kein `PENDING`, in keinem der
+    beiden Spaces.** Der Code behandelt `PENDING` trotzdem defensiv (eigener Zähler „offen",
+    aus allen Quoten heraus), und ein unbekannter Zustand landet sichtbar im Eimer
+    `sonstige`. Success Rate im Referenzmonat: POS 98.6 %, E-Com 91.3 %.
+  - **`environment` war durchgehend `PRODUCTION`**, `customerspresence` am POS durchgehend
+    `PHYSICAL_PRESENT`, im E-Com `VIRTUAL_PRESENT`.
+  - **Abdeckung der Karten-Labels ≈ 89 % am POS** (11'193 von 12'537). Der Nenner von
+    K5/K6/P1/P7 ist deshalb „Karten-Attempts", nicht „alle Attempts". **Achtung, hier stand
+    bis zum Referenzlauf ein Fehlschluss:** „das sind exakt die Karten-Brands". Label-
+    Abdeckung und `KARTEN_BRANDS` fallen **nicht** zusammen. Gemessen am Referenzlauf:
+    `PostFinance Card` trug am POS auf **1'097 von 1'113** Attempts Issuer-Land, Funding
+    und Kartenkategorie, stand aber nicht in der Liste — die Label-Menge (11'193) war
+    damit **959 Attempts grösser** als die Listen-Menge (10'234 = 81.6 %), und K5/K6/P1/P7
+    liessen rund 1'098 Attempts liegen, die genau die Labels trugen, die sie messen.
+    Seither steht `PostFinance` in `KARTEN_BRANDS`. **Was sich dadurch verschiebt**
+    (am Referenzlauf nachgerechnet): POS-Kartenbasis 10'234 → **11'347** Attempts bzw.
+    10'096 → **11'193** erfolgreiche, E-Com 422 → **427** bzw. 378 → **383**. Von den
+    ausgewiesenen Kennzahlen bewegt sich **eine**: `tds.angefordertAnteil` im E-Commerce
+    73.5 % → **72.6 %** — derselbe Zähler (310), ein um 5 grösserer Nenner. Die
+    3DS-Akzeptanz E1 bleibt bei **90.6 %** (281/310), weil die neuen Attempts kein 3DS
+    starten, und die vier `tds`-Eimer summieren vorher wie nachher **restlos** auf die
+    Karten-Attempts. **Label-los sind** TWINT, Lunch Check, Reka, Boncard und
+    PowerPay Invoice — auf **keinem** ihrer Attempts ein Karten-Label.
+    **Und es ist kanalabhängig:** dieselbe Marke trug im E-Commerce auf keinem ihrer
+    4 Attempts ein Label. Sie zählt dort trotzdem zur Kartenbasis und landet sichtbar in
+    den `UNKNOWN`-Eimern bzw. in `NOT_REQUESTED` — „kein Label" ist eine Messung, „nicht
+    gezählt" wäre keine.
+  - **Issuer Country ist ISO-2** (POS 76 Länder, CH 83 %; E-Com CH 91 %) — Map-Key
+    `countryContent`, **nicht** `shortTextContent`. Funding: POS 68 % Debit, E-Com 26 %.
+  - **Card category kennt 37 Produktwerte**; `KARTEN_BUSINESS_REGEX` deckt davon 14 ab
+    (POS: 107 von 11'193 = 1.0 %). `NOT_SPECIFIED` ist häufig (POS 14 %, E-Com 35 %) und
+    zählt als `UNKNOWN`, nie als `PRIVATE`.
+  - **`ca.tokenversion_id` war durchgehend `NULL`** — „tokenisiert" lässt sich darüber nicht
+    messen. Ersatz und Quelle von KPI E6 ist deshalb das Label **Pan Type**
+    (`1634723429555`, `DEVICE_TOKEN_APPLE_PAY`, `SCHEME_TOKEN_CLICK_TO_PAY`, … 5 Werte).
+  - **Authorization Method (`1761481788939`) ist unbrauchbar** und deshalb bewusst **keine**
+    Konstante: der Map-Key ist `staticValueContent`, der Wert eine Static-Value-ID, und im
+    ganzen Monat kam an POS **und** E-Com nur dieser eine Wert vor. KPI P5
+    (Kontaktlos/Chip/Magnetstreifen) entfällt damit.
+  - **3-D Secure schreibt der Connector anders als die Doku-Übersicht vermuten lässt:** es
+    gibt **keine** „Authenticated / Status / Liability Shift"-Labels. Vorhanden sind Process
+    Started (`1568637480278`, `dateTimeContent`, 310 von 424 Karten-Attempts = 73 %),
+    Process Finished (`1568637885195`, 310), CAVV (`1569496536590`, `longTextContent`, 281)
+    und Cryptogram ECI (`1634723429552`, 113, Wallet-/Token-Attempts). Daraus die vier
+    `tds_status`-Werte; 3DS-Akzeptanz im Referenzmonat 281/310 = 90.6 %, was sich mit den
+    29 Attempts der Failure Reason „3-D Secure Failure" deckt.
+  - **`wallet` ist am POS immer leer, im E-Com gefüllt** (Apple Pay, Google Pay, Click To
+    Pay; 195 von 424 Karten-Attempts = 46 %) — Namen über `wallettype.name['en-US']`.
+  - **`failurereason` ist am POS grob** (nur 2 Werte: „Transaction declined" 158,
+    „Automatically cancelled" 14) und im E-Com differenziert (u. a. Cancellation Initiated
+    by User 50, Authorization Canceled by Scheme 38, 3-D Secure Failure 29). Der
+    **Authorization Response Code** ist am POS die feinere Achse (14 Werte, `00`…`Z3`).
+  - **DCC ist sichtbar**, aber selten: 2 von 12'537 Attempts (EUR, SEK).
+  - **Retry ist am POS praktisch inexistent** (12'507 Transaktionen mit 1 Attempt, 15 mit 2)
+    — im E-Commerce ist er der eigentliche Grund für die Attempt-Basis.
+  - **Beträge:** `t.authorizationamount` ist auch bei `FAILED` gefüllt (Ø 24.04),
+    `t.completedamount` bei `FAILED` 0; bei `SUCCESSFUL` sind beide identisch (Ø 20.98).
+    Daher `completedamount` für den Umsatz und `authorizationamount` für den
+    „Ø abgelehnten Betrag".
+- **Es gibt keinen Failure-Reason-Dienst in der wallee-Web-Service-API.** 98 Services in
+  Doku und Java-SDK, keiner davon; beide Kandidatenpfade antworten mit einer HTML-404;
+  `static-values` kennt die IDs nicht; das Analytics-Schema hat keine Nachschlagetabelle.
+  Details und die vollständige Beweiskette stehen unter „Reporting-Report" oben und in
+  `.superpowers/sdd/PLAN/task-6-report.md` — **den Endpunkt nicht erneut suchen**.
 - **Grenzen der Analytics** (nicht lösbar, dem Kunden so kommunizieren):
   - Keine IC++-Aufschlüsselung (DCC/Interchange/Scheme/Acquirer) — nur `totalappliedfees` gesamt.
+  - **Keine Chargebacks/Disputes** — es gibt keine Analytics-Tabelle dafür. Betrifft den
+    Reporting-Modus, der sonst der natürliche Ort dafür wäre.
   - Eine Query läuft in **einem** Account; Spaces fremder Accounts → Permission Error.
     Multi-Space geht nur innerhalb desselben Accounts.
 - Queries laufen asynchron; jede Ergebnis-URL-Generierung wird als Download gezählt.
@@ -875,20 +1485,46 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    seit v5.10 gegen das Spec-Modell: Settlement-Grain, Bankgutschriften, Space-Kapitel),
    `betriebsmodus`/`api-anbindung` (Modi, Health, Submit-Poll-Result), `terminal-sync`/
    `terminal-labels` (Terminal-Synchronisierung, Label-Auflösung), `tip_unsettled`
-   (Trinkgeld/Unsettled-Zähler), `proxy` (reine Proxy-Funktionen inkl. JWT gegen RFC-7515
-   und die Account-Header-Logik), `self-update` (`istNeuer`, `tagValide`, `updatePfad`,
-   Sanity-Checks, `ladeUndSchreibeUpdate` gegen gestubbten `fetch`, `POST /update` am
-   Route-Dispatch), `embedding`/`dom-ids` (Struktur-/ID-Wächter).
+   (Trinkgeld/Unsettled-Zähler), `proxy` (reine Proxy-Funktionen inkl. JWT gegen RFC-7515,
+   die Account-Header-Logik **und die gesamte Proxy-Seite des Self-Updates**: `tagValide`,
+   `updatePfad`, `sanityHtml`/`sanityProxy`, `ladeUndSchreibeUpdate` gegen gestubbten
+   `fetch`, `POST /update` am Route-Dispatch und dessen Header-Abweisung), `self-update`
+   (**nur** `istNeuer` — der Versionsvergleich auf der App-Seite; der Dateiname ist
+   irreführend, der Rest des Self-Updates steht in `proxy`),
+   `reporting-queries`/`reporting-model`/`reporting-export`/
+   `reporting-render`/`reporting-ui`/`reporting-xlsx` (Reporting-Modus seit v5.11: SQL inkl.
+   Descriptor-IDs, PII-Sperrliste, GROUP-BY-Listen und typisierten UNION-Platzhaltern ·
+   **Parser und Modell zusammen** in `reporting-model` · Export-Blöcke · Render, SVG-Balken,
+   CSV/PDF-Blöcke, Verlaufszeile · State/Panels/`generate()`/Ingest · XLSX end-to-end),
+   `embedding`/`dom-ids` (Struktur-/ID-Wächter).
+   Die Reporting-Tests laufen gegen `test/fixtures/reporting-beispiel.csv` — eine
+   **synthetische**, deterministisch erzeugte Fixture
+   (`test/fixtures/generate-reporting-beispiel.mjs`, fest verankerte Summen). **Inhalt
+   erfunden, Schreibweise gemessen:** seit dem Referenzlauf vom 2026-09-01 ist ihr Format
+   Feld für Feld gegen die echte Athena-Ausgabe abgeglichen — NULL als **unquotiertes**
+   Leerfeld (`,,`, nie `""`), jeder vorhandene Wert in Anführungszeichen (auch Zahlen und
+   Booleans), acht Nachkommastellen, `true`/`false`, `yyyy-mm-dd`, Stunde ohne führende
+   Null, LF, kein BOM, und die Zeilenreihenfolge des `ORDER BY` (Blöcke CONV, DIM, TIME).
+   Zählwerte, Beträge und die Space-IDs (90001/90002) bleiben **erfunden** — das Repo ist
+   öffentlich, aus den Referenzdaten darf kein Wert hierher wandern. Nicht belegt sind
+   negative Beträge, `PENDING` und der dritte Verkaufskanal: die kamen in beiden Spaces
+   nicht vor, die Fixture führt sie als Struktur, weil der Code sie behandelt. Umgekehrt
+   bildet sie seit der `KARTEN_BRANDS`-Korrektur **beide Seiten** des Befunds ab, der die
+   frühere Annahme widerlegt hat: eine lokale Debitmarke **mit** Issuer-Labels am POS und
+   dieselbe Marke **ohne** Labels im E-Commerce.
    **Einschränkung:** Der einfache Stub liefert für **jede** ID irgendein Element — eine
    verwaiste DOM-Referenz fällt so nicht auf. `test/dom-ids.test.js` gleicht deshalb die per
    `getElementById` angefragten IDs statisch gegen das Markup ab; nach UI-Änderungen bleibt
    der Test die Absicherung.
 3. Generiertes SQL idealerweise einmal real laufen lassen — im Portal (*Account > Analytics >
    Submit Query*) oder im API-Modus über den Proxy.
-4. Version im `<h1>`-Badge und Subtitle **sowie** in `APP_VERSION` (sowohl in
+4. Version im `<h1>`-Badge **sowie** in `APP_VERSION` (sowohl in
    `wallee_query_builder.html` als auch in `wallee-proxy.mjs` — beide Dateien tragen
    dieselbe Versionsnummer, siehe Kommentar über `APP_VERSION` im Proxy) nachführen; bei
-   State-Bruch `STORAGE_KEY` erhöhen. Der Proxy hat seine eigenen Tests
+   State-Bruch `STORAGE_KEY` erhöhen. Die `<p class="subtitle">` darunter trägt **keine**
+   Versionsnummer, sondern die Aufzählung der Modi und Merkmale — sie ist mitzuführen, wenn
+   ein Modus oder ein Merkmal dazukommt. Ebenso `README.md` (Kopfzeile „Aktuelle Version"
+   und Modus-Tabelle). Der Proxy hat seine eigenen Tests
    (`test/proxy.test.js`); Änderungen an der API-Anbindung möglichst am gestubbten
    `fetch`/an der ausgehenden Anfrage prüfen, nicht erst live.
 
@@ -899,7 +1535,8 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
   **beide** Aufrufer: den Transaktions-Export und wieder den Settlement-Modus, wo die Referenz
   die Bankgutschriften trägt (siehe „Wallee-Referenzwissen"). Ein direkter Fremdschlüssel
   würde dort die letzte verbleibende Unschärfe des Reports beseitigen.
-- **Offen aus SPEC 1.2 / GAP-ANALYSIS G3+G4:** Die Query filtert weiterhin auf
+- **Offen aus SPEC 1.2 / GAP-ANALYSIS G3+G4** (`settlement-report-spec/`, nicht
+  `dashboard/SPEC.md`)**:** Die Query filtert weiterhin auf
   `t.completedon` (Transaktionsdatum), die Spec verlangt für den Report eigentlich einen
   Filter auf **`valuedate`**. Solange nach Transaktionsdatum gefiltert wird, ist der letzte
   Settlement-Tag am Rand des Zeitraums unvollständig — die App fängt das ab, indem sie diese
@@ -924,6 +1561,90 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
 - Refund-Berücksichtigung (`- SUM(t.refundedamount)`) als Option.
 - Country-Breakdown.
 - Status-Auswahl im Export (aktuell fix FULFILL/COMPLETED) z. B. für FAILED-Analysen.
+- **Reporting-Modus (v5.11) — Abnahme und Offenes** (die fachliche Abnahme nach SPEC §8 ist
+  seit 2026-09-02 **abgeschlossen**, siehe die ersten Punkte; offen ist nur, was darunter
+  ausdrücklich als offen steht):
+  - **Der Referenzlauf hat am 2026-09-01 stattgefunden** — beide Referenz-Queries
+    (`dashboard/sql/01_reporting_reference.sql` und die Terminal-Variante `01b`) liefen im
+    Portal fehlerfrei über **Spaces 40402 + 12622, Juli 2026**, also dieselben zwei Spaces
+    und denselben Monat wie Task 0. **Belegt ist damit:** die typisierten
+    `UNION ALL`-Platzhalter halten, alle elf Descriptors lösen auf (keine Kennzahl steht
+    pauschal auf „Unbekannt"), der `tip`-Join trägt, und die Zahlen reproduzieren die
+    Task-0-Werte — POS 12'537 Attempts bei 98.63 % Erfolg, E-Com 1'855 bei 91.32 %,
+    3DS-Akzeptanz 281/310 = 90.6 %, DCC 2 Attempts, 14 POS-Ablehncodes `00`…`Z3`,
+    Retry-Rate POS 1.001, 10 Terminals in der `01b`-Variante; die Herkunfts-Eimer
+    summieren exakt auf die Kartenbasis. Der Parser meldete **0 unbrauchbare Werte und 0
+    unbekannte Blöcke**. *Kleine Abweichung, damit „reproduziert" nicht mehr verspricht,
+    als es hält:* Task 0 notierte als 3DS-Kartenbasis 424, der Lauf ergibt 422 (beides
+    rundet auf 73 % Angefordert-Anteil); nach der `KARTEN_BRANDS`-Korrektur sind es 427.
+    Wie überall in diesem Abschnitt: **ein Monat in zwei Spaces bei einem Acquirer** —
+    „bisher beobachtet", nicht „gilt immer".
+  - **Der Lauf hat auch etwas widerlegt** — dass Label-Abdeckung und `KARTEN_BRANDS`
+    dasselbe seien. `PostFinance` steht seither in der Liste; Belege und Zahlen unter
+    „Wallee-Referenzwissen". Das ist die einzige Code-Änderung, die aus dem Lauf folgte.
+  - **Gemessene Lücke in `FAILURE_REASONS`:** der Lauf zeigt im E-Commerce **9** verschiedene
+    `failure_reason_id`, die Tabelle trägt für den Kanal **5** — die übrigen **4** erscheinen
+    als `#<id>`. Das ist kein Fehler (die Tabelle führt bewusst nur belegte Namen, und
+    einen Failure-Reason-Dienst gibt es nicht, siehe oben), aber eine konkrete, nachtragbare
+    Lücke: die Namen lassen sich einzeln über
+    `GET /api/v2.0/payment/charge-attempts` an einem Attempt mit der jeweiligen ID ablesen.
+    Am POS ist die Tabelle mit 2 von 2 IDs vollständig.
+  - **SPEC 8.3 ist gegengerechnet — die fachliche Abnahme ist damit abgeschlossen**
+    (2026-09-02, Nachweis `dashboard/discovery-results/ABNAHME.md`, gitignored). Der
+    `brand`-Modus lief über **dieselben zwei Spaces 40402 + 12622 im Juli 2026** wie der
+    Referenzlauf; verglichen wurde die Zahlungsmittel-Verteilung **nach Betrag** für die
+    erfolgreichen Attempts. Ergebnis: **im E-Commerce stimmen beide Modi exakt überein**
+    — 0.000 %, jede Marke auf den Rappen, gleiche Transaktionszahl —, **am POS weicht
+    das Reporting um −1.102 % ab** (über beide Spaces zusammen −0.594 %); die Abweichungen
+    je Marke sind klein und **beidseitig** (neben der einen ganz fehlenden Marke grösste
+    relative 2.6 %, mehrere Marken exakt).
+    **Die Kanal-Asymmetrie ist die eigentliche Aussage und zugleich der Beleg für die
+    Ursache:** derselbe Code, dieselbe Arithmetik — nur der Kanal weicht ab, in dem
+    Autorisierung und Verbuchung auseinanderfallen. Am POS schliesst eine spät am
+    Monatsletzten autorisierte Transaktion wegen Trinkgeld-Anpassung und Tagesabschluss
+    erst am Folgetag ab, wandert also über den Zeitraumrand; im E-Commerce fallen Versuch
+    und Abschluss zusammen. Dazu kommen zwei kleinere Unterschiede: `brand` filtert
+    zusätzlich auf `t.state IN ('FULFILL','COMPLETED')`, und die Marke stammt im
+    Reporting aus `ca.connectorconfiguration` statt aus
+    `t.paymentconnectorconfiguration_id` (SPEC 3.1) — Letzteres erklärt am ehesten die
+    eine Marke, die im `brand`-Ergebnis in abweichender Schreibweise auftaucht und im
+    Reporting gar nicht.
+    **Praktische Folge, so dem Kunden zu sagen: der Reporting-Report ist kein Werkzeug
+    zur Umsatz-Abstimmung.** Dafür nimmt der Händler `brand` oder `settlement`;
+    `reporting` misst **Zahlungsversuche**, und seine Umsatzzahl ist „Umsatz der
+    erfolgreichen Versuche im Versuchs-Fenster".
+    **Was damit nicht behauptet ist:** die Beträge je Marke sind **nicht** transaktions-
+    weise zurückverfolgt — festgestellt sind Richtung, Grössenordnung, Kanal-Asymmetrie
+    und Mechanismus, nicht die Herkunft jedes einzelnen Frankens. Und wie überall in
+    diesem Abschnitt: **ein Monat, zwei Spaces, ein Acquirer** — „bisher beobachtet",
+    nicht „gilt immer"; ein anderes POS-Setup kann eine andere Randabweichung zeigen.
+    8.1, 8.2, 8.4 und 8.6 sind durch den Referenzlauf gedeckt.
+    **8.5 war keine offene Prüfung, sondern ein Widerspruch in der Spec:** sein Nenner
+    („alle Karten-Attempts mit 3DS-Status ≠ `NOT_REQUESTED`") ist
+    `AUTHENTICATED + FAILED_OR_ABANDONED + WALLET_CRYPTOGRAM` und ergibt am Lauf
+    281/423 = 66.4 %, während SPEC 4.3 für dieselbe Kennzahl `AUTHENTICATED /
+    (AUTHENTICATED + FAILED_OR_ABANDONED)` = 281/310 = 90.6 % verlangt — genau das, was
+    der Code rechnet und was 4.3 selbst zitiert. Die dritte Grösse ist der
+    Angefordert-Anteil. `dashboard/SPEC.md` §8.5 ist auf 4.3 korrigiert. Die
+    Doppelzählungs-Hälfte von 8.5 ist erfüllt und geprüft: `klassifiziereTds` vergibt je
+    Zeile genau einen Wert, die vier Eimer summieren restlos auf die Karten-Attempts.
+  - **Die Fixture ist an die echte Schreibweise angeglichen** (siehe
+    „Entwicklungs-Workflow"): NULL steht jetzt als unquotiertes Leerfeld, die
+    Zeilenreihenfolge folgt dem `ORDER BY` der Query. Sollte ein anderer Connector oder
+    eine Schema-Änderung die Formate doch verschieben, meldet der Parser das selbst —
+    steht in der Statuszeile „… Werte im unerwarteten Format", dann die Muster
+    `REPORTING_MUSTER_BETRAG`/`REPORTING_MUSTER_ZAHL` bzw. `parseBool` nachziehen und die
+    Fixture umstellen, nicht den Hinweis wegdrücken.
+  - **Conversion und Retry-Rate auf Kanal-Ebene** bleiben eine Obergrenze; exakt würden sie
+    erst mit einem vierten Query-Block ohne Brand-Gruppierung.
+  - Aus SPEC 4.4 bewusst **nicht** in v5.11: Vorperioden-Vergleich, Billing-Land ≠
+    Issuer-Land als Fraud-Signal (bräuchte `t.billingaddress` → PII-Abwägung), wiederkehrende
+    Karten über PAR (`1739873828282`, 38 % Abdeckung — „Stammkunden-Anteil" am POS),
+    Benchmark gegen den wallee-Durchschnitt (account-übergreifend, in einer Händler-Query
+    nicht möglich).
+  - Sollte wallee den **Failure-Reason-Dienst** je veröffentlichen, ersetzt er die statische
+    `FAILURE_REASONS`-Tabelle (das Modell existiert in der API, nur der Dienst fehlt) —
+    Nachfrage bei wallee wäre der Weg, erneutes Pfad-Raten nicht.
 
 ## Kontext
 

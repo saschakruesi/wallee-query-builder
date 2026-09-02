@@ -365,6 +365,36 @@
   .report-table tr.subtotal td { font-weight: 600; background: var(--panel-2); }
   .report-table tr.grand td { font-weight: 700; border-top: 2px solid var(--accent); }
   .report-output { margin-top: 10px; }
+
+  /* Reporting-Report: Kanal-Abschnitte, KPI-Kacheln und Balken. Alle Farben
+     ueber die :root-Variablen - auch im SVG, das seine Flaechen ueber
+     fill="var(--accent)" faerbt. */
+  .report-kanal {
+    margin: 26px 0 6px; font-size: 14px; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--accent-dark); font-weight: 700;
+    border-bottom: 2px solid var(--accent); padding-bottom: 4px;
+  }
+  .kpi-kacheln { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .kpi-kachel {
+    flex: 1 1 140px; min-width: 140px; background: var(--panel-2);
+    border: 1px solid var(--panel-3); border-radius: 8px; padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .kpi-label {
+    font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .kpi-wert {
+    font-size: 17px; font-weight: 600; color: var(--accent-dark);
+    font-variant-numeric: tabular-nums;
+  }
+  .balken-block { margin: 12px 0 0; }
+  .balken-block figcaption { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .balken { display: block; background: var(--panel-2); border-radius: 4px; }
+  .balken-achse {
+    display: flex; justify-content: space-between; font-size: 11px;
+    color: var(--muted); margin-top: 2px;
+  }
+
   .report-block { margin-top: 26px; }
   .report-block h3 { margin: 0 0 2px; font-size: 15px; }
   .report-outlet { margin-top: 16px; }
@@ -533,6 +563,14 @@
   }
   .check-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
   .check-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  /* Kanal-Wahl im Reporting-Modus - die einzige Radio-Gruppe der App. */
+  .radio-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .radio-row label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 14px; }
+  .radio-row input[type="radio"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  /* Bewusst nur auf die eine neue Statuszeile gemuenzt: die Statuszeilen von
+     Terminal- und Settlement-Report sollen sich nicht mit aendern. */
+  #reportingStatus[data-art="fehler"] { color: var(--danger); }
+  #reportingStatus[data-art="erfolg"] { color: var(--accent-dark); }
   .item-info {
     flex: 1;
     display: flex;
@@ -736,7 +774,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.10.1</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.11.0</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -746,7 +784,7 @@
       </svg>
     </button>
   </div>
-  <p class="subtitle">Brand-Auswertung · Terminal-Report (XLSX) · Transaktions-Export · Kartensuche · Settlement-Report (Account, PDF/XLSX) · Kopieren- oder API-Modus mit Abfrage-Verlauf · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
+  <p class="subtitle">Brand-Auswertung · Terminal-Report (XLSX) · Transaktions-Export · Kartensuche · Settlement-Report (Account, PDF/XLSX) · Reporting (Händler-KPIs, POS/E-Com, PDF/XLSX) · Kopieren- oder API-Modus mit Abfrage-Verlauf · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
 
   <div class="panel">
     <h2>Modus</h2>
@@ -756,6 +794,7 @@
       <button class="mode-btn" data-mode="export">Transaktions-Export</button>
       <button class="mode-btn" data-mode="card">Kartensuche</button>
       <button class="mode-btn" data-mode="settlement">Settlement / Auszahlung</button>
+      <button class="mode-btn" data-mode="reporting">Reporting</button>
     </div>
     <p class="hint cond-section" id="tipUnsettledHint" style="margin-top:8px;margin-bottom:0;">
       <code>tip_total</code>: Trinkgeld-Anteil der Transaktionen (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.
@@ -1009,6 +1048,41 @@
     <p class="hint" style="margin-top:6px;margin-bottom:0;">Führt je Settlement die Auszahlungsreferenz (wie auf dem Bank Statement) mit und gruppiert die Settlements zu <strong>Bankgutschriften</strong> für den Kontoauszug-Abgleich. Braucht einen teureren Join auf die Auszahlungen — bei Bedarf abschaltbar. Wirksam ab der nächsten Abfrage.</p>
   </div>
 
+  <!-- Reporting (v5.11): Kennzahlen auf Basis der Zahlungsversuche
+       (Charge Attempts), nicht der Transaktionen. Space-Panel und
+       Zeitraum-Picker gelten wie im brand-Modus. -->
+  <div class="panel cond-section" id="reportingSection">
+    <h2>Reporting</h2>
+    <p class="hint" style="margin-top:-8px;margin-bottom:14px;">Gezählt wird der <strong>Zahlungsversuch</strong> (Charge Attempt), nicht die Transaktion: im E-Commerce entsteht eine Transaktion schon beim Befüllen des Warenkorbs, eine Erfolgsquote auf Transaktionen wäre systematisch falsch. Ausgewertet werden nur produktive Versuche (<code>environment = PRODUCTION</code>). Die Query liefert bereits verdichtete Zählwerte — keine personenbezogenen Daten, deshalb lässt sich das Ergebnis im Kopieren-Modus auch als CSV importieren.</p>
+
+    <div class="field">
+      <label class="feld-label">Kanal</label>
+      <div class="radio-row">
+        <label><input type="radio" name="reportingChannel" id="reportingChannelPos" value="POS" /><span>POS (Terminal)</span></label>
+        <label><input type="radio" name="reportingChannel" id="reportingChannelEcom" value="ECOM" /><span>E-Commerce</span></label>
+        <label><input type="radio" name="reportingChannel" id="reportingChannelBoth" value="BOTH" checked /><span>Beide</span></label>
+      </div>
+      <p class="hint" style="margin-top:6px;margin-bottom:0;">Bei <em>Beide</em> filtert die Query bewusst gar nicht nach Kanal — so bleibt ein Versuch mit einem dritten Verkaufskanal als eigener Abschnitt <em>Andere</em> sichtbar, statt still herauszufallen.</p>
+    </div>
+
+    <div class="field" style="max-width:220px;">
+      <label class="feld-label" for="reportingMerchantCountry">Händler-Land (ISO-2)</label>
+      <input id="reportingMerchantCountry" type="text" maxlength="2" placeholder="CH"
+             title="Zweibuchstabiger Ländercode des Händlers. Bestimmt, ob ein Kartenversuch als inländisch, europäisch oder international zählt." />
+    </div>
+    <p class="hint" style="margin-top:6px;">Grundlage der Herkunfts-Auswertung: Issuer-Land gleich Händler-Land = <em>Inländisch</em>, Issuer-Land in der Europa-Region = <em>Intra</em>, sonst <em>International</em>. Ohne Issuer-Label bleibt der Versuch <em>Unbekannt</em>.</p>
+
+    <hr class="section-divider" />
+
+    <label class="check-row">
+      <input type="checkbox" id="reportingByTerminal" />
+      <span>Terminal-Aufschlüsselung</span>
+    </label>
+    <p class="hint" style="margin-top:6px;margin-bottom:0;">Schlüsselt die Kennzahlen zusätzlich nach Terminal auf und blendet dafür das Terminal-Panel oben ein (dort lässt sich die Auswahl auch als Filter nutzen). Betrifft nur den POS-Anteil — E-Commerce-Versuche haben kein Terminal; bei Kanal <em>E-Commerce</em> ist die Option deshalb wirkungslos.</p>
+
+    <p class="hint" style="margin-top:14px;margin-bottom:0;"><strong>Zeitraum:</strong> Anders als in den übrigen Modi bezieht sich der Zeitraum hier auf den <strong>Zeitpunkt des Zahlungsversuchs</strong>, nicht auf den Abschluss der Transaktion — gescheiterte Versuche haben gar keinen Abschluss.</p>
+  </div>
+
   <div class="panel" id="sqlPanel">
     <div class="output-header">
       <span class="output-title">Abfrage <span class="badge" id="modeBadge">Brand</span></span>
@@ -1110,6 +1184,34 @@
     </div>
 
     <div id="settlementReportOutput" class="report-output"></div>
+  </div>
+
+  <!-- Ausgabe des reporting-Modus. Der CSV-Import steht bewusst AUSSERHALB von
+       reportingReportActions: die Aktionen erscheinen erst mit einem Modell,
+       der Import ist aber genau der Weg, ohne API zu einem Modell zu kommen
+       (Kopieren-Modus, SPEC 5 - unbedenklich, weil das Aggregat keine
+       personenbezogenen Daten traegt). -->
+  <div class="panel cond-section" id="reportingReportSection">
+    <h2>Reporting-Report</h2>
+    <p class="hint" id="reportingStatus" style="margin-bottom:0;"></p>
+
+    <div class="list-actions" style="margin-top:14px;">
+      <!-- Echter Button statt eines <label for>: ein Label ist nicht
+           fokussierbar und der versteckte Input steht in keiner Tab-Reihenfolge -
+           der Import waere sonst nur mit der Maus erreichbar, obwohl er im
+           Kopieren-Modus der einzige Weg zu Daten ist. Gleiches Muster wie beim
+           Konfigurations-Import des Terminal-Reports. -->
+      <button class="btn" id="reportingCsvImportBtn" title="Ergebnis-CSV aus dem Portal laden (Kopieren-Modus)">CSV importieren</button>
+      <input type="file" id="reportingCsvImport" accept=".csv,text/csv" class="hidden">
+    </div>
+
+    <div id="reportingReportActions" class="list-actions hidden" style="margin-top:8px;">
+      <button class="btn" id="reportingCsvBtn" title="Report als CSV herunterladen">CSV</button>
+      <button class="btn" id="reportingXlsxBtn" title="Report als Excel-Datei herunterladen">Excel</button>
+      <button class="btn btn-primary" id="reportingPdfBtn" title="Report als PDF herunterladen">PDF</button>
+    </div>
+
+    <div id="reportingReportOutput" class="report-output"></div>
   </div>
 
 </div>
@@ -1652,6 +1754,45 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const DESC_MASKED_CARD = '1456765125779';
   const DESC_AUTH_CODE   = '1579287795628';
 
+  // --- Reporting-Modus: Kanaele, Label-Descriptors, Umgebung --------------
+  // Sales-Channel-IDs (chargeattempt.saleschannel bzw.
+  // transaction.authorizationsaleschannel).
+  const SALES_CHANNEL_ECOM = '1582816223150';
+  const SALES_CHANNEL_POS  = '1582819151330';
+
+  // Nur echte Zahlungen zaehlen - Testtransaktionen verfaelschen jede Quote.
+  const ATTEMPT_ENVIRONMENT = 'PRODUCTION';
+
+  // Descriptor-IDs fuer den Reporting-Modus. Alle an Produktivdaten ermittelt
+  // (Task 0, dashboard/discovery-results/DESCRIPTORS.md) - NICHT raten: welche
+  // Labels ein Connector schreibt, ist connectorabhaengig, und ein falscher
+  // Descriptor liefert stumm NULL statt eines Fehlers. Der Map-Key ist
+  // ebenfalls descriptorabhaengig und steht als Kommentar dabei.
+  //
+  // Auch der Map-Key ist gemessen, nicht angenommen - und zwar dort, wo die
+  // Zusammenfassung in DESCRIPTORS.md ihn weglaesst, weil er dem Default
+  // entspricht. Belegstelle ist die Spalte `ohne_shorttext` der Discovery-Query
+  // Q2 (dashboard/sql/00_label_discovery.sql): sie zaehlt die Attempts, bei
+  // denen shortTextContent NULL ist. Fuer die vier Descriptors ohne Key-Vermerk
+  // unten steht dort 0, zusammen mit den erwarteten Werten - Ablehncode POS
+  // 14 Werte '00'..'Z3', Ablehncode E-Com 5 Werte, DCC 'EUR'/'SEK', Pan Type
+  // 5 Werte 'DEVICE_TOKEN_APPLE_PAY'..'SCHEME_TOKEN_CLICK_TO_PAY'. Zum
+  // Gegenbeispiel: dieselbe Spalte steht bei Issuer-Land, 3DS-Start und CAVV
+  // auf der vollen Attempt-Zahl bei 0 Werten - genau daran wurden ihre
+  // abweichenden Keys ueberhaupt erst erkannt.
+  const DESC_ISSUER_COUNTRY     = '1474552618629'; // Issuer Country, countryContent (ISO-2)
+  const DESC_CARD_TYPE          = '1474552618699'; // Issuer Card type, CREDIT/DEBIT
+  const DESC_CARD_CATEGORY      = '1474552618999'; // Issuer Card category, Produktname (Business/Privat)
+  const DESC_AUTH_RESPONSE_POS  = '1579287790513'; // Authorization Response Code (ISO-8583, POS), shortTextContent (Q2: ohne_shorttext = 0)
+  const DESC_AUTH_RESPONSE_ECOM = '15537739985478'; // Response Code des Processors (E-Commerce), shortTextContent (Q2: ohne_shorttext = 0)
+  const DESC_DCC_CURRENCY       = '1695119783358'; // DCC Cardholder Currency, shortTextContent (Q2: ohne_shorttext = 0) - nur Existenz
+  const DESC_PAN_TYPE           = '1634723429555'; // Pan Type (Klartext-PAN / Device-/Scheme-Token), shortTextContent (Q2: ohne_shorttext = 0)
+  const DESC_TDS_STARTED        = '1568637480278'; // 3-D Secure Process Started, dateTimeContent
+  const DESC_TDS_CAVV           = '1569496536590'; // 3-D Secure CAVV, longTextContent - NUR Existenz, nie der Wert
+  const DESC_ECI                = '1634723429552'; // Cryptogram Eci (02/05/06/07)
+  // Bewusst NICHT im Reporting-Modus verwendet (PII-Sperrliste, SPEC 9):
+  // 1456765000789 (Card Holder Name) und DESC_MASKED_CARD (Masked Card Number).
+
   // Line-Item-Typ fuer Trinkgeld (lineitem.type). Trinkgeld wird von wallee nicht
   // als Feld auf transaction gefuehrt, sondern als eigene Line-Item-Position.
   const TIP_LINEITEM_TYPE = 'TIP';
@@ -1703,6 +1844,22 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const settlementCsvBtn          = document.getElementById('settlementCsvBtn');
   const settlementXlsxBtn         = document.getElementById('settlementXlsxBtn');
   const settlementPdfBtn          = document.getElementById('settlementPdfBtn');
+
+  const reportingSection          = document.getElementById('reportingSection');
+  const reportingChannelPos       = document.getElementById('reportingChannelPos');
+  const reportingChannelEcom      = document.getElementById('reportingChannelEcom');
+  const reportingChannelBoth      = document.getElementById('reportingChannelBoth');
+  const reportingMerchantCountryEl = document.getElementById('reportingMerchantCountry');
+  const reportingByTerminalToggle = document.getElementById('reportingByTerminal');
+  const reportingReportSection    = document.getElementById('reportingReportSection');
+  const reportingStatus           = document.getElementById('reportingStatus');
+  const reportingReportActions    = document.getElementById('reportingReportActions');
+  const reportingReportOutput     = document.getElementById('reportingReportOutput');
+  const reportingCsvBtn           = document.getElementById('reportingCsvBtn');
+  const reportingXlsxBtn          = document.getElementById('reportingXlsxBtn');
+  const reportingPdfBtn           = document.getElementById('reportingPdfBtn');
+  const reportingCsvImport        = document.getElementById('reportingCsvImport');
+  const reportingCsvImportBtn     = document.getElementById('reportingCsvImportBtn');
   const terminalModeHint= document.getElementById('terminalModeHint');
   const tipUnsettledHint= document.getElementById('tipUnsettledHint');
   const reportSection   = document.getElementById('reportSection');
@@ -1834,6 +1991,13 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     // die Migration gar nicht erst durchlaeuft - sonst wuerde ein bewusstes
     // Abschalten beim naechsten Laden wieder ueberschrieben.
     settlementReferenceV510: true,
+    // Reporting (v5.11). 'BOTH' heisst bewusst "gar kein Kanalfilter", damit
+    // ein dritter Verkaufskanal als OTHER sichtbar bleibt (SPEC 7) - siehe
+    // reportingKanalFilter(). Das Haendler-Land treibt die Herkunfts-Einstufung
+    // (inlaendisch / Europa / international) und ist deshalb ein ISO-2-Code.
+    reportingChannel: 'BOTH',
+    reportingMerchantCountry: 'CH',
+    reportingByTerminal: false,
     userPresets: [],
     // Betriebsmodus (v4). Default ist bewusst der Kopieren-Modus: er braucht
     // keine Installation und ist damit das, was ohne Zutun funktioniert.
@@ -1882,6 +2046,15 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
           state.settlementReferenceV510 = true;
         }
         delete state.settlementByTerminal;
+        // Reporting (v5.11): rein additiv, kein STORAGE_KEY-Bump. Beide Werte
+        // werden nicht nur auf Vorhandensein, sondern auf Gueltigkeit geprueft:
+        // ein unbekannter Kanal wuerde in generate() still zum Vollfilter, und
+        // ein Land wie 'Schweiz' wuerde im Modell jede Karte auf UNKNOWN werfen
+        // (normLand akzeptiert nur ISO-2).
+        if (!REPORTING_KANAL_WAHL.includes(state.reportingChannel)) state.reportingChannel = 'BOTH';
+        state.reportingMerchantCountry =
+          normLand(state.reportingMerchantCountry) || REPORTING_DEFAULT_LAND;
+        state.reportingByTerminal = !!state.reportingByTerminal;
         // Migration: altes Einzelfeld spaceId -> spaces[]
         if ((!state.spaces || !state.spaces.length) && parsed.spaceId) {
           state.spaces = [{ id: String(parsed.spaceId), label: '', selected: true }];
@@ -1917,7 +2090,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         // deshalb gezielt dorthin statt auf brand zurueckzufallen.
         if (state.mode === 'report') state.mode = 'terminal';
         // Unbekannter Modus (z. B. aus einer aelteren Version) faellt auf brand zurueck.
-        if (!['brand','terminal','export','card','settlement'].includes(state.mode)) {
+        if (!['brand','terminal','export','card','settlement','reporting'].includes(state.mode)) {
           state.mode = 'brand';
         }
       }
@@ -2257,7 +2430,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.10.1';
+  const APP_VERSION = '5.11.0';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -3086,6 +3259,308 @@ LEFT JOIN paymentterminal pt
 ORDER BY settlement_valuedate, space_id, transaction_id;`;
   }
 
+  // --- SQL Generation: Reporting -----------------------------------------
+  // Haendler-KPIs (Success Rate, Zahlungsmittel-Mix, Karten-Herkunft, 3DS) auf
+  // Basis der CHARGE ATTEMPTS - nie der Transaktionen: im E-Commerce entsteht
+  // eine Transaktion schon beim Befuellen des Warenkorbs, eine Erfolgsquote auf
+  // Transaktionen waere systematisch falsch (SPEC 2.1). Aus demselben Grund
+  // filtert der Zeitraum auf ca.createdon statt wie in allen uebrigen Modi auf
+  // t.completedon - ein gescheiterter Attempt hat gar kein completedon.
+  //
+  // Ausgabe ist EIN CSV mit drei Bloecken (Spalte block, SPEC 3.2):
+  //   DIM  - Zaehlwerte pro Dimensions-Tupel (Brand, Karte, 3DS, ...)
+  //   TIME - Zaehlwerte pro Tag und Stunde (Verlauf, Stosszeiten)
+  //   CONV - Transaktions-Conversion; eigener Block, weil COUNT(DISTINCT) ueber
+  //          DIM-Tupel hinweg nicht summierbar ist (eine Transaktion kann beim
+  //          Retry die Brand wechseln).
+  // Die Bloecke haengen per UNION ALL aneinander und haben deshalb dieselbe
+  // Spaltenliste in derselben Reihenfolge. Athena/PrestoDB verlangt zusaetzlich
+  // gleiche TYPEN je Position - darum sind alle Platzhalter typisiert
+  // (CAST(NULL AS ...)) und die Betragssummen explizit auf decimal(38,8)
+  // gecastet, statt sich auf die Typ-Herleitung des Optimizers zu verlassen.
+
+  // Label-Zugriff wie im cardCte: ca.labels ist array<map<string,string>>.
+  // Der Map-Key ist descriptorabhaengig (shortTextContent, countryContent,
+  // dateTimeContent, longTextContent) - deshalb explizit uebergebbar.
+  function labelExpr(id, key) {
+    return `element_at(filter(ca.labels, l -> l['descriptor'] = '${id}'), 1)['${key || 'shortTextContent'}']`;
+  }
+
+  function buildReportingQuery({ spaceIds, start, end, channels, byTerminal, terminalIds }) {
+    const spaces    = spaceIds || [];
+    const terminals = terminalIds || [];
+    const mitTerminal = !!byTerminal;
+
+    // Leere/fehlende Kanalwahl heisst "alle Kanaele" - dann bewusst GAR KEIN
+    // Filter, damit Attempts mit einem dritten saleschannel als 'OTHER'
+    // sichtbar bleiben (SPEC 7) statt still herauszufallen.
+    const kanalIds = (channels || [])
+      .map(c => (c === 'POS' ? SALES_CHANNEL_POS : c === 'ECOM' ? SALES_CHANNEL_ECOM : null))
+      .filter(Boolean);
+    const kanalFilter = kanalIds.length > 0
+      ? `\n      AND ca.saleschannel IN (${kanalIds.join(', ')})`
+      : '';
+
+    // Der paymentterminal-Join haengt an zwei Beduerfnissen: der
+    // Terminal-Aufschluesselung im DIM-Block und dem optionalen
+    // Terminal-Filter. Ohne beides bleibt er weg - wie die needs*-Flags im
+    // Transaktions-Export nur die tatsaechlich gebrauchten Joins einbauen.
+    const terminalJoin = (mitTerminal || terminals.length > 0) ? `
+    LEFT JOIN paymentterminal pt
+           ON pt.id      = ca.terminal_id
+          AND pt.spaceid = ca.spaceid` : '';
+    const idListe = terminals.map(id => `'${escapeSql(id)}'`).join(', ');
+    // Der Filter steht in der WHERE-Klausel und wuerde den LEFT JOIN zu einem
+    // INNER JOIN degradieren - damit fielen bei Kanal "Beide" saemtliche
+    // E-Commerce- und OTHER-Attempts still heraus (sie haben kein Terminal).
+    // Deshalb Attempts ohne Terminal explizit durchlassen: die
+    // Terminal-Aufschluesselung betrifft nur den POS-Teil (SPEC 7).
+    const terminalWert = terminals.length === 1
+      ? `pt.identifier = ${idListe}`
+      : `pt.identifier IN (${idListe})`;
+    const terminalFilter = terminals.length === 0
+      ? ''
+      : `\n      AND (ca.terminal_id IS NULL OR ${terminalWert})`;
+    const attTerminal = mitTerminal ? `,
+        pt.identifier                                   AS terminal_identifier,
+        pt.name                                         AS terminal_name` : '';
+    const dimTerminal = mitTerminal ? `
+    terminal_identifier,
+    terminal_name,` : '';
+    const nullTerminal = mitTerminal ? `
+    CAST(NULL AS varchar)                           AS terminal_identifier,
+    CAST(NULL AS varchar)                           AS terminal_name,` : '';
+    const gruppeTerminal = mitTerminal ? `, terminal_identifier, terminal_name` : '';
+
+    // tipCte erwartet ein CTE tx mit der Spalte id und ist unveraendert
+    // wiederverwendet (P3, SPEC 4.2) - lineitem darf NIE direkt gejoint werden,
+    // eine Transaktion hat mehrere Line Items. tx kommt hier aus den Attempts
+    // des Zeitraums und bewusst NICHT aus txCte: txCte filtert auf
+    // t.completedon und t.state IN (FULFILL, COMPLETED), der Reporting-Modus
+    // filtert auf ca.createdon und kennt keinen Statusfilter. Mit txCte fiele
+    // das Trinkgeld genau der Transaktionen weg, deren Versuch im Zeitraum
+    // liegt, deren Abschluss aber nicht - ein anderer Zeitschnitt als der des
+    // Reports.
+    //
+    // Der Kanalfilter laeuft mit: tx entscheidet, fuer welche Transaktionen
+    // tipCte ueberhaupt transaction_lineitem/lineitem anfasst. Ohne ihn suchte
+    // ein E-Commerce-Bericht das Trinkgeld saemtlicher POS-Umsaetze zusammen -
+    // also gerade den teuren Teil, den der LEFT JOIN danach wegwirft.
+    // Der Terminal-Filter bleibt bewusst draussen: er haengt am
+    // paymentterminal-Join, den tx nicht traegt (und er ist ohnehin nur eine
+    // Verengung innerhalb von POS).
+    const txReporting = `tx AS (
+    SELECT DISTINCT c.transaction_id                    AS id
+    FROM chargeattempt ca
+    JOIN charge c
+      ON c.id      = ca.charge_id
+    WHERE ${spaceInClause(spaces, 'ca.spaceid')}
+      AND ca.createdon >= TIMESTAMP '${start}'
+      AND ca.createdon <  TIMESTAMP '${end}'
+      AND ca.environment = '${ATTEMPT_ENVIRONMENT}'${kanalFilter}
+)`;
+
+    return `WITH ${txReporting},
+${tipCte({ spaceIds: spaces })},
+att AS (
+    -- Eine Zeile pro Charge Attempt. Alle abgeleiteten Spalten entstehen hier
+    -- einmal, die drei Bloecke unten aggregieren nur noch darueber.
+    SELECT
+        ca.spaceid                                      AS space_id,
+        CASE ca.saleschannel
+            WHEN ${SALES_CHANNEL_POS} THEN 'POS'
+            WHEN ${SALES_CHANNEL_ECOM} THEN 'ECOM'
+            ELSE 'OTHER'
+        END                                             AS channel,
+        -- Brand ueber ca.connectorconfiguration (die Konfiguration DIESES
+        -- Versuchs), NICHT ueber die Konfiguration der Transaktion wie in den
+        -- Modi brand/terminal: bei einem Retry mit anderer Zahlungsmethode
+        -- waere der Attempt sonst der falschen Brand zugeordnet.
+        COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN') AS brand,
+        COALESCE(wt.name['en-US'], '-')                 AS wallet,
+        t.currency                                      AS waehrung,
+        ca.state                                        AS attempt_state,
+        ca.failurereason                                AS failure_reason_id,
+        -- Feinerer Ablehngrund als failurereason: am POS der ISO-8583-Code des
+        -- Issuers, im E-Commerce der Response Code des Processors. Ein Attempt
+        -- traegt immer nur eines der beiden Labels.
+        COALESCE(${labelExpr(DESC_AUTH_RESPONSE_POS)},
+                 ${labelExpr(DESC_AUTH_RESPONSE_ECOM)}) AS auth_response_code,
+        ${labelExpr(DESC_ISSUER_COUNTRY, 'countryContent')} AS issuer_country,
+        ${labelExpr(DESC_CARD_CATEGORY)} AS card_category,
+        ${labelExpr(DESC_CARD_TYPE)} AS funding,
+        ${labelExpr(DESC_PAN_TYPE)} AS pan_type,
+        ${labelExpr(DESC_DCC_CURRENCY)} IS NOT NULL AS dcc,
+        ${labelExpr(DESC_TDS_STARTED, 'dateTimeContent')} IS NOT NULL AS tds_started,
+        -- CAVV nur als Existenzpruefung: das Kryptogramm selbst ist ein
+        -- Sicherheitsmerkmal und darf nie in eine Ausgabespalte geraten.
+        ${labelExpr(DESC_TDS_CAVV, 'longTextContent')} IS NOT NULL AS tds_cavv,
+        ${labelExpr(DESC_ECI)} AS eci,
+        -- Betrag nur bei erfolgreichen Attempts (bei FAILED ist completedamount
+        -- 0); der abgelehnte Betrag kommt aus authorizationamount, das auch bei
+        -- FAILED gefuellt ist (Task 0, Q6).
+        CASE WHEN ca.state = 'SUCCESSFUL' THEN t.completedamount     END AS amount,
+        CASE WHEN ca.state = 'FAILED'     THEN t.authorizationamount END AS amount_failed,
+        CASE WHEN ca.state = 'SUCCESSFUL' THEN t.refundedamount      END AS refund,
+        -- Trinkgeld (P3): tip ist pro TRANSAKTION vor-aggregiert, att hat aber
+        -- die Koernigkeit des Attempts. Der CASE ist deshalb NICHT optional:
+        -- ohne ihn zaehlte SUM(tip_amount) das Trinkgeld einer wiederholten
+        -- Transaktion einmal je Versuch - dieselbe Mehrfachzaehlung, die weiter
+        -- unten fuer summe_refund und summe_betrag_failed als unvermeidbar
+        -- vermerkt ist. Hier ist sie vermeidbar: pro Transaktion gibt es
+        -- hoechstens einen erfolgreichen Attempt, damit ist summe_tip exakt -
+        -- genau wie summe_betrag, das aus demselben Grund denselben Guard hat.
+        CASE WHEN ca.state = 'SUCCESSFUL' THEN tip.tip_amount        END AS tip_amount,
+        t.id                                            AS transaction_id,
+        ca.createdon                                    AS created_on${attTerminal}
+    FROM chargeattempt ca
+    JOIN charge c
+      ON c.id      = ca.charge_id
+    JOIN transaction t
+      ON t.id      = c.transaction_id
+     AND t.spaceid = ca.spaceid
+    LEFT JOIN paymentconnectorconfiguration pcc
+           ON pcc.id      = ca.connectorconfiguration
+          AND pcc.spaceid = ca.spaceid
+    LEFT JOIN paymentconnector pc
+           ON pc.id       = pcc.connector
+    LEFT JOIN wallettype wt
+           ON wt.id       = ca.wallet
+    LEFT JOIN tip
+           ON tip.transaction_id = t.id${terminalJoin}
+    WHERE ${spaceInClause(spaces, 'ca.spaceid')}
+      AND ca.createdon >= TIMESTAMP '${start}'
+      AND ca.createdon <  TIMESTAMP '${end}'
+      AND ca.environment = '${ATTEMPT_ENVIRONMENT}'${kanalFilter}${terminalFilter}
+)
+SELECT
+    'DIM'                                           AS block,
+    space_id,
+    channel,
+    brand,
+    wallet,
+    waehrung,
+    attempt_state,
+    -- Explizit auf varchar: der Typ von chargeattempt.failurereason ist nicht
+    -- belegt (Task 0 las ihn aus CSV, das beweist nichts). Bliebe er der
+    -- Herleitung ueberlassen und waere varchar, faende Presto gegen die
+    -- bigint-Platzhalter der anderen Bloecke keinen gemeinsamen Supertyp und
+    -- die GANZE Query scheiterte. Die ID ist ohnehin nur ein Nachschlage-
+    -- schluessel (SPEC 6.4), nie ein Rechenwert.
+    CAST(failure_reason_id AS varchar)              AS failure_reason_id,
+    auth_response_code,
+    issuer_country,
+    card_category,
+    funding,
+    pan_type,
+    dcc,
+    tds_started,
+    tds_cavv,
+    eci,${dimTerminal}
+    CAST(NULL AS date)                              AS tag,
+    CAST(NULL AS integer)                           AS stunde,
+    COUNT(*)                                        AS anzahl_attempts,
+    -- Kein COUNT(DISTINCT transaction_id) hier: ueber DIM-Tupel hinweg ist er
+    -- nicht summierbar (dieselbe Transaktion steckt beim Retry in mehreren
+    -- Tupeln), das Modell nimmt die Transaktionszahl deshalb ausschliesslich
+    -- aus dem CONV-Block. Eine Spalte, die niemand lesen darf, kostet in Athena
+    -- ein DISTINCT ueber 16-18 Gruppierungsspalten - und im Parser eine
+    -- Pflichtspalte, die nichts absichert.
+    CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
+    CAST(SUM(amount_failed) AS decimal(38,8))       AS summe_betrag_failed,
+    -- Bewusst in Kauf genommene Ungenauigkeit (SPEC 3.2): refundedamount haengt
+    -- an der TRANSAKTION, nicht am Attempt. Fallen mehrere erfolgreiche
+    -- Attempts derselben Transaktion in dasselbe DIM-Tupel, zaehlt der Refund
+    -- mehrfach. Die Refund-Quote ist damit eine Obergrenze - am POS praktisch
+    -- exakt (Task 0: 12'507 von 12'522 Transaktionen mit genau einem Attempt).
+    -- Dasselbe gilt fuer summe_betrag_failed: jeder gescheiterte Versuch
+    -- derselben Transaktion addiert authorizationamount erneut, und genau das
+    -- ist im E-Commerce mit Retries der Normalfall. summe_tip ist im selben
+    -- Mass exakt wie summe_betrag; der Vorbehalt oben zu summe_refund bleibt
+    -- als konservative Annahme stehen.
+    CAST(SUM(refund) AS decimal(38,8))              AS summe_refund,
+    CAST(SUM(tip_amount) AS decimal(38,8))          AS summe_tip,
+    CAST(NULL AS bigint)                            AS tx_mit_attempt,
+    CAST(NULL AS bigint)                            AS tx_erfolgreich
+FROM att
+GROUP BY
+    space_id, channel, brand, wallet, waehrung, attempt_state,
+    failure_reason_id, auth_response_code, issuer_country, card_category,
+    funding, pan_type, dcc, tds_started, tds_cavv, eci${gruppeTerminal}
+
+UNION ALL
+
+SELECT
+    'TIME'                                          AS block,
+    space_id,
+    channel,
+    brand,
+    CAST(NULL AS varchar)                           AS wallet,
+    waehrung,
+    attempt_state,
+    CAST(NULL AS varchar)                           AS failure_reason_id,
+    CAST(NULL AS varchar)                           AS auth_response_code,
+    CAST(NULL AS varchar)                           AS issuer_country,
+    CAST(NULL AS varchar)                           AS card_category,
+    CAST(NULL AS varchar)                           AS funding,
+    CAST(NULL AS varchar)                           AS pan_type,
+    CAST(NULL AS boolean)                           AS dcc,
+    CAST(NULL AS boolean)                           AS tds_started,
+    CAST(NULL AS boolean)                           AS tds_cavv,
+    CAST(NULL AS varchar)                           AS eci,${nullTerminal}
+    date(created_on)                                AS tag,
+    CAST(hour(created_on) AS integer)               AS stunde,
+    COUNT(*)                                        AS anzahl_attempts,
+    CAST(SUM(amount) AS decimal(38,8))              AS summe_betrag,
+    CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
+    CAST(NULL AS decimal(38,8))                     AS summe_refund,
+    CAST(NULL AS decimal(38,8))                     AS summe_tip,
+    CAST(NULL AS bigint)                            AS tx_mit_attempt,
+    CAST(NULL AS bigint)                            AS tx_erfolgreich
+FROM att
+GROUP BY
+    space_id, channel, brand, waehrung, attempt_state,
+    date(created_on), CAST(hour(created_on) AS integer)
+
+UNION ALL
+
+SELECT
+    'CONV'                                          AS block,
+    space_id,
+    channel,
+    brand,
+    CAST(NULL AS varchar)                           AS wallet,
+    waehrung,
+    CAST(NULL AS varchar)                           AS attempt_state,
+    CAST(NULL AS varchar)                           AS failure_reason_id,
+    CAST(NULL AS varchar)                           AS auth_response_code,
+    CAST(NULL AS varchar)                           AS issuer_country,
+    CAST(NULL AS varchar)                           AS card_category,
+    CAST(NULL AS varchar)                           AS funding,
+    CAST(NULL AS varchar)                           AS pan_type,
+    CAST(NULL AS boolean)                           AS dcc,
+    CAST(NULL AS boolean)                           AS tds_started,
+    CAST(NULL AS boolean)                           AS tds_cavv,
+    CAST(NULL AS varchar)                           AS eci,${nullTerminal}
+    CAST(NULL AS date)                              AS tag,
+    CAST(NULL AS integer)                           AS stunde,
+    CAST(NULL AS bigint)                            AS anzahl_attempts,
+    CAST(NULL AS decimal(38,8))                     AS summe_betrag,
+    CAST(NULL AS decimal(38,8))                     AS summe_betrag_failed,
+    CAST(NULL AS decimal(38,8))                     AS summe_refund,
+    CAST(NULL AS decimal(38,8))                     AS summe_tip,
+    -- COUNT(DISTINCT) gehoert in einen eigenen Block: ueber DIM-Tupel hinweg
+    -- ist er nicht summierbar, weil dieselbe Transaktion in mehreren Tupeln
+    -- steckt (Retry mit anderer Zahlungsmethode).
+    COUNT(DISTINCT transaction_id)                  AS tx_mit_attempt,
+    COUNT(DISTINCT CASE WHEN attempt_state = 'SUCCESSFUL' THEN transaction_id END) AS tx_erfolgreich
+FROM att
+GROUP BY
+    space_id, channel, brand, waehrung
+
+ORDER BY block, channel, anzahl_attempts DESC;`;
+  }
+
   // --- Terminal-Report: CSV-Parser ----------------------------------------
   // Reine Funktionen, DOM-frei und ueber test/harness.js testbar.
 
@@ -3260,6 +3735,1065 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
       });
     }
     return { rows, headers, error: null };
+  }
+
+  // --- Reporting-Modus: CSV-Parser -----------------------------------------
+  // Dritter Parser neben parseReportCsv und parseSettlementCsv, aus demselben
+  // Grund eigenstaendig: andere Pflichtspalten, andere Feldnamen - und hier
+  // zusaetzlich drei Zeilenformen in EINER Datei. Gemeinsam bleiben csvZuZeilen
+  // als Zerleger und parseAmount fuer die 1e-8-Einheiten; ein eigener
+  // Tokenizer waere der vierte im Haus und ohne Nutzen.
+
+  // Die Pflichtspalten sind die vollstaendige SELECT-Liste von
+  // buildReportingQuery ohne die beiden Terminal-Spalten (Referenz:
+  // dashboard/sql/01_reporting_reference.sql). Bewusst vollstaendig statt nur
+  // "was das Modell braucht": die Query ist EIN UNION ALL, ihre Spalten kommen
+  // also immer gemeinsam oder gar nicht. Fehlt eine, stammt die CSV nicht aus
+  // diesem Modus, und ein Report auf halben Spalten waere schlimmer als eine
+  // klare Fehlermeldung. terminal_identifier/terminal_name stehen NICHT drin -
+  // sie existieren nur in der Terminal-Variante (01b) und sind optional.
+  const REPORTING_PFLICHT = [
+    'block', 'space_id', 'channel', 'brand', 'wallet', 'waehrung', 'attempt_state',
+    'failure_reason_id', 'auth_response_code', 'issuer_country', 'card_category',
+    'funding', 'pan_type', 'dcc', 'tds_started', 'tds_cavv', 'eci', 'tag', 'stunde',
+    'anzahl_attempts', 'summe_betrag', 'summe_betrag_failed',
+    'summe_refund', 'summe_tip', 'tx_mit_attempt', 'tx_erfolgreich',
+  ];
+
+  // Fehlende Dimensionen landen im UNKNOWN-Eimer, nie als '' oder null. Sonst
+  // wuerde ein Attempt ohne Label still zu einer eigenen, namenlosen Gruppe -
+  // oder, schlimmer, per Falsy-Vergleich in einer benachbarten. UNKNOWN ist
+  // eine Aussage ("Label fehlt"), '' ist keine.
+  const REPORTING_UNBEKANNT = 'UNKNOWN';
+
+  // Presto schreibt boolean als true/false; ein typisierter NULL-Platzhalter
+  // (Bloecke TIME und CONV) kommt als leeres Feld an. null statt false, weil
+  // "nicht erhoben" und "nicht gesetzt" fachlich verschieden sind: tds_started
+  // = false heisst "3DS nicht gestartet", leer heisst "in diesem Block gar
+  // nicht ausgewiesen". Ein unerwarteter Wert ergibt ebenfalls null - lieber
+  // unbekannt als falsch einsortiert.
+  function parseBool(value) {
+    const s = String(value == null ? '' : value).trim().toLowerCase();
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+    return null;
+  }
+
+  // Was die drei Wandler ueberhaupt lesen koennen. parseBool, parseAmount und
+  // parseCount koennen "nicht lesbar" nicht von "leer" bzw. "0" unterscheiden -
+  // sie liefern null oder 0, ohne Spur. Das ist der einzige Verlustkanal dieses
+  // Moduls ohne Zaehler: unbekannte Bloecke, unbrauchbare Tage und Stunden
+  // werden gemeldet, ein unerwartetes Zahlen- oder Boolean-Format bisher nicht.
+  // Die Query ist noch nie gegen echte Daten gelaufen (SPEC 8.6); schriebe
+  // Athena boolean als 1/0 oder Dezimalzahlen mit Komma, stuenden DCC- und
+  // 3DS-Kennzahlen sowie saemtliche Betraege dauerhaft auf 0 - und zwar als
+  // gemessen aussehende Nullen, was schlimmer ist als eine Fehlermeldung.
+  // Deshalb hier die Gegenprobe: nicht leer, aber nicht lesbar -> gezaehlt.
+  const REPORTING_MUSTER_BETRAG = /^-?(?:\d+(?:\.\d*)?|\.\d+)$/;
+  const REPORTING_MUSTER_ZAHL   = /^-?\d+$/;
+
+  function parseReportingCsv(text) {
+    const leer = { dim: [], time: [], conv: [] };
+    const zeilen = csvZuZeilen(text);
+    if (!zeilen.length) {
+      return {
+        rows: leer, headers: [], unbekannteBloecke: 0, unbrauchbareWerte: 0,
+        error: new Error('Das Ergebnis ist leer – keine Kopfzeile gefunden.'),
+      };
+    }
+    const headers = zeilen[0].map(h => String(h || '').trim().toLowerCase());
+    const fehlend = REPORTING_PFLICHT.filter(s => headers.indexOf(s) === -1);
+    if (fehlend.length) {
+      return {
+        rows: leer, headers, unbekannteBloecke: 0, unbrauchbareWerte: 0,
+        error: new Error('Im Ergebnis fehlen Pflichtspalten: ' + fehlend.join(', ')),
+      };
+    }
+    const idx = {};
+    headers.forEach((h, i) => { idx[h] = i; });
+
+    const roh = (z, name) => String(z[idx[name]] == null ? '' : z[idx[name]]).trim();
+    // Dimensionswert: leer -> UNKNOWN. Gilt auch fuer Spalten, die gar nicht in
+    // der CSV stehen (Terminal-Variante nicht gelaufen) - idx[name] ist dann
+    // undefined, z[undefined] ebenfalls, und der Wert wird UNKNOWN.
+    const dim = (z, name) => roh(z, name) || REPORTING_UNBEKANNT;
+
+    const rows = { dim: [], time: [], conv: [] };
+    let unbekannteBloecke = 0;
+    let unbrauchbareWerte = 0;
+
+    // Leer ist erlaubt und bedeutet etwas (typisierter NULL-Platzhalter der
+    // Bloecke TIME/CONV, SUM ueber lauter NULL); nicht leer und trotzdem
+    // unlesbar ist der Fall, der gemeldet gehoert.
+    const betrag = (z, name) => {
+      const s = roh(z, name);
+      if (s !== '' && !REPORTING_MUSTER_BETRAG.test(s)) unbrauchbareWerte++;
+      return parseAmount(s);
+    };
+    const zahl = (z, name) => {
+      const s = roh(z, name);
+      if (s !== '' && !REPORTING_MUSTER_ZAHL.test(s)) unbrauchbareWerte++;
+      return parseCount(s);
+    };
+    const bool = (z, name) => {
+      const s = roh(z, name);
+      const b = parseBool(s);
+      if (s !== '' && b === null) unbrauchbareWerte++;
+      return b;
+    };
+
+    for (let i = 1; i < zeilen.length; i++) {
+      const z = zeilen[i];
+      // Die Analytics-CSV endet mit einer Leerzeile; die faellt hier weg.
+      // Geprueft wird die GANZE Zeile, nicht nur der Ein-Feld-Fall: eine Zeile
+      // aus lauter leeren Feldern (",,,") hat volle Breite und landete sonst
+      // in unbekannteBloecke - ein Fehlalarm, sobald der Zaehler angezeigt wird.
+      if (!z || z.every(f => String(f == null ? '' : f).trim() === '')) continue;
+      const block = roh(z, 'block').toUpperCase();
+
+      // Jeder Block bekommt seine EIGENE Zeilenform, statt alle 26 Spalten
+      // ueberall mitzuschleppen: TIME und CONV fuehren die DIM-Spalten nur als
+      // typisierte NULL-Platzhalter (das verlangt UNION ALL), sie sind dort
+      // also keine fehlenden Werte, sondern gar keine. Sie zu UNKNOWN zu
+      // machen waere eine erfundene Aussage.
+      if (block === 'DIM') {
+        rows.dim.push({
+          spaceId:          dim(z, 'space_id'),
+          channel:          dim(z, 'channel'),
+          brand:            dim(z, 'brand'),
+          wallet:           dim(z, 'wallet'),
+          waehrung:         dim(z, 'waehrung'),
+          attemptState:     dim(z, 'attempt_state'),
+          failureReasonId:  dim(z, 'failure_reason_id'),
+          authResponseCode: dim(z, 'auth_response_code'),
+          issuerCountry:    dim(z, 'issuer_country'),
+          cardCategory:     dim(z, 'card_category'),
+          funding:          dim(z, 'funding'),
+          panType:          dim(z, 'pan_type'),
+          eci:              dim(z, 'eci'),
+          dcc:              bool(z, 'dcc'),
+          tdsStarted:       bool(z, 'tds_started'),
+          tdsCavv:          bool(z, 'tds_cavv'),
+          // Nur in der Terminal-Variante (01b) vorhanden; sonst UNKNOWN.
+          terminalIdentifier: dim(z, 'terminal_identifier'),
+          terminalName:       dim(z, 'terminal_name'),
+          attempts:         zahl(z, 'anzahl_attempts'),
+          betrag:           betrag(z, 'summe_betrag'),
+          betragFailed:     betrag(z, 'summe_betrag_failed'),
+          refund:           betrag(z, 'summe_refund'),
+          // Trinkgeld (P3) steht nur im DIM-Block und nur an erfolgreichen
+          // Attempts; sonst ist die Spalte NULL, also ein leeres Feld -> 0.
+          tip:              betrag(z, 'summe_tip'),
+        });
+      } else if (block === 'TIME') {
+        const stunde = parseInt(roh(z, 'stunde'), 10);
+        rows.time.push({
+          spaceId:      dim(z, 'space_id'),
+          channel:      dim(z, 'channel'),
+          brand:        dim(z, 'brand'),
+          waehrung:     dim(z, 'waehrung'),
+          attemptState: dim(z, 'attempt_state'),
+          tag:          dim(z, 'tag'),
+          // Bewusst null statt 0: 0 ist eine gueltige Stunde (Mitternacht), ein
+          // fehlender Wert wuerde sich sonst still in diesen Eimer legen.
+          stunde:       Number.isFinite(stunde) ? stunde : null,
+          attempts:     zahl(z, 'anzahl_attempts'),
+          betrag:       betrag(z, 'summe_betrag'),
+        });
+      } else if (block === 'CONV') {
+        rows.conv.push({
+          spaceId:        dim(z, 'space_id'),
+          channel:        dim(z, 'channel'),
+          brand:          dim(z, 'brand'),
+          waehrung:       dim(z, 'waehrung'),
+          txMitAttempt:   zahl(z, 'tx_mit_attempt'),
+          txErfolgreich:  zahl(z, 'tx_erfolgreich'),
+        });
+      } else {
+        // Unbekannter block-Wert: NICHT still verwerfen und erst recht nicht
+        // raten. Erst der Block sagt, welche Spalten dieser Zeile ueberhaupt
+        // eine Bedeutung haben - ohne ihn liesse sich die Zeile nur falsch
+        // einsortieren. Ein Fehler ist es trotzdem nicht (die uebrigen Bloecke
+        // bleiben auswertbar), deshalb nur gezaehlt: der Zaehler macht den
+        // Verlust sichtbar, statt ihn zu verschweigen.
+        unbekannteBloecke++;
+      }
+    }
+    return { rows, headers, unbekannteBloecke, unbrauchbareWerte, error: null };
+  }
+
+  // --- Reporting-Modus: Klassifikation und Modell ---------------------------
+  // Reine, DOM-freie Funktionen nach dem Muster von buildSettlementReportModel.
+  //
+  // Einheiten, fuer das ganze Modul verbindlich:
+  //   Betraege      ganzzahlige 1e-8-Einheiten, genau wie sie aus dem Parser
+  //                 kommen. Nie in Gleitkomma-Franken umgerechnet.
+  //   Prozentwerte  Zahlen von 0 bis 100 in voller Genauigkeit. Gerundet wird
+  //                 erst in der Ausgabe (Task 4/5) - deshalb ruft hier NICHTS
+  //                 formatZahlCH auf: ein String im Modell koennte die Ausgabe
+  //                 nicht mehr weiterverrechnen, und zweimal runden ist ein
+  //                 Fehler, der sich erst in der Summe zeigt.
+  //   Verhaeltnis   die Retry-Rate ist ein FAKTOR (1.3 = 1.3 Versuche je
+  //                 Transaktion), kein Prozentwert - als einzige Kennzahl hier.
+  //
+  // Ein Nenner von 0 ergibt ueberall null statt 0: "keine Grundlage" ist eine
+  // andere Aussage als "0 %", und eine 0 in einer Kachel liest sich wie ein
+  // gemessener Wert.
+
+  // Feste Reihenfolgen. Die Eimer stehen auch dann in der Ausgabe, wenn sie
+  // leer sind - dass es keine Business-Karten gab, ist selbst eine Aussage,
+  // und eine fehlende Zeile waere von "nicht erhoben" nicht zu unterscheiden.
+  const REPORTING_KANAELE   = ['POS', 'ECOM', 'OTHER'];
+  const REPORTING_HERKUNFT  = ['DOMESTIC', 'INTRA', 'INTER', 'UNKNOWN'];
+  const REPORTING_KARTENTYP = ['BUSINESS', 'PRIVATE', 'UNKNOWN'];
+  const REPORTING_FUNDING   = ['CREDIT', 'DEBIT', 'UNKNOWN'];
+  const REPORTING_TDS       = ['AUTHENTICATED', 'FAILED_OR_ABANDONED', 'WALLET_CRYPTOGRAM', 'NOT_REQUESTED'];
+
+  // SPEC 4.3 E5: "Top 5 je Brand". Die Grenze steht im Modell und nicht in der
+  // Ausgabe, weil sie fachlich vorgegeben ist und nicht vom Platz abhaengt -
+  // anders als die Top-10-Kuerzung der Ablehngruende, die reine Darstellung ist.
+  const REPORTING_TOP_JE_BRAND = 5;
+
+  // Haendler-Land, falls keines gesetzt ist (SPEC 6.1). Ohne ein gueltiges
+  // Haendler-Land gibt es kein "Inland", und die ganze Herkunfts-Kennzahl
+  // fiele auf UNKNOWN zurueck.
+  const REPORTING_DEFAULT_LAND = 'CH';
+
+  // Gueltige Kanalwahlen des Reporting-Modus (SPEC 5). Steht bewusst hier bei
+  // REPORTING_DEFAULT_LAND und nicht bei reportingKanalFilter(): einziger
+  // Konsument ist loadState(), das beide Konstanten nebeneinander braucht.
+  const REPORTING_KANAL_WAHL = ['POS', 'ECOM', 'BOTH'];
+
+  // Beschriftung der KANALWAHL - nicht zu verwechseln mit REPORTING_KANAL_LABEL,
+  // das die drei Kanaele des Modells benennt (POS/ECOM/OTHER). 'BOTH' heisst
+  // "gar kein Kanalfilter", deshalb hier "alle Kanäle" und nicht "POS + E-Com":
+  // ein dritter Verkaufskanal bleibt sichtbar.
+  const REPORTING_KANAL_WAHL_LABEL = { POS: 'POS', ECOM: 'E-Commerce', BOTH: 'alle Kanäle' };
+
+  // Europa-Region fuer die Herkunfts-Einstufung (SPEC 2.6): EWR (EU-27 plus
+  // Island, Liechtenstein, Norwegen) sowie Schweiz und Vereinigtes Koenigreich.
+  // Bewusst ausgeschrieben und nicht zur Laufzeit aus einer EU-Liste
+  // hergeleitet: die Mitgliedschaft ist eine fachliche Setzung (sie folgt dem
+  // Interchange-Regime, nicht der EU-Mitgliedschaft - GB ist raus aus der EU,
+  // fuer diese Kennzahl aber weiterhin "intra"), und eine Herleitung wuerde bei
+  // jeder politischen Aenderung stumm mitwandern.
+  const EUROPA_REGION = new Set([
+    // EU-27
+    'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR',
+    'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK',
+    'SI', 'ES', 'SE',
+    // EWR ohne EU
+    'IS', 'LI', 'NO',
+    // Schweiz und Vereinigtes Koenigreich
+    'CH', 'GB',
+  ]);
+
+  // Nur Marken mit Issuer-Labels gehoeren in den Nenner von K5/K6/P1/P7 - sonst
+  // waere er groesser als die Menge, ueber die es ueberhaupt eine Aussage gibt,
+  // und der UNKNOWN-Eimer bliebe dauerhaft aufgeblaeht. TWINT, Lunch Check,
+  // Reka, Boncard und PowerPay Invoice tragen im Referenzlauf kein einziges.
+  //
+  // Der Referenzlauf hat hier aber auch eine Annahme widerlegt: "traegt keine
+  // Scheme-Labels" und "steht nicht in dieser Liste" sind NICHT dasselbe.
+  // PostFinance Card trug am POS auf 1'097 von 1'113 Attempts Issuer-Land,
+  // Funding und Kartenkategorie - also genau die Labels, die K5/K6/P1/P7
+  // messen -, fiel aber mangels Eintrag aus deren Nenner heraus. 'PostFinance'
+  // steht deshalb als BLOSSER Markenname in der Liste, nicht als
+  // 'PostFinance Card': derselbe Lauf zeigt daneben 'PostFinance Apple Pay',
+  // und zwei Literale haetten die dritte Schreibvariante wieder verpasst.
+  // Die Liste bleibt bewusst eine Namensliste und damit connectorabhaengig -
+  // die naechste lokale Debitkarte eines anderen Acquirers braucht denselben
+  // Nachtrag, erkennbar an einem Brand mit Labels ausserhalb dieser Liste.
+  const KARTEN_BRANDS = /Visa|Mastercard|Maestro|V PAY|American Express|Amex|Diners|Discover|JCB|UnionPay|PostFinance/i;
+
+  // Business-Karten aus der Kartenkategorie (SPEC 3.1, an 37 Produktwerten aus
+  // Produktivdaten verifiziert - siehe DESCRIPTORS.md).
+  const KARTEN_BUSINESS_REGEX = /BUSINESS|CORPORATE|COMMERCIAL|PURCHASING|FLEET/;
+
+  // Kartenkategorie, die der Issuer ausdruecklich NICHT angibt. Der Wert ist
+  // haeufig (POS 14 %, E-Com 35 %) und darf nie als PRIVATE durchgehen - das
+  // waere eine erfundene Aussage ueber jede siebte bis dritte Karte.
+  const KARTEN_KATEGORIE_UNBEKANNT = 'NOT_SPECIFIED';
+
+  // Ablehncodes des Issuers (ISO 8583, Label DESC_AUTH_RESPONSE_POS). Statische
+  // Tabelle im Code, wie in SPEC 4.2 P6 vorgesehen: es ist ein genormter,
+  // seit Jahrzehnten stabiler Katalog, kein Datenbestand des Haendlers.
+  const ISO_RESPONSE_CODES = {
+    '00': 'Genehmigt',
+    '01': 'Rücksprache mit Kartenherausgeber',
+    '02': 'Rücksprache mit Kartenherausgeber (Sonderfall)',
+    '03': 'Händler unbekannt',
+    '04': 'Karte einziehen',
+    '05': 'Nicht genehmigt',
+    '06': 'Fehler',
+    '07': 'Karte einziehen (Sonderfall)',
+    '12': 'Ungültige Transaktion',
+    '13': 'Ungültiger Betrag',
+    '14': 'Ungültige Kartennummer',
+    '15': 'Kartenherausgeber unbekannt',
+    '19': 'Vorgang wiederholen',
+    '21': 'Keine Aktion ausgeführt',
+    '25': 'Datensatz nicht gefunden',
+    '28': 'Datei vorübergehend nicht verfügbar',
+    '30': 'Formatfehler',
+    '41': 'Karte als verloren gemeldet',
+    '43': 'Karte als gestohlen gemeldet',
+    '51': 'Ungenügende Deckung',
+    '54': 'Karte abgelaufen',
+    '55': 'Falscher PIN',
+    '57': 'Transaktion für Karteninhaber nicht erlaubt',
+    '58': 'Transaktion für Terminal nicht erlaubt',
+    '59': 'Betrugsverdacht',
+    '61': 'Betragslimite überschritten',
+    '62': 'Karte eingeschränkt',
+    '65': 'Anzahl-Limite überschritten',
+    '75': 'PIN zu oft falsch eingegeben',
+    '76': 'Konto unbekannt',
+    '91': 'Kartenherausgeber nicht erreichbar',
+    '92': 'Weiterleitung nicht möglich',
+    '94': 'Doppelte Übermittlung',
+    '96': 'Systemfehler',
+    'Z1': 'Offline abgelehnt',
+    'Z3': 'Offline abgelehnt (keine Online-Verbindung)',
+  };
+
+  // Ablehngruende (chargeattempt.failurereason) im Klartext.
+  //
+  // WARUM STATISCH UND NICHT UEBER DIE API: die wallee-Web-Service-API hat
+  // KEINEN Failure-Reason-Dienst. Die Doku listet 98 Services, keiner davon
+  // betrifft Failure Reasons; `GET /api/v2.0/failure-reasons` und
+  // `GET /api/failure-reason/all` antworten beide mit einer HTML-404-Seite (also
+  // gar nicht geroutet, nicht bloss unberechtigt), `/api/v2.0/static-values`
+  // kennt die IDs nicht, und das Analytics-Schema fuehrt failurereason nur als
+  // bigint-Spalte ohne Nachschlagetabelle. Der Name existiert ausschliesslich
+  // eingebettet im einzelnen Charge Attempt. Das wurde 2026-08-28 vollstaendig
+  // untersucht (Bericht: .superpowers/sdd/PLAN/task-6-report.md) - bitte den
+  // Endpunkt nicht erneut suchen.
+  //
+  // Aufgenommen sind nur IDs, deren Name an echten Daten belegt ist
+  // (dashboard/discovery-results/DESCRIPTORS.md, POS und E-Commerce). Der
+  // Katalog umfasst laut Doku ueber 2000 Eintraege; ihn zu erraten waere
+  // schlimmer als die rohe ID. Unbekannte IDs erscheinen als '#<id>' und
+  // lassen sich unter https://app-wallee.com/en-us/doc/api/failure-reason/list
+  // nachschlagen. Die Option `failureReasons` von buildReportingModel
+  // ueberschreibt und ergaenzt diese Tabelle.
+  const FAILURE_REASONS = {
+    // POS (Space 40402, Juli 2026)
+    '1579281555663': 'Transaction declined',
+    '1579281542342': 'Automatically cancelled',
+    // E-Commerce (Space 12622, Juli 2026)
+    '1460695272591': 'Cancellation Initiated by User',
+    '1000009999999': 'Authorization Canceled by Scheme',
+    '1568360440179': '3-D Secure Failure',
+    '1460695272599': 'Transaction declined',
+    '1553239734976': 'Authorization Declined',
+  };
+
+  // Ein Issuer-Land ist nur dann verwertbar, wenn es ein ISO-3166-1-alpha-2-Code
+  // ist. Alles andere (ISO-3 wie 'CHE', ein Klarname, ein leeres Feld) ist
+  // UNBEKANNT und darf nie zu INTER werden (SPEC 7): "Ausland" waere eine
+  // Aussage, die aus einem Formatfehler entstuende.
+  const ISO2_REGEX = /^[A-Z]{2}$/;
+  function normLand(wert) {
+    const s = String(wert == null ? '' : wert).trim().toUpperCase();
+    return ISO2_REGEX.test(s) ? s : '';
+  }
+
+  function klassifiziereHerkunft(issuerCountry, merchantCountry) {
+    const issuer = normLand(issuerCountry);
+    const merchant = normLand(merchantCountry);
+    // Ohne gueltiges Haendler-Land gibt es kein Inland - dann ist die Herkunft
+    // nicht bestimmbar, nicht etwa automatisch Ausland.
+    if (!issuer || !merchant) return 'UNKNOWN';
+    if (issuer === merchant) return 'DOMESTIC';
+    return EUROPA_REGION.has(issuer) ? 'INTRA' : 'INTER';
+  }
+
+  function istKartenBrand(brand) {
+    return KARTEN_BRANDS.test(String(brand == null ? '' : brand));
+  }
+
+  function klassifiziereKartentyp(cardCategory) {
+    const s = String(cardCategory == null ? '' : cardCategory).trim().toUpperCase();
+    if (!s || s === REPORTING_UNBEKANNT || s === KARTEN_KATEGORIE_UNBEKANNT) return 'UNKNOWN';
+    return KARTEN_BUSINESS_REGEX.test(s) ? 'BUSINESS' : 'PRIVATE';
+  }
+
+  // 3DS-Status aus den drei Rohfeldern (SPEC 3.1). Der Connector schreibt kein
+  // Authenticated-/Status-Label, der Status ist deshalb eine Ableitung:
+  // gestartet und CAVV da = authentisiert; gestartet ohne CAVV = abgebrochen
+  // oder gescheitert; nicht gestartet, aber mit ECI = Wallet-Kryptogramm
+  // (Apple/Google Pay bringen ihr eigenes, ohne 3DS-Challenge).
+  function klassifiziereTds({ started, cavv, eci } = {}) {
+    if (started === true) return cavv === true ? 'AUTHENTICATED' : 'FAILED_OR_ABANDONED';
+    const e = String(eci == null ? '' : eci).trim();
+    if (e && e !== REPORTING_UNBEKANNT) return 'WALLET_CRYPTOGRAM';
+    return 'NOT_REQUESTED';
+  }
+
+  // Funding kennt nur zwei belegte Werte; alles andere ist unbekannt, nicht
+  // etwa eine dritte Kartenart.
+  function normFunding(wert) {
+    const s = String(wert == null ? '' : wert).trim().toUpperCase();
+    return (s === 'CREDIT' || s === 'DEBIT') ? s : 'UNKNOWN';
+  }
+
+  function reportingQuote(zaehler, nenner) {
+    return nenner > 0 ? (zaehler / nenner) * 100 : null;
+  }
+
+  // Anteil an einer Verteilung - ohne Grundlage 0 statt null. Anders als bei
+  // einer Quote ist der Anteil eines leeren Eimers an einer leeren Menge kein
+  // fehlender Messwert: es gibt schlicht nichts, wovon er ein Teil waere, und
+  // eine Verteilung aus lauter Nullen summiert korrekt auf 0.
+  function reportingAnteil(zaehler, nenner) {
+    return nenner > 0 ? (zaehler / nenner) * 100 : 0;
+  }
+
+  function reportingLeerZaehler() {
+    return { attempts: 0, erfolgreich: 0, fehlgeschlagen: 0, offen: 0, sonstige: 0 };
+  }
+
+  // Ein attempt_state ausserhalb von SUCCESSFUL/FAILED/PENDING ist an
+  // Produktivdaten nie aufgetreten (Task 0, beide Spaces). Faende sich doch
+  // einer, zaehlt er als "sonstige": er geht in die Gesamtzahl der Attempts ein
+  // (sonst stimmte die Summe nicht mehr mit der CSV ueberein), aber in keine
+  // Quote. Ihn zu SUCCESSFUL oder FAILED zu schlagen waere eine erfundene
+  // Aussage, ihn wegzuwerfen ein stiller Verlust - der eigene Zaehler macht ihn
+  // sichtbar. PENDING wird aus demselben Grund getrennt gefuehrt (SPEC 7).
+  function reportingZaehle(ziel, zeile) {
+    const n = zeile.attempts;
+    ziel.attempts += n;
+    if (zeile.attemptState === 'SUCCESSFUL') ziel.erfolgreich += n;
+    else if (zeile.attemptState === 'FAILED') ziel.fehlgeschlagen += n;
+    else if (zeile.attemptState === 'PENDING') ziel.offen += n;
+    else ziel.sonstige += n;
+  }
+
+  // Aus den Rohzaehlern die Quoten ableiten. abgeschlossen ist der Nenner
+  // saemtlicher Erfolgs-/Fehlerquoten: PENDING und sonstige bleiben draussen.
+  function reportingQuoten(z) {
+    const abgeschlossen = z.erfolgreich + z.fehlgeschlagen;
+    const successRate = reportingQuote(z.erfolgreich, abgeschlossen);
+    return {
+      abgeschlossen,
+      successRate,
+      failureRate: successRate === null ? null : 100 - successRate,
+    };
+  }
+
+  // Betraege werden strikt je Waehrung gefuehrt (SPEC 2.7) - es gibt bewusst
+  // keine Gesamtsumme ueber Waehrungen hinweg, auch nicht als Bequemlichkeit.
+  //
+  // Diese Funktion bekommt Zeilen aus ZWEI Bloecken: DIM (alle Betragsfelder)
+  // und TIME (nur summe_betrag - refund und betragFailed existieren dort gar
+  // nicht, weil sie in der Query typisierte NULL-Platzhalter sind). Ein
+  // ungeschuetztes `+= undefined` macht die Summe still zu NaN, und NaN
+  // vererbt sich durch jede weitere Rechnung bis in die Anzeige. Deshalb
+  // laufen ALLE Betragsfelder ueber betragOderNull - lieber eine belegbare 0
+  // als eine Zahl, die keine ist.
+  function betragOderNull(wert) {
+    return typeof wert === 'number' && Number.isFinite(wert) ? wert : 0;
+  }
+  function reportingWaehrungAdd(map, zeile) {
+    const w = zeile.waehrung;
+    let e = map.get(w);
+    if (!e) {
+      e = { waehrung: w, anzahlErfolgreich: 0, betrag: 0, anzahlFehlgeschlagen: 0,
+        betragFailed: 0, refund: 0, tip: 0 };
+      map.set(w, e);
+    }
+    if (zeile.attemptState === 'SUCCESSFUL') {
+      e.anzahlErfolgreich += zeile.attempts;
+      e.betrag += betragOderNull(zeile.betrag);
+      e.refund += betragOderNull(zeile.refund);
+      // tip fuehrt nur der DIM-Block (P3) - TIME-Zeilen tragen das Feld
+      // ueberhaupt nicht, deshalb derselbe Schutz wie fuer refund.
+      e.tip += betragOderNull(zeile.tip);
+    } else if (zeile.attemptState === 'FAILED') {
+      e.anzahlFehlgeschlagen += zeile.attempts;
+      e.betragFailed += betragOderNull(zeile.betragFailed);
+    }
+  }
+
+  // gesamtProWaehrung (optional) ist die Betragssumme des Kanals je Waehrung;
+  // daraus entsteht der Betragsanteil, der je Waehrung auf 100 % summiert.
+  // Der Durchschnitt wird auf ganze 1e-8-Einheiten gerundet, damit die
+  // Betragsdomaene ganzzahlig bleibt - der Rundungsfehler liegt bei 1e-8.
+  function reportingWaehrungListe(map, gesamtProWaehrung) {
+    return [...map.values()]
+      .sort((a, b) => strCmp(a.waehrung, b.waehrung))
+      .map(e => ({
+        waehrung: e.waehrung,
+        anzahlErfolgreich: e.anzahlErfolgreich,
+        betrag: e.betrag,
+        anzahlFehlgeschlagen: e.anzahlFehlgeschlagen,
+        betragFailed: e.betragFailed,
+        refund: e.refund,
+        tip: e.tip,
+        schnitt: e.anzahlErfolgreich > 0 ? Math.round(e.betrag / e.anzahlErfolgreich) : null,
+        schnittFailed: e.anzahlFehlgeschlagen > 0 ? Math.round(e.betragFailed / e.anzahlFehlgeschlagen) : null,
+        refundQuote: reportingQuote(e.refund, e.betrag),
+        // P3 (SPEC 4.2): Trinkgeld ist im Bruttobetrag bereits ENTHALTEN (an
+        // Produktivdaten belegt, siehe CLAUDE.md) - die Quote ist also ein
+        // Anteil am Umsatz, nicht ein Aufschlag darauf. Ohne Umsatz null statt
+        // 0, wie bei jeder anderen Quote auch: "keine Grundlage" ist etwas
+        // anderes als "kein Trinkgeld".
+        tipQuote: reportingQuote(e.tip, e.betrag),
+        anteilBetrag: gesamtProWaehrung ? reportingQuote(e.betrag, gesamtProWaehrung.get(e.waehrung) || 0) : null,
+      }));
+  }
+
+  // Eimer-Aufschluesselung mit fester Reihenfolge (Kartentyp, Funding,
+  // Herkunft, 3DS): jeder Schluessel erscheint, auch mit 0.
+  //
+  // gesamtProWaehrung ist optional und nur fuer K6 gesetzt: die Herkunft ist
+  // die einzige Aufschluesselung, die laut SPEC 4.1 "Anteil Anzahl UND Betrag"
+  // verlangt. Die uebrigen bekommen deshalb keine leere waehrungen-Liste
+  // angehaengt, die nichts aussagt. Die Felder werden einzeln aufgezaehlt
+  // statt z auszubreiten - sonst rutschte die interne waehrungMap mit in die
+  // Ausgabe.
+  function reportingGruppen(map, reihenfolge, basis, gesamtProWaehrung) {
+    return reihenfolge.map(schluessel => {
+      const z = map.get(schluessel) || reportingLeerZaehler();
+      const eintrag = Object.assign({ schluessel }, {
+        attempts: z.attempts, erfolgreich: z.erfolgreich, fehlgeschlagen: z.fehlgeschlagen,
+        offen: z.offen, sonstige: z.sonstige,
+      }, reportingQuoten(z), {
+        anteilAttempts: reportingAnteil(z.attempts, basis),
+      });
+      if (gesamtProWaehrung) {
+        eintrag.waehrungen = reportingWaehrungListe(z.waehrungMap || new Map(), gesamtProWaehrung);
+      }
+      return eintrag;
+    });
+  }
+  function reportingGruppeZaehle(map, schluessel, zeile) {
+    let z = map.get(schluessel);
+    if (!z) { z = reportingLeerZaehler(); map.set(schluessel, z); }
+    reportingZaehle(z, zeile);
+  }
+  // Variante mit Betraegen je Waehrung - nur fuer die Herkunft (K6).
+  function reportingGruppeZaehleMitBetrag(map, schluessel, zeile) {
+    let z = map.get(schluessel);
+    if (!z) { z = Object.assign({ waehrungMap: new Map() }, reportingLeerZaehler()); map.set(schluessel, z); }
+    reportingZaehle(z, zeile);
+    reportingWaehrungAdd(z.waehrungMap, zeile);
+  }
+
+  function reportingFailureName(id, tabelle) {
+    const key = String(id == null ? '' : id);
+    if (!key || key === REPORTING_UNBEKANNT) return 'Unbekannt';
+    if (tabelle && Object.prototype.hasOwnProperty.call(tabelle, key)) return tabelle[key];
+    if (Object.prototype.hasOwnProperty.call(FAILURE_REASONS, key)) return FAILURE_REASONS[key];
+    return '#' + key;
+  }
+
+  // Tagesarithmetik fuer den lueckenlosen Verlauf. UTC, weil 'YYYY-MM-DD' ein
+  // reines Kalenderdatum ohne Zeitzone ist - ueber die lokale Zeitzone zu
+  // rechnen wuerde an Sommerzeitwechseln einen Tag verschieben.
+  const REPORTING_TAG_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+  // Das Muster allein reicht NICHT: '2026-13-45' und '9999-99-99' erfuellen es,
+  // ergeben aber kein Datum - Date.parse liefert NaN. Ein NaN-Endpunkt macht
+  // jede Spannenrechnung zu NaN und die Auffuell-Schleife endlos, weil ihre
+  // Abbruchbedingung nie wahr wird (der Tab friert ein).
+  //
+  // Deshalb gibt es genau EIN Gueltigkeits-Praedikat, und beide Stellen
+  // benutzen es: die Bereichsbildung hier und die Zuordnung der TIME-Zeilen
+  // zum Tages-Eimer weiter unten. Liefe eine der beiden nur ueber das Muster,
+  // landete so eine Zeile in einem Eimer, den der Bereich nie ausgibt - sie
+  // verschwaende spurlos. So faellt sie sichtbar in kpi.ohneTag.
+  //
+  // NICHT geprueft wird die Kalender-Plausibilitaet: '2026-02-30' ist
+  // parsbar und wird von JavaScript still auf den 2. Maerz geschoben. Das ist
+  // bewusst so belassen (kosmetisch, und die Query selbst kann so etwas nicht
+  // erzeugen - date() laeuft ueber die Filterspalte).
+  function tagEpoche(tag) {
+    const s = String(tag == null ? '' : tag);
+    if (!REPORTING_TAG_REGEX.test(s)) return null;
+    const ms = Date.parse(s + 'T00:00:00Z');
+    return Number.isFinite(ms) ? Math.round(ms / 86400000) : null;
+  }
+  function istTag(tag) { return tagEpoche(tag) !== null; }
+  function reportingTagPlus(tag, n) {
+    const d = new Date(tag + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+  // Sicherheitsnetz gegen einen einzelnen kaputten Datumswert: ohne Deckel
+  // wuerde ein Ausreisser (z. B. '2999-01-01') Hunderttausende Leerzeilen
+  // erzeugen und den Report zum Stillstand bringen. Der Deckel begrenzt das
+  // AUFFUELLEN, nie die Daten - siehe reportingTagesbereich.
+  const REPORTING_VERLAUF_MAX_TAGE = 400;
+
+  // Der Tagesbereich stammt AUS DEN DATEN, nicht aus dem Zeitraum-Picker: das
+  // Modell bekommt start/end nicht (und soll es auch nicht - es soll dieselbe
+  // Antwort geben, egal ob die Zeilen aus der API oder aus einem importierten
+  // CSV stammen). Randtage ohne einen einzigen Attempt fehlen deshalb am
+  // Anfang und Ende; Luecken INNERHALB des Bereichs werden mit 0 gefuellt,
+  // denn dort ist die 0 gemessen und nicht bloss unbekannt.
+  function reportingTagesbereich(timeRows) {
+    const vorhanden = new Set();
+    timeRows.forEach(z => {
+      if (istTag(z.tag)) vorhanden.add(z.tag);
+    });
+    if (!vorhanden.size) return { von: '', bis: '', tage: [], spanne: 0, lueckenlos: true };
+    const sortiert = [...vorhanden].sort(strCmp);
+    const von = sortiert[0];
+    const bis = sortiert[sortiert.length - 1];
+    // Echte Spanne des Berichts, unabhaengig davon, wie viele Tage der Verlauf
+    // am Ende auffuellt. Beide Endpunkte sind durch istTag() als echte Daten
+    // belegt, die Rechnung ist also endlich - der isFinite-Zweig unten ist das
+    // zweite Netz, nicht die Absicherung.
+    const spanne = tagEpoche(bis) - tagEpoche(von) + 1;
+    // Ueber dem Deckel wird NICHT abgeschnitten: das Ende der Liste
+    // abzuschneiden wuerde gemessene Tage samt ihren Attempts stillschweigend
+    // verlieren - genau der Fehler, den die Luecken-Auffuellung verhindern
+    // soll. Stattdessen faellt der Verlauf auf die Tage zurueck, die wirklich
+    // Zeilen tragen: vollstaendig, aber nicht mehr lueckenlos. lueckenlos =
+    // false sagt der Ausgabe, dass die x-Achse dann keine gleichmaessige
+    // Tagesskala ist.
+    if (!Number.isFinite(spanne) || spanne > REPORTING_VERLAUF_MAX_TAGE) {
+      // spanne muss auch hier eine Zahl bleiben: ein NaN in zeitraum.tage
+      // waere genau die Sorte Fehler, gegen die betragOderNull antritt.
+      return {
+        von, bis, tage: sortiert,
+        spanne: Number.isFinite(spanne) ? spanne : sortiert.length,
+        lueckenlos: false,
+      };
+    }
+    // Die Schleife traegt ihre eigene harte Grenze, obwohl spanne sie bereits
+    // begrenzt: sie darf unter keinen Umstaenden der Grund sein, warum der
+    // Browser-Tab haengt. Greift sie doch, faellt der Verlauf auf die belegten
+    // Tage zurueck, statt abgeschnitten zu werden.
+    const tage = [];
+    for (let t = von; t <= bis && tage.length <= REPORTING_VERLAUF_MAX_TAGE; t = reportingTagPlus(t, 1)) {
+      tage.push(t);
+    }
+    if (tage.length > REPORTING_VERLAUF_MAX_TAGE) {
+      return { von, bis, tage: sortiert, spanne, lueckenlos: false };
+    }
+    return { von, bis, tage, spanne, lueckenlos: true };
+  }
+
+  // Ein Kanal (POS / ECOM / OTHER). Bekommt nur die Zeilen dieses Kanals; die
+  // Tagesliste kommt von aussen, damit alle Kanaele denselben Zeitstrahl
+  // zeigen und nebeneinander lesbar bleiben.
+  function reportingKanalModell(kanal, dimRows, timeRows, convRows, tage, optionen) {
+    const merchantCountry = optionen.merchantCountry;
+    const failureReasons = optionen.failureReasons;
+
+    const gesamt = reportingLeerZaehler();
+    const waehrungMap = new Map();
+    const brandMap = new Map();
+    const walletMap = new Map();
+    const kartentypMap = new Map();
+    const herkunftMap = new Map();
+    const laenderMap = new Map();
+    const fundingMap = new Map();
+    const tdsMap = new Map();
+    const panMap = new Map();
+    const failureMap = new Map();
+    const codeMap = new Map();
+    // E5: dieselben gescheiterten Attempts, zusaetzlich nach Brand getrennt.
+    // Bewusst eine VERSCHACHTELTE Map (Brand -> Grund -> Zaehler) statt eines
+    // zusammengesetzten Schluessels: Brand-Namen tragen Leerzeichen
+    // ("PostFinance Card", "American Express"), ein 'brand + SEP + id' liesse
+    // sich nicht verlaesslich wieder zerlegen. So braucht es gar kein Zerlegen.
+    const brandFailureMap = new Map();
+    const terminalMap = new Map();
+    // Bezugsgroesse fuer den Betragsanteil in K6: die Betraege der
+    // erfolgreichen Karten-Attempts, je Waehrung.
+    const kartenWaehrungMap = new Map();
+    const spaces = new Set();
+
+    let kartenAttempts = 0, kartenErfolgreich = 0;
+    let walletAttempts = 0, dccAttempts = 0;
+
+    dimRows.forEach(z => {
+      spaces.add(z.spaceId);
+      reportingZaehle(gesamt, z);
+      reportingWaehrungAdd(waehrungMap, z);
+
+      let b = brandMap.get(z.brand);
+      if (!b) {
+        b = Object.assign({ brand: z.brand, istKarte: istKartenBrand(z.brand), waehrungMap: new Map() },
+          reportingLeerZaehler());
+        brandMap.set(z.brand, b);
+      }
+      reportingZaehle(b, z);
+      reportingWaehrungAdd(b.waehrungMap, z);
+
+      // Wallet ist eine eigene Zeile neben den Brands (SPEC 4.1 K2), kein
+      // eigener Brand - sonst summierten die Brand-Anteile nicht mehr auf 100 %.
+      if (z.wallet && z.wallet !== '-' && z.wallet !== REPORTING_UNBEKANNT) {
+        walletAttempts += z.attempts;
+        reportingGruppeZaehle(walletMap, z.wallet, z);
+      }
+      reportingGruppeZaehle(panMap, z.panType, z);
+
+      if (z.attemptState === 'FAILED') {
+        reportingGruppeZaehle(failureMap, z.failureReasonId, z);
+        reportingGruppeZaehle(codeMap, z.authResponseCode, z);
+        let bf = brandFailureMap.get(z.brand);
+        if (!bf) { bf = new Map(); brandFailureMap.set(z.brand, bf); }
+        reportingGruppeZaehle(bf, z.failureReasonId, z);
+      }
+
+      // Terminal-Zeilen gehoeren nur in den POS-Kanal (SPEC 7). Eine
+      // Terminal-ID an einem E-Commerce-Attempt waere ein Datenfehler und wird
+      // hier bewusst nicht ausgewiesen, statt eine Geisterkasse zu erfinden.
+      if (kanal === 'POS' && z.terminalIdentifier !== REPORTING_UNBEKANNT) {
+        let t = terminalMap.get(z.terminalIdentifier);
+        if (!t) {
+          t = Object.assign({ identifier: z.terminalIdentifier, name: z.terminalName, waehrungMap: new Map() },
+            reportingLeerZaehler());
+          terminalMap.set(z.terminalIdentifier, t);
+        }
+        if (t.name === REPORTING_UNBEKANNT) t.name = z.terminalName;
+        reportingZaehle(t, z);
+        reportingWaehrungAdd(t.waehrungMap, z);
+      }
+
+      // K5/K6/P1/P7 haben denselben Nenner: erfolgreiche KARTEN-Attempts. Alles
+      // andere traegt keine Issuer-Labels und wuerde den UNKNOWN-Eimer fuellen,
+      // ohne dass je ein Label fehlte.
+      if (!b.istKarte) return;
+      // 3DS-Status ueber alle Karten-Attempts mit Endzustand: E1 fragt, wie oft
+      // 3DS ueberhaupt angefordert wurde, und das ist unabhaengig vom Ausgang.
+      // PENDING bleibt draussen wie bei jeder anderen Quote (SPEC 7).
+      if (z.attemptState === 'SUCCESSFUL' || z.attemptState === 'FAILED') {
+        kartenAttempts += z.attempts;
+        reportingGruppeZaehle(tdsMap,
+          klassifiziereTds({ started: z.tdsStarted, cavv: z.tdsCavv, eci: z.eci }), z);
+      }
+      if (z.attemptState !== 'SUCCESSFUL') return;
+      kartenErfolgreich += z.attempts;
+      reportingWaehrungAdd(kartenWaehrungMap, z);
+      if (z.dcc === true) dccAttempts += z.attempts;
+      reportingGruppeZaehle(kartentypMap, klassifiziereKartentyp(z.cardCategory), z);
+      reportingGruppeZaehle(fundingMap, normFunding(z.funding), z);
+      const herkunft = klassifiziereHerkunft(z.issuerCountry, merchantCountry);
+      // K6 als einzige Aufschluesselung mit Betraegen (SPEC 4.1).
+      reportingGruppeZaehleMitBetrag(herkunftMap, herkunft, z);
+      // Die Laenderliste fuehrt nur verwertbare ISO-2-Codes; ein 'CHE' oder ein
+      // fehlendes Label steckt im UNKNOWN-Eimer der Gruppen, nicht hier - sonst
+      // stuende ein Formatfehler als eigenes "Land" in der Tabelle.
+      const land = normLand(z.issuerCountry);
+      if (land) reportingGruppeZaehle(laenderMap, land, z);
+    });
+
+    // CONV: die einzige Quelle fuer die Zahl DISTINCTER Transaktionen. Ueber
+    // die DIM-Tupel laesst sie sich nicht summieren, weil dieselbe Transaktion
+    // in mehreren Tupeln steckt (Retry mit anderer Methode).
+    const convMap = new Map();
+    let txMitAttempt = 0, txErfolgreich = 0;
+    convRows.forEach(z => {
+      spaces.add(z.spaceId);
+      txMitAttempt += z.txMitAttempt;
+      txErfolgreich += z.txErfolgreich;
+      let c = convMap.get(z.brand);
+      if (!c) { c = { txMitAttempt: 0, txErfolgreich: 0 }; convMap.set(z.brand, c); }
+      c.txMitAttempt += z.txMitAttempt;
+      c.txErfolgreich += z.txErfolgreich;
+    });
+    // Die Kanalsumme ist eine OBERGRENZE des Nenners: CONV ist nach Brand
+    // gruppiert, und eine Transaktion mit Versuchen auf zwei Brands zaehlt in
+    // beiden Zeilen. Genau deshalb weist SPEC 3.2 den Block "nur pro
+    // Brand/Total" aus - eine exaktere Zahl gibt die Query nicht her.
+    const conversion = reportingQuote(txErfolgreich, txMitAttempt);
+    const retryRate = txMitAttempt > 0 ? gesamt.attempts / txMitAttempt : null;
+
+    // Betragssumme des Kanals je Waehrung - Bezugsgroesse fuer die
+    // Betragsanteile der Brands.
+    const gesamtProWaehrung = new Map();
+    waehrungMap.forEach((e, w) => gesamtProWaehrung.set(w, e.betrag));
+    // Eigener Nenner fuer K6: der Betragsanteil einer Herkunft bezieht sich auf
+    // die Karten-Umsaetze, nicht auf den ganzen Kanal - sonst summierten die
+    // vier Eimer nicht auf 100 %, weil TWINT & Co. im Nenner staenden.
+    const kartenProWaehrung = new Map();
+    kartenWaehrungMap.forEach((e, w) => kartenProWaehrung.set(w, e.betrag));
+
+    // K2 sortiert nach Betrag. Ueber mehrere Waehrungen hinweg gibt es keinen
+    // gemeinsamen Betrag, deshalb entscheidet der Betrag in der Leitwaehrung
+    // (der Waehrung mit den meisten erfolgreichen Attempts); bei nur einer
+    // Waehrung - dem Normalfall - ist das genau die Vorgabe der SPEC.
+    let leitwaehrung = '';
+    let leitAnzahl = -1;
+    waehrungMap.forEach((e, w) => {
+      if (e.anzahlErfolgreich > leitAnzahl || (e.anzahlErfolgreich === leitAnzahl && strCmp(w, leitwaehrung) < 0)) {
+        leitAnzahl = e.anzahlErfolgreich; leitwaehrung = w;
+      }
+    });
+    const leitBetrag = eintrag => {
+      const e = eintrag.waehrungMap.get(leitwaehrung);
+      return e ? e.betrag : 0;
+    };
+
+    const brands = [...brandMap.values()]
+      .sort((a, b) => leitBetrag(b) - leitBetrag(a) || b.attempts - a.attempts || strCmp(a.brand, b.brand))
+      .map(b => {
+        const conv = convMap.get(b.brand);
+        return Object.assign({
+          brand: b.brand,
+          istKarte: b.istKarte,
+        }, {
+          attempts: b.attempts, erfolgreich: b.erfolgreich, fehlgeschlagen: b.fehlgeschlagen,
+          offen: b.offen, sonstige: b.sonstige,
+        }, reportingQuoten(b), {
+          anteilAttempts: reportingAnteil(b.attempts, gesamt.attempts),
+          waehrungen: reportingWaehrungListe(b.waehrungMap, gesamtProWaehrung),
+          txMitAttempt: conv ? conv.txMitAttempt : 0,
+          txErfolgreich: conv ? conv.txErfolgreich : 0,
+          conversion: conv ? reportingQuote(conv.txErfolgreich, conv.txMitAttempt) : null,
+          retryRate: conv && conv.txMitAttempt > 0 ? b.attempts / conv.txMitAttempt : null,
+        });
+      });
+
+    // Absteigend nach Anzahl sortierte Liste mit Anteil am Nenner. Der Name des
+    // Anteilsfeldes wird mitgegeben, weil der Nenner nicht ueberall derselbe
+    // ist: bei Brands/Wallets/PAN-Typen sind es alle Attempts des Kanals, bei
+    // Ablehngruenden und -codes nur die gescheiterten. Ein einheitliches
+    // 'anteilAttempts' wuerde dort das Falsche versprechen.
+    // opt.nurAnzahl fuer Listen, die per Konstruktion nur gescheiterte
+    // Attempts enthalten (Ablehngruende, Ablehncodes): dort waeren
+    // successRate 0 % und failureRate 100 % keine Messung, sondern eine
+    // Tautologie - und eine Ausgabe, die erfolgreich/successRate blind
+    // rendert, schriebe "0 %" an jeden Ablehngrund.
+    const sortierteListe = (map, basis, schluesselName, opt = {}) => {
+      const anteilName = opt.anteilName || 'anteilAttempts';
+      return [...map.entries()]
+        .sort((a, b) => b[1].attempts - a[1].attempts || strCmp(a[0], b[0]))
+        .map(([k, z]) => {
+          const eintrag = { [schluesselName]: k, attempts: z.attempts };
+          if (!opt.nurAnzahl) {
+            Object.assign(eintrag, {
+              erfolgreich: z.erfolgreich, fehlgeschlagen: z.fehlgeschlagen,
+              offen: z.offen, sonstige: z.sonstige,
+            }, reportingQuoten(z));
+          }
+          eintrag[anteilName] = reportingAnteil(z.attempts, basis);
+          return eintrag;
+        });
+    };
+
+    // --- E5: Ablehngruende je Zahlungsmittel (SPEC 4.3) -------------------
+    // Flache Liste mit dem Brand auf jeder Zeile, nicht verschachtelt: die
+    // Ausgabe ist eine Kreuztabelle, und ein Konsument, der nur die Zeilen
+    // eines Brands braucht, filtert billiger als er verschachtelt flach klopft.
+    //
+    // Der Nenner ist NICHT gesamt.fehlgeschlagen wie bei failures[], sondern
+    // die gescheiterten Attempts DIESES Brands: die Frage lautet "woran
+    // scheitert dieses Zahlungsmittel", nicht "welchen Anteil am gesamten
+    // Ausfall hat diese Kombination". Deshalb heisst das Feld wie bei
+    // failures[] 'anteil' - derselbe Nennertyp (nur Gescheiterte), nur enger.
+    //
+    // Reihenfolge der Brands ist die der Brand-Tabelle (nach Betrag), damit
+    // die Kreuztabelle neben ihr lesbar bleibt; je Brand die haeufigsten
+    // REPORTING_TOP_JE_BRAND Gruende. Gekuerzt wird hier - anders als bei
+    // failures[]/laender[], die vollstaendig zurueckkommen - weil die Grenze
+    // aus SPEC 4.3 selbst stammt ("Top 5 je Brand") und nicht eine Frage des
+    // verfuegbaren Platzes ist.
+    const failuresProBrand = [];
+    brands.forEach(b => {
+      const bf = brandFailureMap.get(b.brand);
+      if (!bf) return;
+      sortierteListe(bf, b.fehlgeschlagen, 'id', { anteilName: 'anteil', nurAnzahl: true })
+        .slice(0, REPORTING_TOP_JE_BRAND)
+        .forEach(f => failuresProBrand.push(Object.assign({ brand: b.brand }, f, {
+          name: reportingFailureName(f.id, failureReasons),
+        })));
+    });
+
+    // --- Verlauf (TIME) ---------------------------------------------------
+    const tagMap = new Map();
+    const stundeMap = new Map();
+    let ohneTag = 0, ohneStunde = 0;
+    timeRows.forEach(z => {
+      spaces.add(z.spaceId);
+      if (istTag(z.tag)) {
+        let t = tagMap.get(z.tag);
+        if (!t) { t = Object.assign({ waehrungMap: new Map() }, reportingLeerZaehler()); tagMap.set(z.tag, t); }
+        reportingZaehle(t, z);
+        reportingWaehrungAdd(t.waehrungMap, z);
+      } else ohneTag += z.attempts;
+
+      if (Number.isInteger(z.stunde) && z.stunde >= 0 && z.stunde <= 23) {
+        let s = stundeMap.get(z.stunde);
+        if (!s) { s = reportingLeerZaehler(); stundeMap.set(z.stunde, s); }
+        reportingZaehle(s, z);
+      } else ohneStunde += z.attempts;
+    });
+
+    const verlauf = tage.map(tag => {
+      const t = tagMap.get(tag);
+      const z = t || reportingLeerZaehler();
+      return Object.assign({ tag }, {
+        attempts: z.attempts, erfolgreich: z.erfolgreich, fehlgeschlagen: z.fehlgeschlagen,
+        offen: z.offen, sonstige: z.sonstige,
+      }, reportingQuoten(z), {
+        waehrungen: t ? reportingWaehrungListe(t.waehrungMap, null) : [],
+      });
+    });
+    // Stunden immer vollstaendig 0-23: eine fehlende Stunde waere in einer
+    // Stosszeiten-Darstellung nicht von einer Stunde ohne Umsatz zu
+    // unterscheiden.
+    const stunden = Array.from({ length: 24 }, (_, h) => {
+      const z = stundeMap.get(h) || reportingLeerZaehler();
+      return Object.assign({ stunde: h }, z, reportingQuoten(z));
+    });
+
+    const terminals = [...terminalMap.values()]
+      .sort((a, b) => b.attempts - a.attempts || strCmp(a.identifier, b.identifier))
+      .map(t => Object.assign({ identifier: t.identifier, name: t.name }, {
+        attempts: t.attempts, erfolgreich: t.erfolgreich, fehlgeschlagen: t.fehlgeschlagen,
+        offen: t.offen, sonstige: t.sonstige,
+      }, reportingQuoten(t), {
+        anteilAttempts: reportingAnteil(t.attempts, gesamt.attempts),
+        waehrungen: reportingWaehrungListe(t.waehrungMap, gesamtProWaehrung),
+      }));
+
+    const tdsGruppen = reportingGruppen(tdsMap, REPORTING_TDS, kartenAttempts);
+    const tdsWert = s => (tdsGruppen.find(g => g.schluessel === s) || { attempts: 0 }).attempts;
+    const tdsAuth = tdsWert('AUTHENTICATED');
+    const tdsFail = tdsWert('FAILED_OR_ABANDONED');
+
+    return {
+      kpi: Object.assign({ channel: kanal }, {
+        attempts: gesamt.attempts, erfolgreich: gesamt.erfolgreich,
+        fehlgeschlagen: gesamt.fehlgeschlagen, offen: gesamt.offen, sonstige: gesamt.sonstige,
+      }, reportingQuoten(gesamt), {
+        transaktionen: txMitAttempt,
+        txErfolgreich,
+        conversion,
+        retryRate,
+        kartenAttempts,
+        kartenErfolgreich,
+        walletAttempts,
+        walletAnteil: reportingQuote(walletAttempts, gesamt.attempts),
+        dccAttempts,
+        dccAnteil: reportingQuote(dccAttempts, kartenErfolgreich),
+        leitwaehrung,
+        spaces: [...spaces].sort(strCmp),
+        waehrungen: [...waehrungMap.keys()].sort(strCmp),
+        ohneTag,
+        ohneStunde,
+      }),
+      brands,
+      wallets: sortierteListe(walletMap, gesamt.attempts, 'wallet'),
+      herkunft: {
+        basis: kartenErfolgreich,
+        gruppen: reportingGruppen(herkunftMap, REPORTING_HERKUNFT, kartenErfolgreich, kartenProWaehrung),
+        // Karten-Umsaetze je Waehrung - die Bezugsgroesse der anteilBetrag-Werte
+        // in den Gruppen, damit die Ausgabe sie nicht neu zusammenrechnen muss.
+        waehrungen: reportingWaehrungListe(kartenWaehrungMap, null),
+        // Vollstaendig sortiert; auf Top-10 gekuerzt wird erst in der Ausgabe -
+        // dasselbe Prinzip wie beim Runden.
+        laender: sortierteListe(laenderMap, kartenErfolgreich, 'land')
+          .map(l => Object.assign(l, { herkunft: klassifiziereHerkunft(l.land, merchantCountry) })),
+      },
+      kartentyp: {
+        basis: kartenErfolgreich,
+        gruppen: reportingGruppen(kartentypMap, REPORTING_KARTENTYP, kartenErfolgreich),
+      },
+      funding: {
+        basis: kartenErfolgreich,
+        gruppen: reportingGruppen(fundingMap, REPORTING_FUNDING, kartenErfolgreich),
+      },
+      tds: {
+        basis: kartenAttempts,
+        gruppen: tdsGruppen,
+        akzeptanz: reportingQuote(tdsAuth, tdsAuth + tdsFail),
+        angefordertAnteil: reportingQuote(tdsAuth + tdsFail, kartenAttempts),
+        walletAnteil: reportingQuote(tdsWert('WALLET_CRYPTOGRAM'), kartenAttempts),
+      },
+      // Anteil je an ALLEN gescheiterten Attempts des Kanals, nicht an allen
+      // Attempts - die Frage lautet "warum sind die Ablehnungen passiert".
+      failures: sortierteListe(failureMap, gesamt.fehlgeschlagen, 'id', { anteilName: 'anteil', nurAnzahl: true })
+        .map(f => Object.assign(f, { name: reportingFailureName(f.id, failureReasons) })),
+      failuresProBrand,
+      responseCodes: sortierteListe(codeMap, gesamt.fehlgeschlagen, 'code', { anteilName: 'anteil', nurAnzahl: true })
+        .map(c => Object.assign(c, {
+          // Fallback ist der ROHE Code, nicht '#code': im E-Commerce ist er
+          // bereits sprechend (AUTHORIZATION_DECLINED), nur am POS ist er
+          // numerisch und braucht die ISO-Tabelle.
+          name: c.code === REPORTING_UNBEKANNT ? 'Unbekannt'
+            : (Object.prototype.hasOwnProperty.call(ISO_RESPONSE_CODES, c.code) ? ISO_RESPONSE_CODES[c.code] : c.code),
+        })),
+      panTypes: sortierteListe(panMap, gesamt.attempts, 'panType'),
+      verlauf,
+      stunden,
+      terminals,
+      waehrungen: reportingWaehrungListe(waehrungMap, null),
+    };
+  }
+
+  // Modell des Reporting-Reports (SPEC 6.2). Eingabe sind die geparsten Zeilen
+  // (rows aus parseReportingCsv), Ausgabe ein Kanal-Modell je POS/ECOM/OTHER.
+  // Ein Kanal ohne eine einzige Zeile ist null, nicht ein leeres Objekt: "kein
+  // E-Commerce im Zeitraum" und "E-Commerce mit lauter Nullen" sind zwei
+  // verschiedene Aussagen, und nur die Ausgabe kann entscheiden, ob sie den Tab
+  // ueberhaupt anzeigt.
+  function buildReportingModel(rows, optionen) {
+    const opt = optionen || {};
+    const dim = (rows && Array.isArray(rows.dim)) ? rows.dim : [];
+    const time = (rows && Array.isArray(rows.time)) ? rows.time : [];
+    const conv = (rows && Array.isArray(rows.conv)) ? rows.conv : [];
+    // Ein ungueltiges Haendler-Land wuerde jede Karte auf UNKNOWN werfen;
+    // deshalb der dokumentierte Rueckfall auf den SPEC-Vorgabewert.
+    const merchantCountry = normLand(opt.merchantCountry) || REPORTING_DEFAULT_LAND;
+    const kanalOptionen = { merchantCountry, failureReasons: opt.failureReasons };
+
+    // Der Tagesbereich wird EINMAL ueber alle Kanaele bestimmt, nicht je Kanal:
+    // sonst zeigte jeder Tab einen anderen Zeitstrahl und die Kanaele waeren
+    // nicht mehr nebeneinander lesbar.
+    const bereich = reportingTagesbereich(time);
+
+    const kanaele = { POS: null, ECOM: null, OTHER: null };
+    const kanalListe = [];
+    REPORTING_KANAELE.forEach(k => {
+      const d = dim.filter(z => z.channel === k);
+      const t = time.filter(z => z.channel === k);
+      const c = conv.filter(z => z.channel === k);
+      if (!d.length && !t.length && !c.length) return;
+      kanaele[k] = reportingKanalModell(k, d, t, c, bereich.tage, kanalOptionen);
+      kanalListe.push(k);
+    });
+
+    // Zeilen mit einem Kanal ausserhalb von POS/ECOM/OTHER kann es aus dieser
+    // Query nicht geben (das CASE der Query deckt alles ab), ein importiertes
+    // CSV koennte sie aber tragen. Sie werden gezaehlt statt stumm verworfen.
+    const fremdeKanaele = dim.concat(time, conv)
+      .filter(z => REPORTING_KANAELE.indexOf(z.channel) === -1).length;
+
+    const spaces = new Set();
+    const waehrungen = new Set();
+    dim.concat(time, conv).forEach(z => {
+      if (z.spaceId) spaces.add(z.spaceId);
+      if (z.waehrung && z.waehrung !== REPORTING_UNBEKANNT) waehrungen.add(z.waehrung);
+    });
+
+    return {
+      merchantCountry,
+      kanaele,
+      kanalListe,
+      // tage ist die ECHTE Spanne von..bis, nicht die Laenge des Verlaufs:
+      // oberhalb des Deckels enthaelt der Verlauf nur die belegten Tage, der
+      // Bericht deckt aber trotzdem die volle Spanne ab. lueckenlos sagt der
+      // Ausgabe, welcher der beiden Faelle vorliegt.
+      zeitraum: {
+        von: bereich.von, bis: bereich.bis,
+        tage: bereich.spanne, lueckenlos: bereich.lueckenlos,
+      },
+      spaces: [...spaces].sort(strCmp),
+      waehrungen: [...waehrungen].sort(strCmp),
+      hatDaten: kanalListe.length > 0,
+      // Nur POS zaehlt: ausgewiesen werden Terminals ausschliesslich dort
+      // (SPEC 7). Eine Terminal-Kennung an einer E-Com-Zeile wuerde sonst einen
+      // Abschnitt ankuendigen, der in jedem Kanal leer bliebe.
+      hatTerminals: dim.some(z => z.channel === 'POS' && z.terminalIdentifier !== REPORTING_UNBEKANNT),
+      fremdeKanaele,
+    };
   }
 
   // --- Settlement-Report: Modell -------------------------------------------
@@ -3973,6 +5507,811 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     return { titel: 'SETTLEMENT-REPORT / SETTLEMENT REPORT', kopfzeilen, tabellen };
   }
 
+  // --- Reporting-Report: Export-Bloecke ------------------------------------
+  // Eine Blockliste, aus der Bildschirm, XLSX, PDF und CSV gleichermassen
+  // gespeist werden - dieselbe Rolle wie settlementExportBloecke beim
+  // Settlement-Report. Task 5 baut die vier Ausgaben ausschliesslich hierauf
+  // auf; wer eine Kennzahl ergaenzt, ergaenzt sie genau einmal.
+  //
+  // Einheiten in zeilen (bewusst ROH, nicht formatiert):
+  //   Betraege     ganzzahlige 1e-8-Einheiten wie im Modell. Erst die Ausgabe
+  //                teilt (unitsZuZahl) und formatiert - XLSX bekommt eine echte
+  //                Zahl plus Zahlformat, kein vorformatiertes Wort. Anders als
+  //                settlementExportBloecke, das schon hier auf Dezimalzahlen
+  //                geht: dort ist die Blockliste die einzige Quelle, hier soll
+  //                der Bildschirm zusaetzlich rechnen koennen (Balken).
+  //   Prozente     Zahlen 0-100 in voller Genauigkeit, null ohne Grundlage.
+  //                Auf eine Nachkommastelle gerundet wird erst in der Ausgabe.
+  //   Faktor       die Retry-Rate (1.3 = 1.3 Versuche je Transaktion).
+  //   gemischt     nur die Wert-Spalte der Kacheln: das echte Format steht je
+  //                Zelle in zellFormate, Zugriff ueber reportingZellFormat().
+  // Deshalb ruft hier NICHTS formatZahlCH/formatAmountCH auf - zweimal runden
+  // ist ein Fehler, der sich erst in der Summe zeigt.
+  //
+  // Blockform: { titel, kanal, kopf:[{label,format}], zeilen:[[..]], typ,
+  //              hinweis, zellFormate? }. Der kopf traegt Beschriftung UND
+  //              Format in EINEM Deskriptor (das Settlement-Pendant fuehrt
+  //              header/typen als zwei Parallel-Arrays - hier zusammengezogen,
+  //              damit eine Spalte nicht halb verschoben werden kann).
+  //              zellFormate hat Vorrang je Zelle, wie zellTypen beim
+  //              Settlement-Report; Zugriff ausschliesslich ueber
+  //              reportingZellFormat().
+  const REPORTING_TOP_N = 10;
+  const REPORTING_KANAL_LABEL = { POS: 'POS', ECOM: 'E-Com', OTHER: 'Andere' };
+
+  // Deutsche Beschriftung der Eimer-Schluessel. Die Schluessel selbst bleiben
+  // im Modell englisch (sie sind Datenwerte, keine Anzeige).
+  const REPORTING_LABEL = {
+    DOMESTIC: 'Domestisch', INTRA: 'Intra (Europa)', INTER: 'Inter',
+    BUSINESS: 'Business', PRIVATE: 'Privat',
+    CREDIT: 'Kredit', DEBIT: 'Debit',
+    AUTHENTICATED: 'Authentifiziert',
+    FAILED_OR_ABANDONED: 'Fehlgeschlagen / abgebrochen',
+    WALLET_CRYPTOGRAM: 'Wallet-Kryptogramm',
+    NOT_REQUESTED: 'Nicht angefordert',
+    UNKNOWN: 'Unbekannt',
+    // PAN-Quelle (E6): nur die beiden an Produktivdaten belegten Werte
+    // bekommen einen deutschen Namen. Der Descriptor kennt fuenf, die uebrigen
+    // drei sind in Task 0 nie vorgekommen - sie bleiben als Rohwert stehen,
+    // aus demselben Grund wie eine unbekannte Failure-Reason-ID: eine
+    // erfundene Bezeichnung waere schlimmer als der Scheme-Wert selbst.
+    DEVICE_TOKEN_APPLE_PAY: 'Device-Token (Apple Pay)',
+    SCHEME_TOKEN_CLICK_TO_PAY: 'Scheme-Token (Click to Pay)',
+  };
+  function reportingLabel(schluessel) {
+    const k = String(schluessel == null ? '' : schluessel);
+    return Object.prototype.hasOwnProperty.call(REPORTING_LABEL, k) ? REPORTING_LABEL[k] : k;
+  }
+
+  function reportingSpalte(label, format) { return { label, format: format || 'text' }; }
+
+  function reportingBlock(kanal, titel, kopf, zeilen, typ, hinweis, zellFormate) {
+    const block = {
+      titel, kanal: kanal || '', kopf, zeilen,
+      typ: typ || 'tabelle', hinweis: hinweis || '',
+    };
+    if (zellFormate) block.zellFormate = zellFormate;
+    return block;
+  }
+
+  // Format einer einzelnen Zelle. Normalerweise gilt das Format der Spalte;
+  // der Kachel-Block mischt in seiner Wert-Spalte Zaehler, Prozente und
+  // Betraege und traegt dafuer zellFormate (gleiche Form wie zeilen). Exakt
+  // dieselbe Konstruktion wie zellTyp() beim Settlement-Report - dort war der
+  // Anlass die Zusammenfassung, hier sind es die Kacheln.
+  function reportingZellFormat(block, r, c) {
+    const je = block.zellFormate;
+    if (je && je[r] && je[r][c]) return je[r][c];
+    const spalte = block.kopf[c];
+    return spalte ? spalte.format : 'text';
+  }
+
+  // Eine Zeile je (Eintrag, Waehrung). Die waehrungsfreien Zellen stehen NUR in
+  // der ersten Waehrungszeile eines Eintrags, die weiteren bleiben leer -
+  // sonst zaehlte eine Summe ueber die Attempts-Spalte dieselbe Zahl je
+  // Waehrung erneut, und Attempts sind waehrungsuebergreifend. Im Normalfall
+  // einer einzigen Waehrung entsteht genau eine Zeile je Eintrag, also exakt
+  // die Tabelle, die SPEC 4.1 zeichnet.
+  function reportingWaehrungZeilen(basis, waehrungen, betragZellen, leerZellen) {
+    if (!waehrungen || !waehrungen.length) return [basis.concat(leerZellen)];
+    return waehrungen.map((e, i) => (i === 0 ? basis : basis.map(() => '')).concat(betragZellen(e)));
+  }
+
+  // Top-N kuerzen. Gekuerzt wird erst hier, nie im Modell (Task 3): das Modell
+  // liefert vollstaendig sortierte Listen, die Darstellung entscheidet, wie
+  // viele davon Platz haben. Der Hinweis nennt, was fehlt - eine stumm
+  // abgeschnittene Liste liest sich wie eine vollstaendige.
+  function reportingTop(liste, hinweis) {
+    const rest = liste.length - REPORTING_TOP_N;
+    return {
+      liste: liste.slice(0, REPORTING_TOP_N),
+      hinweis: rest > 0
+        ? (hinweis ? hinweis + ' ' : '') + `${rest} weitere Einträge sind nicht dargestellt.`
+        : (hinweis || ''),
+    };
+  }
+
+  // Zeitraum-Angabe des Pickers. Akzeptiert { start, end } (so heisst es in der
+  // App) ebenso wie { von, bis } und einen fertigen String.
+  function reportingZeitraumText(zeitraum) {
+    if (!zeitraum) return '';
+    if (typeof zeitraum === 'string') return zeitraum;
+    const von = String(zeitraum.start || zeitraum.von || '').slice(0, 10);
+    // berichtsEndeTag deutet '… 00:00:00' als exklusive Obergrenze und
+    // '… 23:59:59' als letzten abgedeckten Tag - dieselbe Lesart wie im
+    // Settlement-Report, damit die Kopfzeilen der beiden Reports nicht um
+    // einen Tag auseinanderlaufen.
+    const bis = berichtsEndeTag(zeitraum.end || zeitraum.bis || '');
+    if (!von && !bis) return '';
+    return `${datumCH(von)} – ${datumCH(bis)}`;
+  }
+
+  // Kacheln-Block (SPEC 5): Kennzahl / Wert / Waehrung. Betraege bekommen ihre
+  // Waehrung in der dritten Spalte, statt sie in den Titel zu schreiben -
+  // ueber mehrere Waehrungen entstehen so schlicht mehrere Kacheln, und keine
+  // Zelle mischt je zwei Waehrungen (SPEC 2.7).
+  function reportingKachelBlock(kanal, titel, k, kanalModell) {
+    const zeilen = [];
+    const formate = [];
+    const kachel = (label, wert, format, waehrung) => {
+      zeilen.push([label, wert, waehrung || '']);
+      formate.push(['text', format, 'text']);
+    };
+    kachel('Zahlungsversuche', k.attempts, 'zahl');
+    kachel('Erfolgreich', k.erfolgreich, 'zahl');
+    kachel('Fehlgeschlagen', k.fehlgeschlagen, 'zahl');
+    kachel('Offen (PENDING)', k.offen, 'zahl');
+    kachel('Success Rate', k.successRate, 'pct');
+    kachel('Failure Rate', k.failureRate, 'pct');
+    // Transaktionen/Conversion/Retry stammen aus dem CONV-Block. Fehlt der,
+    // stuende hier eine 0, die wie ein Messwert aussaehe - deshalb nur, wenn
+    // es ihn gibt. Conversion und Retry-Rate sind E-Com-Kennzahlen (E3/E4).
+    if (k.transaktionen > 0) {
+      kachel('Transaktionen', k.transaktionen, 'zahl');
+      if (kanal === 'ECOM') {
+        kachel('Conversion', k.conversion, 'pct');
+        kachel('Retry-Rate', k.retryRate, 'faktor');
+      }
+    }
+    if (kanal === 'ECOM' && kanalModell.tds.basis > 0) {
+      kachel('3DS-Akzeptanz', kanalModell.tds.akzeptanz, 'pct');
+    }
+    if (k.walletAttempts > 0) kachel('Wallet-Anteil', k.walletAnteil, 'pct');
+    // DCC ist eine POS-Kennzahl (P7). Sie steht auch bei 0 % da: dass am
+    // Terminal nicht in Fremdwaehrung abgerechnet wurde, ist selbst eine
+    // Aussage - anders als eine fehlende Kachel, die nach "nicht erhoben"
+    // aussaehe.
+    if (kanal === 'POS' && k.kartenErfolgreich > 0) kachel('DCC-Anteil', k.dccAnteil, 'pct');
+    kanalModell.waehrungen.forEach(w => {
+      kachel('Umsatz', w.betrag, 'betrag', w.waehrung);
+      kachel('Ø-Betrag', w.schnitt, 'betrag', w.waehrung);
+    });
+    return reportingBlock(kanal, titel,
+      // 'gemischt' statt eines plausiblen 'zahl': die Wert-Spalte fuehrt Zaehler,
+      // Prozente UND Betraege, das Format steht je Zelle in zellFormate. Ein
+      // Spaltenformat, das sich rendern liesse, waere eine Falle - wer den
+      // Zugriff ueber reportingZellFormat() vergisst, schriebe 4229859000000
+      // als Anzahl hin. 'gemischt' kann keine Ausgabe versehentlich rendern.
+      [reportingSpalte('Kennzahl'), reportingSpalte('Wert', 'gemischt'), reportingSpalte('Währung')],
+      zeilen, 'kacheln',
+      'Quoten zählen nur Versuche mit Endzustand (erfolgreich oder fehlgeschlagen); '
+      + 'offene Versuche stehen separat.', formate);
+  }
+
+  // Aufschluesselung mit fester Eimer-Reihenfolge (K5, K6, P1, E2). Erfolgs-
+  // und Fehlerquote stehen NUR dort, wo der Eimer auch gescheiterte Attempts
+  // enthaelt: K5/K6/P1 zaehlen per Konstruktion ausschliesslich erfolgreiche
+  // Karten-Attempts, eine Spalte "Erfolg %" waere dort konstant 100 % und
+  // damit eine Tautologie statt einer Messung (dieselbe Ueberlegung wie bei
+  // den Ablehngruenden im Modell).
+  function reportingGruppenBlock(kanal, titel, spaltenName, gruppen, basis, mitErfolg, hinweis) {
+    const kopf = [reportingSpalte(spaltenName), reportingSpalte('Attempts', 'zahl'),
+      reportingSpalte('Anteil %', 'pct')];
+    if (mitErfolg) kopf.push(reportingSpalte('Erfolg %', 'pct'));
+    const zeilen = gruppen.map(g => {
+      const z = [reportingLabel(g.schluessel), g.attempts, g.anteilAttempts];
+      if (mitErfolg) z.push(g.successRate);
+      return z;
+    });
+    const total = ['Total', basis, basis > 0 ? 100 : null];
+    if (mitErfolg) total.push(null);
+    zeilen.push(total);
+    return reportingBlock(kanal, titel, kopf, zeilen, 'tabelle', hinweis);
+  }
+
+  // Ein Block-Satz fuer genau einen Kanal. Die Reihenfolge ist fest (Task 4):
+  // Kacheln, Zahlungsmittel, Wallets, Kartentyp, Kartenherkunft, Laender,
+  // P1 bzw. E1/E2, Ablehngruende, Ablehncodes, E3/E4, PAN-Quelle, Betraege,
+  // Terminals, Verlauf, Stunden. Ein Block, dessen Kennzahl in diesem Kanal
+  // keine Grundlage hat, entfaellt - eine leere Tabelle behauptet, es sei
+  // gemessen worden und nichts gewesen.
+  function reportingKanalBloecke(kanal, kanalModell, lueckenlos) {
+    const label = REPORTING_KANAL_LABEL[kanal] || kanal;
+    const t = name => `${label} · ${name}`;
+    const k = kanalModell.kpi;
+    const bloecke = [];
+
+    // Ein Kanal ohne einen einzigen Zahlungsversuch bekommt EINEN Hinweisblock
+    // statt eines Dutzends leerer Tabellen (SPEC 7). Dass er leer ist, ist die
+    // Aussage - sie braucht keine Tabelle.
+    if (!k.attempts) {
+      return [reportingBlock(kanal, t('Keine Daten'), [], [], 'tabelle',
+        'Kein Zahlungsversuch in diesem Kanal im gewählten Zeitraum.')];
+    }
+
+    bloecke.push(reportingKachelBlock(kanal, t('Kennzahlen'), k, kanalModell));
+
+    // --- K2/K3/K4/K7: Zahlungsmittel --------------------------------------
+    const zmLeer = ['', null, null, null];
+    const zmBetrag = w => [w.waehrung, w.betrag, w.anteilBetrag, w.schnitt];
+    const zmZeilen = [];
+    kanalModell.brands.forEach(b => {
+      reportingWaehrungZeilen(
+        [b.brand, b.attempts, b.anteilAttempts, b.successRate, b.failureRate],
+        b.waehrungen, zmBetrag, zmLeer).forEach(z => zmZeilen.push(z));
+    });
+    reportingWaehrungZeilen(
+      ['Total', k.attempts, k.attempts > 0 ? 100 : null, k.successRate, k.failureRate],
+      kanalModell.waehrungen, w => [w.waehrung, w.betrag, w.betrag ? 100 : null, w.schnitt],
+      zmLeer).forEach(z => zmZeilen.push(z));
+    bloecke.push(reportingBlock(kanal, t('Zahlungsmittel'), [
+      reportingSpalte('Brand'), reportingSpalte('Attempts', 'zahl'),
+      reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
+      reportingSpalte('Failure %', 'pct'), reportingSpalte('Währung'),
+      reportingSpalte('Betrag', 'betrag'), reportingSpalte('Anteil Betrag %', 'pct'),
+      reportingSpalte('Ø-Betrag', 'betrag'),
+    ], zmZeilen, 'tabelle',
+    'Attempts, Anteil und Quoten gelten währungsübergreifend und stehen deshalb nur in '
+    + 'der ersten Währungszeile eines Zahlungsmittels; die Beträge stehen je Währung.'));
+
+    // --- K2: Wallets als eigene Zeilen ------------------------------------
+    // Bewusst ein eigener Block statt zusaetzlicher Zeilen oben: ein Wallet
+    // liegt QUER zu den Brands (Apple Pay auf Visa), zwischen den Brands
+    // stehend wuerde es deren Anteile ueber 100 % treiben.
+    if (kanalModell.wallets.length) {
+      bloecke.push(reportingBlock(kanal, t('Wallets'), [
+        reportingSpalte('Wallet'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
+      ], kanalModell.wallets.map(w => [w.wallet, w.attempts, w.anteilAttempts, w.successRate]),
+      'tabelle',
+      'Wallets liegen quer zu den Zahlungsmitteln (z. B. Apple Pay auf Visa); ihr Anteil '
+      + 'bezieht sich auf alle Zahlungsversuche des Kanals.'));
+    }
+
+    const kartenBasis = kanalModell.kartentyp.basis;
+    // Bewusst OHNE Markenliste. Hier stand eine ("TWINT, PostFinance Card, Lunch
+    // Check, Reka, Rechnung"), und sie ist zweimal veraltet: welche Marken
+    // Karten-Labels tragen, entscheidet der Connector, nicht die Zahlungsart -
+    // PostFinance Card trug am POS welche und im E-Commerce keine. Eine
+    // Fussnote, die eine mitzaehlende Marke als ausgeschlossen nennt, ist
+    // schlimmer als gar keine: der Leser glaubt ihr die Erklaerung der Zahl
+    // darueber. TWINT bleibt als EIN Beispiel stehen (in beiden Kanaelen
+    // label-los gemessen) und ist als solches gekennzeichnet, weil sonst offen
+    // bliebe, wohin der fehlende Umsatz verschwunden ist.
+    const kartenHinweis = `Grundlage: ${formatIntCH(kartenBasis)} erfolgreiche Karten-Attempts. `
+      + 'Zahlungsmittel ohne Karten-Labels — zum Beispiel TWINT — zählen hier nicht mit. '
+      + 'Welche das sind, hängt vom Acquirer ab.';
+
+    // --- K5: Business vs. Privat ------------------------------------------
+    if (kartenBasis > 0) {
+      bloecke.push(reportingGruppenBlock(kanal, t('Kartentyp'), 'Kartentyp',
+        kanalModell.kartentyp.gruppen, kartenBasis, false, kartenHinweis));
+    }
+
+    // --- K6: Herkunft der Karten (einzige Aufschluesselung mit Betraegen) --
+    if (kanalModell.herkunft.basis > 0) {
+      const hkLeer = ['', null, null];
+      const hkZeilen = [];
+      kanalModell.herkunft.gruppen.forEach(g => {
+        reportingWaehrungZeilen([reportingLabel(g.schluessel), g.attempts, g.anteilAttempts],
+          g.waehrungen, w => [w.waehrung, w.betrag, w.anteilBetrag], hkLeer)
+          .forEach(z => hkZeilen.push(z));
+      });
+      reportingWaehrungZeilen(['Total', kanalModell.herkunft.basis, 100],
+        kanalModell.herkunft.waehrungen, w => [w.waehrung, w.betrag, w.betrag ? 100 : null], hkLeer)
+        .forEach(z => hkZeilen.push(z));
+      bloecke.push(reportingBlock(kanal, t('Kartenherkunft'), [
+        reportingSpalte('Herkunft'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Anteil %', 'pct'), reportingSpalte('Währung'),
+        reportingSpalte('Umsatz', 'betrag'), reportingSpalte('Anteil Umsatz %', 'pct'),
+      ], hkZeilen, 'tabelle',
+      kartenHinweis + ' Der Betragsanteil bezieht sich auf den Karten-Umsatz je Währung, '
+      + 'nicht auf den Umsatz des ganzen Kanals — sonst summierten die vier Eimer nicht auf 100 %.'));
+
+      // Top-10 Issuer-Laender.
+      if (kanalModell.herkunft.laender.length) {
+        const top = reportingTop(kanalModell.herkunft.laender,
+          'Absteigend nach Anzahl. Karten ohne verwertbaren ISO-2-Ländercode stehen im Eimer '
+          + '„Unbekannt“ der Kartenherkunft, nicht als eigenes Land.');
+        bloecke.push(reportingBlock(kanal, t('Top-10 Länder'), [
+          reportingSpalte('Land'), reportingSpalte('Herkunft'),
+          reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+        ], top.liste.map(l => [l.land, reportingLabel(l.herkunft), l.attempts, l.anteilAttempts]),
+        'tabelle', top.hinweis));
+      }
+    }
+
+    // --- P1 (POS) bzw. E1/E2 (E-Com) --------------------------------------
+    if (kanal === 'POS' && kanalModell.funding.basis > 0) {
+      bloecke.push(reportingGruppenBlock(kanal, t('Debit und Kredit'), 'Art',
+        kanalModell.funding.gruppen, kanalModell.funding.basis, false, kartenHinweis));
+    }
+    if (kanal === 'ECOM' && kanalModell.tds.basis > 0) {
+      const tds = kanalModell.tds;
+      bloecke.push(reportingBlock(kanal, t('3DS-Akzeptanz'), [
+        reportingSpalte('Kennzahl'), reportingSpalte('Wert', 'pct'),
+      ], [
+        ['3DS-Akzeptanz', tds.akzeptanz],
+        ['3DS angefordert (Anteil)', tds.angefordertAnteil],
+        ['Wallet-Kryptogramm (Anteil)', tds.walletAnteil],
+      ], 'tabelle',
+      `Grundlage: ${formatIntCH(tds.basis)} Karten-Attempts mit Endzustand. Die Akzeptanz `
+      + 'misst nur die tatsächlich angeforderten Authentifizierungen (authentifiziert gegen '
+      + 'fehlgeschlagen/abgebrochen). Ein Liability-Shift-Label liefert die API nicht.'));
+      bloecke.push(reportingGruppenBlock(kanal, t('3DS-Status'), 'Status',
+        tds.gruppen, tds.basis, true,
+        'Erfolgsquote je 3DS-Status (E2): zeigt, ob die Authentifizierung die Conversion drückt.'));
+    }
+
+    // --- K8: Ablehngruende -------------------------------------------------
+    if (kanalModell.failures.length) {
+      const top = reportingTop(kanalModell.failures,
+        `Anteil an allen ${formatIntCH(k.fehlgeschlagen)} gescheiterten Zahlungsversuchen `
+        + 'des Kanals. Ohne Klartext-Namen steht die rohe ID.');
+      bloecke.push(reportingBlock(kanal, t('Ablehngründe'), [
+        reportingSpalte('Grund'), reportingSpalte('ID'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+      ], top.liste.map(f => [f.name, f.id, f.attempts, f.anteil]), 'tabelle', top.hinweis));
+    }
+
+    // --- E5: Ablehngruende je Zahlungsmittel (SPEC 4.3) --------------------
+    // Nur, wenn MEHR ALS EIN Brand ueberhaupt gescheiterte Versuche hat: bei
+    // einem einzigen waere die Kreuztabelle Zeile fuer Zeile der K8-Block
+    // darueber, nur mit einer zusaetzlichen Spalte, in der immer dasselbe
+    // steht. Deshalb datengetrieben statt auf E-Commerce festgenagelt - am POS
+    // ist "Visa scheitert an X, TWINT an Y" dieselbe brauchbare Aussage, und wo
+    // sie keine ist, entfaellt der Block von selbst.
+    const e5Brands = new Set(kanalModell.failuresProBrand.map(f => f.brand));
+    if (e5Brands.size > 1) {
+      bloecke.push(reportingBlock(kanal, t('Ablehngründe je Brand'), [
+        reportingSpalte('Brand'), reportingSpalte('Grund'), reportingSpalte('ID'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+      ], kanalModell.failuresProBrand.map(f => [f.brand, f.name, f.id, f.attempts, f.anteil]),
+      'tabelle',
+      `Höchstens ${REPORTING_TOP_JE_BRAND} Gründe je Zahlungsmittel (SPEC 4.3). Der Anteil `
+      + 'bezieht sich auf die gescheiterten Versuche DIESES Zahlungsmittels, nicht auf alle '
+      + 'des Kanals — die Zeilen eines Brands summieren also auf 100 %, sofern er nicht mehr '
+      + `als ${REPORTING_TOP_JE_BRAND} verschiedene Gründe hatte. Die Reihenfolge der Brands `
+      + 'ist die der Zahlungsmittel-Tabelle.'));
+    }
+
+    // --- P6: Ablehncodes des Issuers/Processors ---------------------------
+    // Steht in BEIDEN Kanaelen, obwohl SPEC 4.2 ihn unter POS fuehrt: am POS
+    // ist es der ISO-8583-Code des Issuers, im E-Commerce der Antwortcode des
+    // Processors - in beiden Faellen der feinere Ablehngrund. Er liegt auf einer
+    // ANDEREN Achse als E5 darueber (Code des Issuers gegen Grund je Brand) und
+    // ersetzt ihn nicht - beide stehen nebeneinander.
+    if (kanalModell.responseCodes.length) {
+      const top = reportingTop(kanalModell.responseCodes,
+        'Antwortcode des Issuers (POS, ISO 8583) bzw. des Processors (E-Commerce) — '
+        + 'feiner als der Ablehngrund oben.');
+      bloecke.push(reportingBlock(kanal, t('Ablehncodes'), [
+        reportingSpalte('Code'), reportingSpalte('Bezeichnung'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+      ], top.liste.map(c => [c.code, c.name, c.attempts, c.anteil]), 'tabelle', top.hinweis));
+    }
+
+    // --- E3/E4: Conversion und Retry-Rate ---------------------------------
+    if (kanal === 'ECOM' && k.transaktionen > 0) {
+      const zeilen = kanalModell.brands.filter(b => b.txMitAttempt > 0)
+        .map(b => [b.brand, b.txMitAttempt, b.txErfolgreich, b.conversion, b.attempts, b.retryRate]);
+      zeilen.push(['Total', k.transaktionen, k.txErfolgreich, k.conversion, k.attempts, k.retryRate]);
+      bloecke.push(reportingBlock(kanal, t('Conversion'), [
+        reportingSpalte('Brand'), reportingSpalte('Transaktionen', 'zahl'),
+        reportingSpalte('Erfolgreiche Tx', 'zahl'), reportingSpalte('Conversion %', 'pct'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Retry-Rate', 'faktor'),
+      ], zeilen, 'tabelle',
+      'Conversion zählt Transaktionen, die Success Rate zählt Zahlungsversuche — im '
+      + 'E-Commerce entsteht eine Transaktion bereits beim Befüllen des Warenkorbs. Die '
+      + 'Total-Zeile ist eine Obergrenze des Nenners: eine Transaktion mit Versuchen auf '
+      + 'zwei Zahlungsmitteln steht in beiden Brand-Zeilen. Retry-Rate über 1.3 deutet auf '
+      + 'Reibung im Checkout.'));
+    }
+
+    // --- E6: PAN-Quelle ----------------------------------------------------
+    // Nur, wenn ueberhaupt ein Token-Label vorkommt: eine Tabelle mit der
+    // einzigen Zeile "Unbekannt 100 %" sagt nichts, was nicht schon im
+    // fehlenden Block staende.
+    if (kanal === 'ECOM' && kanalModell.panTypes.some(p => p.panType !== REPORTING_UNBEKANNT)) {
+      bloecke.push(reportingBlock(kanal, t('PAN-Quelle'), [
+        reportingSpalte('PAN-Quelle'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
+      ], kanalModell.panTypes.map(p => [reportingLabel(p.panType), p.attempts,
+        p.anteilAttempts, p.successRate]), 'tabelle',
+      'Klartext-PAN gegen Device-Token (Apple/Google Pay) und Scheme-Token (Click to Pay).'));
+    }
+
+    // --- K7/K9: Betraege je Waehrung ---------------------------------------
+    // Der einzige Block, der Betraege ohne Begleitspalte fuehrt - hier IST die
+    // Waehrung die Zeile, ueber Waehrungen hinweg wird nie summiert (SPEC 2.7).
+    if (kanalModell.waehrungen.length) {
+      // P3 (SPEC 4.2, "nur wenn Space Trinkgeld-Lineitems hat"): die beiden
+      // Trinkgeld-Spalten erscheinen NUR, wo ueberhaupt Trinkgeld gebucht ist -
+      // nicht als Nullspalte und nicht als eigener Block. Eine Spalte mit
+      // lauter 0.00 behauptete, die Frage sei gestellt und die Antwort sei
+      // "keins"; im E-Commerce ist sie gar nicht gestellt. Datengetrieben statt
+      // auf POS verdrahtet, wie die Ablehncodes weiter oben: wo Trinkgeld
+      // ankommt, wird es ausgewiesen. Sie haengen hinten an, in derselben Form
+      // wie Rueckerstattungen + Refund-Quote - Betrag und Quote zum Umsatz
+      // DERSELBEN Waehrungszeile, nie ueber Waehrungen hinweg.
+      const mitTrinkgeld = kanalModell.waehrungen.some(w => w.tip > 0);
+      const tipKopf = mitTrinkgeld
+        ? [reportingSpalte('Trinkgeld', 'betrag'), reportingSpalte('Trinkgeld-Quote %', 'pct')]
+        : [];
+      const tipZellen = w => (mitTrinkgeld ? [w.tip, w.tipQuote] : []);
+      bloecke.push(reportingBlock(kanal, t('Beträge je Währung'), [
+        reportingSpalte('Währung'), reportingSpalte('Erfolgreich', 'zahl'),
+        reportingSpalte('Umsatz', 'betrag'), reportingSpalte('Ø-Betrag', 'betrag'),
+        reportingSpalte('Fehlgeschlagen', 'zahl'), reportingSpalte('Betrag fehlgeschlagen', 'betrag'),
+        reportingSpalte('Ø fehlgeschlagen', 'betrag'), reportingSpalte('Rückerstattungen', 'betrag'),
+        reportingSpalte('Refund-Quote %', 'pct'),
+      ].concat(tipKopf),
+      kanalModell.waehrungen.map(w => [w.waehrung, w.anzahlErfolgreich, w.betrag, w.schnitt,
+        w.anzahlFehlgeschlagen, w.betragFailed, w.schnittFailed, w.refund, w.refundQuote]
+        .concat(tipZellen(w))),
+      'tabelle',
+      'Keine Zeile wird mit einer anderen summiert. Die Refund-Quote setzt die '
+      + 'Rückerstattungen ins Verhältnis zum Umsatz derselben Währung.'
+      + (mitTrinkgeld
+        ? ' Das Trinkgeld ist im Umsatz bereits enthalten und nicht dazuzuzählen; '
+          + 'die Trinkgeld-Quote ist sein Anteil daran.'
+        : '')));
+    }
+
+    // --- P2: Terminals -----------------------------------------------------
+    if (kanal === 'POS' && kanalModell.terminals.length) {
+      const tLeer = ['', null, null];
+      const tBetrag = w => [w.waehrung, w.betrag, w.schnitt];
+      const tZeilen = [];
+      kanalModell.terminals.forEach(term => {
+        reportingWaehrungZeilen(
+          [term.identifier, term.name, term.attempts, term.anteilAttempts, term.successRate],
+          term.waehrungen, tBetrag, tLeer).forEach(z => tZeilen.push(z));
+      });
+      bloecke.push(reportingBlock(kanal, t('Terminals'), [
+        reportingSpalte('Terminal'), reportingSpalte('Name'),
+        reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+        reportingSpalte('Erfolg %', 'pct'), reportingSpalte('Währung'),
+        reportingSpalte('Umsatz', 'betrag'), reportingSpalte('Ø-Betrag', 'betrag'),
+      ], tZeilen, 'tabelle',
+      'Eine auffällig hohe Failure Rate an einem einzelnen Gerät deutet auf Hardware oder '
+      + 'Netzanbindung, nicht auf die Kartenakzeptanz.'));
+    }
+
+    // --- K10: Verlauf ------------------------------------------------------
+    if (kanalModell.verlauf.some(v => v.attempts > 0)) {
+      const vLeer = ['', null];
+      const vZeilen = [];
+      kanalModell.verlauf.forEach(v => {
+        reportingWaehrungZeilen([v.tag, v.attempts, v.erfolgreich, v.fehlgeschlagen, v.successRate],
+          v.waehrungen, w => [w.waehrung, w.betrag], vLeer).forEach(z => vZeilen.push(z));
+      });
+      // Dieselbe Klausel wie im Kachel-Block: der Verlauf wird in Task 5
+      // eigenstaendig als Balken gezeichnet, und dort faellt sonst auf, dass
+      // Erfolgreich + Fehlgeschlagen < Attempts ist und die Quote trotzdem
+      // 100 % zeigt - weil die offenen Versuche in keiner Quote stecken.
+      let hinweis = 'Tag des Zahlungsversuchs. Tage ohne Versuch stehen mit 0 da — die 0 ist '
+        + 'gemessen, nicht unbekannt. Die Erfolgsquote zählt nur Versuche mit Endzustand; '
+        + 'offene (PENDING) Versuche stecken in „Attempts“, aber in keiner Quote — deshalb '
+        + 'ergeben Erfolgreich und Fehlgeschlagen nicht immer die Attempts.';
+      if (lueckenlos === false) {
+        hinweis += ' Der Zeitraum ist zu lang für eine lückenlose Tagesachse; aufgeführt sind '
+          + 'nur die Tage mit Daten.';
+      }
+      if (k.ohneTag > 0) {
+        hinweis += ` ${formatIntCH(k.ohneTag)} Zahlungsversuche ohne brauchbares Datum sind hier `
+          + 'nicht enthalten.';
+      }
+      bloecke.push(reportingBlock(kanal, t('Verlauf'), [
+        reportingSpalte('Tag'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Erfolgreich', 'zahl'), reportingSpalte('Fehlgeschlagen', 'zahl'),
+        reportingSpalte('Erfolg %', 'pct'), reportingSpalte('Währung'),
+        reportingSpalte('Umsatz', 'betrag'),
+      ], vZeilen, 'balken', hinweis));
+    }
+
+    // --- P4: Stosszeiten ---------------------------------------------------
+    if (kanalModell.stunden.some(s => s.attempts > 0)) {
+      let hinweis = 'Alle 24 Stunden stehen da, auch die leeren — eine fehlende Stunde wäre '
+        + 'von einer Stunde ohne Umsatz nicht zu unterscheiden.';
+      if (k.ohneStunde > 0) {
+        hinweis += ` ${formatIntCH(k.ohneStunde)} Zahlungsversuche ohne brauchbare Stunde sind `
+          + 'hier nicht enthalten.';
+      }
+      bloecke.push(reportingBlock(kanal, t('Stunden'), [
+        reportingSpalte('Stunde', 'zahl'), reportingSpalte('Attempts', 'zahl'),
+        reportingSpalte('Erfolgreich', 'zahl'), reportingSpalte('Fehlgeschlagen', 'zahl'),
+        reportingSpalte('Erfolg %', 'pct'),
+      ], kanalModell.stunden.map(s => [s.stunde, s.attempts, s.erfolgreich, s.fehlgeschlagen,
+        s.successRate]), 'balken', hinweis));
+    }
+
+    return bloecke;
+  }
+
+  // Export-Bloecke des Reporting-Reports. optionen: { zeitraum, spaces } aus
+  // dem Picker - das Modell kennt nur den BELEGTEN Zeitraum (Task 3), der
+  // GEWAEHLTE steht ausschliesslich hier zur Verfuegung. Beide stehen im
+  // Titelblock nebeneinander: gehen sie auseinander, sieht der Leser sofort,
+  // dass die Randtage keine Zahlungsversuche trugen.
+  function reportingExportBloecke(modell, optionen) {
+    const opt = optionen || {};
+    const m = (modell && modell.kanaele) ? modell : {
+      merchantCountry: REPORTING_DEFAULT_LAND, kanaele: {}, kanalListe: [],
+      zeitraum: { von: '', bis: '', tage: 0, lueckenlos: true },
+      spaces: [], waehrungen: [], hatDaten: false, hatTerminals: false, fremdeKanaele: 0,
+    };
+    const zr = m.zeitraum || { von: '', bis: '', tage: 0, lueckenlos: true };
+    const spaces = (Array.isArray(opt.spaces) && opt.spaces.length) ? opt.spaces : m.spaces;
+
+    const kopfZeilen = [
+      ['Bericht', 'Zahlungsversuche (Charge Attempts)'],
+      ['Zeitraum (Auswahl)', reportingZeitraumText(opt.zeitraum) || '—'],
+      // Bewusst OHNE formatIntCH: das Schweizer Tausenderzeichen gehoert in die
+      // Ausgabe, nicht in eine Zelle. Ein langer Zeitraum ergaebe sonst
+      // "2’193 Tage" - genau der formatierte String, den diese Schicht nirgends
+      // liefern darf.
+      ['Zeitraum (Daten)', zr.von
+        ? `${datumCH(zr.von)} – ${datumCH(zr.bis)} (${zr.tage} Tage)` : '—'],
+      ['Spaces', spaces.join(', ') || '—'],
+      ['Händler-Land', m.merchantCountry],
+      ['Kanäle', m.kanalListe.map(k => REPORTING_KANAL_LABEL[k] || k).join(', ') || '—'],
+      ['Währungen', m.waehrungen.join(', ') || '—'],
+    ];
+    let kopfHinweis = 'Der Zeitraum bezieht sich auf den Zeitpunkt des Zahlungsversuchs, nicht '
+      + 'auf den Abschluss der Transaktion. Gezählt wird der Zahlungsversuch (Charge Attempt), '
+      + 'nicht die Transaktion. Quoten zählen nur Versuche mit Endzustand; offene (PENDING) '
+      + 'Versuche stehen separat. Beträge werden je Währung geführt und nie addiert.';
+    if (m.fremdeKanaele > 0) {
+      kopfHinweis += ` ${formatIntCH(m.fremdeKanaele)} Zeilen tragen einen unbekannten Kanal und `
+        + 'stehen in keinem Abschnitt.';
+    }
+    const bloecke = [reportingBlock('', 'Reporting',
+      [reportingSpalte('Angabe'), reportingSpalte('Wert')], kopfZeilen, 'tabelle', kopfHinweis)];
+
+    if (!m.hatDaten) {
+      bloecke.push(reportingBlock('', 'Keine Daten', [], [], 'tabelle',
+        'Im gewählten Zeitraum gibt es keinen Zahlungsversuch.'));
+      return bloecke;
+    }
+
+    // Der Deckel des Verlaufs (Task 3) gilt fuer alle Kanaele gemeinsam,
+    // deshalb wird lueckenlos von hier durchgereicht statt im Kanal-Modell
+    // nachgeschlagen - der Kanal weiss davon nichts.
+    m.kanalListe.forEach(kanal => {
+      const km = m.kanaele[kanal];
+      // Aus buildReportingModel unerreichbar (kanalListe wird erst nach
+      // kanaele[k] befuellt). Der Zweig steht fuer von Hand gebaute Modelle -
+      // Tests reichen solche herein, und eine Ausgabe, die daran wirft, waere
+      // eine schlechtere Antwort als ein fehlender Kanal-Satz.
+      if (!km) return;
+      reportingKanalBloecke(kanal, km, zr.lueckenlos).forEach(b => bloecke.push(b));
+    });
+    return bloecke;
+  }
+
+  // --- Reporting-Report: Ausgabe-Schicht -----------------------------------
+  // Hier - und NUR hier - werden die rohen Blockwerte formatiert. Die Bloecke
+  // oben fuehren Betraege als 1e-8-Ganzzahlen und Prozente in voller
+  // Genauigkeit (bewusst, siehe Kommentar an reportingExportBloecke).
+  // Bildschirm, CSV, Excel und PDF sitzen alle vier auf derselben Blockliste
+  // auf und unterscheiden sich nur darin, WIE sie eine Zelle ausgeben.
+  //
+  // Zwei Regeln gelten fuer jede der vier Ausgaben:
+  //  1. Das Format einer Zelle kommt ueber reportingZellFormat(block, r, c),
+  //     nie ueber block.kopf[c].format - die Wert-Spalte der Kacheln traegt
+  //     das nicht renderbare 'gemischt'.
+  //  2. Zahlformat von Hand (formatIntCH/formatAmountCH/formatProzentCH),
+  //     nie toLocaleString - dessen Tausendertrennung haengt an der
+  //     ICU-Version des Browsers.
+
+  // Prozentwert mit EINER Nachkommastelle (SPEC 4). Eigene Funktion neben
+  // formatZahlCH (zwei Stellen) und formatAmountCH (1e-8-Einheiten): die drei
+  // bedienen verschiedene Eingabe-Domaenen und sollen sich nicht gegenseitig
+  // umrechnen muessen.
+  function formatProzentCH(n) {
+    const wert = Number(n) || 0;
+    const negativ = wert < 0;
+    const zehntel = Math.round(Math.abs(wert) * 10);
+    const ganz = Math.floor(zehntel / 10);
+    return (negativ && zehntel !== 0 ? '-' : '') + gruppiere(String(ganz)) + '.' + (zehntel % 10);
+  }
+
+  // "Keine Grundlage" - der Nenner war 0. Bewusst ein sichtbares Zeichen und
+  // keine leere Zelle: leer heisst in den Bloecken "gehoert zur Zeile darueber"
+  // (Fortsetzungszeile einer Waehrungsgruppe), und die beiden Aussagen duerfen
+  // nicht zusammenfallen.
+  const REPORTING_OHNE_GRUNDLAGE = '—';
+
+  // Ein Format, das diese Schicht nicht kennt - in der Praxis das Sentinel
+  // 'gemischt' der Kachel-Wertspalte, wenn ein Aufrufer den Umweg ueber
+  // reportingZellFormat() vergisst. Bewusst ein EIGENES Zeichen: der Strich und
+  // die leere Zelle sind in denselben Spalten bereits vergeben (— = kein
+  // Nenner, '' = Fortsetzungszeile einer Waehrungsgruppe), ein Fehler waere
+  // dort von einer gueltigen Aussage nicht zu unterscheiden. So faellt er auf,
+  // ohne dass die Ausgabe wirft - ein Wurf aus der Zellschleife machte aus
+  // einem Formatierungsfehler eine tote Ansicht.
+  const REPORTING_FORMAT_UNBEKANNT = '#FORMAT?';
+
+  function reportingZellText(wert, format) {
+    if (wert === '' || wert === undefined) return '';
+    if (wert === null) return REPORTING_OHNE_GRUNDLAGE;
+    if (typeof wert === 'number') {
+      if (format === 'zahl') return formatIntCH(wert);
+      if (format === 'betrag') return formatAmountCH(wert);
+      if (format === 'pct') return formatProzentCH(wert) + ' %';
+      if (format === 'faktor') return formatZahlCH(wert);
+      // 'text' ist ein gueltiges Format UND der Vorgabewert: reportingSpalte()
+      // setzt es, wenn keines angegeben ist, und reportingZellFormat() liefert
+      // es fuer eine fehlende Kopfspalte. Eine Zahl darunter ist deshalb keine
+      // Fehlbedienung, sondern schlicht als Zeichenkette zu zeigen.
+      if (format === 'text') return String(wert);
+      // Alles Uebrige ist ein echtes Versehen (siehe REPORTING_FORMAT_UNBEKANNT):
+      // String(wert) gaebe hier "4229859000000" aus - eine Zahl, die wie ein
+      // Messwert aussieht.
+      return REPORTING_FORMAT_UNBEKANNT;
+    }
+    return String(wert);
+  }
+
+  // Wert einer Zelle fuer die maschinenlesbaren Ausgaben (CSV, Excel): Zahlen
+  // bleiben Zahlen, damit dort gerechnet und sortiert werden kann. Betraege
+  // kommen aus den 1e-8-Einheiten herunter, Prozente werden auf eine
+  // Nachkommastelle gerundet - sonst behauptete das Excel-Zahlformat 0.0"%"
+  // eine Genauigkeit, die die Zelle gar nicht hat.
+  function reportingZellZahl(wert, format) {
+    if (wert === '' || wert === null || wert === undefined) return '';
+    if (typeof wert !== 'number') return wert;
+    if (format === 'betrag') return unitsZuZahl(wert);
+    if (format === 'pct') return Math.round(wert * 10) / 10;
+    // Der Faktor wird wie auf dem Bildschirm (formatZahlCH) auf zwei Stellen
+    // gerundet. Alle vier Ausgaben kommen aus derselben Blockliste und sollen
+    // dieselbe Zahl zeigen - eine CSV mit 1.105793450881612 neben einem PDF
+    // mit 1.11 laesst den Leser raten, welche der beiden gilt.
+    if (format === 'faktor') return Math.round(wert * 100) / 100;
+    // Zaehler und Text gehen unveraendert durch - beide explizit, damit der
+    // Zweig darunter wirklich nur unbekannte Formate faengt. 'text' ist dabei
+    // der Vorgabewert von reportingSpalte()/reportingZellFormat(), keine
+    // Fehlbedienung.
+    if (format === 'zahl' || format === 'text') return wert;
+    // Unbekanntes Format an einer Zahl: gleiche Lage wie in reportingZellText.
+    // Eine LEERE Zelle taugt hier nicht als Fehlerzeichen - sie ist in
+    // denselben Spalten schon vergeben (Fortsetzungszeile einer
+    // Waehrungsgruppe). Deshalb derselbe eigene Marker wie auf dem Bildschirm;
+    // die rohe 1e-8-Einheit waere eine Zahl, mit der jemand weiterrechnet.
+    return REPORTING_FORMAT_UNBEKANNT;
+  }
+
+  // --- Balken als inline-SVG ------------------------------------------------
+  // Kein Chart-Vendor (SPEC 5): die Datei ist mit den beiden bestehenden
+  // Vendor-Bloecken bereits ~1.06 MB gross, und ein Balkendiagramm sind ein
+  // paar <rect>. Farben ausschliesslich ueber die :root-Variablen.
+  const SVG_BALKEN_STANDARD = { breite: 640, hoehe: 90 };
+  // Whitelist statt freier Farbangabe: so kann kein Aufrufer versehentlich ein
+  // Inline-Hex ins SVG schreiben. Sie fuehrt genau die zwei Farben, die
+  // reportingBalkenHtml tatsaechlich waehlt - eine Whitelist mit Eintraegen auf
+  // Vorrat erfuellt ihren Zweck nicht besser, sie sieht nur benutzt aus.
+  const SVG_BALKEN_FARBEN = { accent: 'var(--accent)', 'accent-dark': 'var(--accent-dark)' };
+
+  // werte: Zahlen. optionen: { breite, hoehe, max, farbe, beschriftung }.
+  // max setzt eine feste Obergrenze (Quoten gehoeren auf eine 0-100-Achse,
+  // sonst sieht ein Tag mit 61 % neben lauter 60ern wie ein Volltreffer aus);
+  // ohne max skaliert die Reihe auf ihr eigenes Maximum.
+  function svgBalken(werte, optionen) {
+    const liste = Array.isArray(werte) ? werte : [];
+    if (!liste.length) return '';
+    const opt = optionen || {};
+    const breite = Number(opt.breite) > 0 ? Number(opt.breite) : SVG_BALKEN_STANDARD.breite;
+    const hoehe = Number(opt.hoehe) > 0 ? Number(opt.hoehe) : SVG_BALKEN_STANDARD.hoehe;
+    // Nicht-Zahlen (null = keine Grundlage, '' = Fortsetzungszeile) und
+    // negative Werte zaehlen als 0. Eine Luecke statt eines Nullbalkens
+    // verschoebe alle folgenden Tage auf der Achse.
+    const zahlen = liste.map(v => (typeof v === 'number' && isFinite(v) && v > 0 ? v : 0));
+    const max = Number(opt.max) > 0 ? Number(opt.max) : Math.max(...zahlen);
+    const farbe = SVG_BALKEN_FARBEN[opt.farbe] || SVG_BALKEN_FARBEN.accent;
+    const slot = breite / zahlen.length;
+    const bBreite = rundeSvg(Math.max(1, slot * 0.7));
+    const rects = zahlen.map((v, i) => {
+      // max === 0 (lauter Nullen) darf keine Division sein - ein NaN im
+      // height-Attribut macht das ganze SVG unbrauchbar.
+      const h = max > 0 ? rundeSvg((v / max) * hoehe) : 0;
+      const x = rundeSvg(i * slot + (slot - bBreite) / 2);
+      return `<rect x="${x}" y="${rundeSvg(hoehe - h)}" width="${bBreite}" height="${h}" fill="${farbe}"></rect>`;
+    }).join('');
+    const label = opt.beschriftung
+      ? ` role="img" aria-label="${escapeHtml(String(opt.beschriftung))}"` : ' aria-hidden="true"';
+    return `<svg class="balken" viewBox="0 0 ${rundeSvg(breite)} ${rundeSvg(hoehe)}" `
+      + `width="100%" height="${rundeSvg(hoehe)}" preserveAspectRatio="none"${label}>${rects}</svg>`;
+  }
+
+  function rundeSvg(n) { return Math.round(n * 100) / 100; }
+
+  // Welche Spalten eines 'balken'-Blocks als Balken taugen. Reine Funktion,
+  // damit die Auswahl ohne DOM pruefbar bleibt.
+  function reportingBalkenSerien(block) {
+    // Fortsetzungszeilen (leere erste Spalte) gehoeren zur Zeile darueber und
+    // haetten auf der Achse keinen eigenen Platz.
+    const zeilen = (block.zeilen || []).filter(z => z[0] !== '' && z[0] !== null && z[0] !== undefined);
+    const achse = zeilen.map(z => String(z[0]));
+    const serien = [];
+    // Erste Zaehler-Spalte nach der Achse: das ist "Attempts" in beiden
+    // balken-Bloecken (Verlauf, Stunden).
+    const zahlIdx = block.kopf.findIndex((k, c) => c > 0 && k.format === 'zahl');
+    if (zahlIdx > 0 && zeilen.length) {
+      serien.push({ label: block.kopf[zahlIdx].label, format: 'zahl',
+        werte: zeilen.map(z => z[zahlIdx]) });
+    }
+    // Die Quote nur, wenn sie fuer JEDE Zeile eine Grundlage hat: null heisst
+    // "kein Nenner" (eine Stunde ganz ohne Versuch), und ein Nullbalken
+    // behauptete an dieser Stelle 0 % Erfolg - eine Messung, die es nicht gibt.
+    const pctIdx = block.kopf.findIndex((k, c) => c > 0 && k.format === 'pct');
+    if (pctIdx > 0 && zeilen.length && zeilen.every(z => typeof z[pctIdx] === 'number')) {
+      serien.push({ label: block.kopf[pctIdx].label, format: 'pct', max: 100,
+        werte: zeilen.map(z => z[pctIdx]) });
+    }
+    return { achse, serien };
+  }
+
+  // --- Reporting-Report: CSV ------------------------------------------------
+  // Gleicher Aufbau wie buildSettlementReportCsv: Blocktitel, Spaltenkopf,
+  // Zeilen, Hinweis - Semikolon getrennt und mit BOM. Zahlen bleiben
+  // maschinenlesbar (Punkt als Dezimaltrenner, keine Tausendertrennung),
+  // sonst bricht der Import.
+  function buildReportingReportCsv(modell, optionen) {
+    const zeilen = [];
+    reportingExportBloecke(modell, optionen).forEach((block, i) => {
+      if (i > 0) zeilen.push('');
+      zeilen.push(csvFeld(block.titel));
+      if (block.kopf.length) {
+        zeilen.push(block.kopf.map(k => csvFeld(k.label)).join(';'));
+        block.zeilen.forEach((r, ri) => zeilen.push(r.map((wert, c) =>
+          csvFeld(reportingZellZahl(wert, reportingZellFormat(block, ri, c)))).join(';')));
+      }
+      if (block.hinweis) zeilen.push(csvFeld(block.hinweis));
+    });
+    return CSV_BOM + zeilen.join('\r\n') + '\r\n';
+  }
+
+  // --- Reporting-Report: PDF-Layout ----------------------------------------
+  // Reine Beschreibung wie settlementPdfBloecke: Titel, Kopfzeilen, Tabellen
+  // mit FERTIGEN Strings. Erst exportReportingPdf() weiter unten fuettert
+  // damit jsPDF - so bleibt das Layout ohne den Vendor-Block testbar.
+  //
+  // Balken stehen bewusst NICHT im PDF: autotable kann kein SVG, und ein
+  // Rasterbild waere ein dritter Vendor. Die Zahlen der Balken-Bloecke stehen
+  // vollstaendig in ihrer Tabelle.
+  function reportingPdfTabelle(block, titel, seitenumbruchDavor) {
+    return {
+      titel,
+      header: block.kopf.map(k => k.label),
+      rows: block.zeilen.map((r, ri) => r.map((wert, c) =>
+        reportingZellText(wert, reportingZellFormat(block, ri, c)))),
+      ausrichtung: block.kopf.map(k => (k.format === 'text' ? 'left' : 'right')),
+      hinweis: block.hinweis || '',
+      seitenumbruchDavor: !!seitenumbruchDavor,
+      // Bloecke ohne Spalten (die Hinweisbloecke aus SPEC 7) tragen nur ihren
+      // Hinweis - autoTable bekaeme sonst einen Kopf ohne Spalten.
+      nurHinweis: block.kopf.length === 0,
+    };
+  }
+
+  function reportingPdfBloecke(modell, optionen) {
+    const bloecke = reportingExportBloecke(modell, optionen);
+    const kopfzeilen = [];
+    const tabellen = [];
+    let letzterKanal = null;
+    let kapitel = 0;
+    bloecke.forEach(b => {
+      if (!b.kanal) {
+        // Der kanaluebergreifende Titelblock wird zur Kopfzeile des Dokuments;
+        // seine Prosa haengt als eigener Abschnitt darunter. Zweimal dieselbe
+        // Angabe auf einer Seite waere Fuellstoff.
+        b.zeilen.forEach(z => kopfzeilen.push(`${z[0]}: ${z[1]}`));
+        if (b.hinweis) {
+          tabellen.push(reportingPdfTabelle(
+            { kopf: [], zeilen: [], hinweis: b.hinweis }, 'Grundlagen', false));
+        }
+        return;
+      }
+      const neuerKanal = b.kanal !== letzterKanal;
+      if (neuerKanal) { letzterKanal = b.kanal; kapitel += 1; }
+      // Das Kapitel steht im Titel der ERSTEN Tabelle des Kanals - dieselbe
+      // Loesung wie beim Settlement-Report ("4. Detail pro Space — <id>").
+      tabellen.push(reportingPdfTabelle(b, neuerKanal ? `${kapitel}. ${b.titel}` : b.titel, neuerKanal));
+    });
+    return { titel: 'REPORTING-REPORT / MERCHANT KPI REPORT', kopfzeilen, tabellen };
+  }
+
   // --- Settlement-Report: Ansicht ------------------------------------------
   let settlementModell = null;
   let settlementZeitraum = { start: '', end: '', account: '' };
@@ -4395,6 +6734,7 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     export: 'Transaktions-Export',
     card: 'Kartensuche',
     settlement: 'Settlement / Auszahlung',
+    reporting: 'Reporting',
   };
   function modusLabel(mode) { return MODUS_LABELS[mode] || String(mode || ''); }
 
@@ -4427,6 +6767,15 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
       if (mode === 'card') filterSummary = s.cardLast4 ? 'Karte …' + s.cardLast4 : '';
       else if (mode === 'terminal' || mode === 'export') {
         filterSummary = term ? term + ' Terminal(s)' : 'alle Terminals';
+      } else if (mode === 'reporting') {
+        // Der eigentliche Filter ist hier der Kanal. Die Terminal-Auswahl kommt
+        // nur dazu, wenn sie ueberhaupt gilt - dieselbe Bedingung wie in
+        // generate() (reportingTerminalPanelSichtbar). Sonst verspraeche die
+        // Zeile eine Einschraenkung, die die Query gar nicht traegt.
+        const kanal = REPORTING_KANAL_WAHL_LABEL[s.reportingChannel] || s.reportingChannel || '';
+        filterSummary = reportingTerminalPanelSichtbar(s.reportingChannel, s.reportingByTerminal)
+          ? kanal + ' · ' + (term ? term + ' Terminal(s)' : 'alle Terminals')
+          : kanal;
       }
     }
     return {
@@ -4525,6 +6874,28 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
 
   // Der ganze Ablauf. Gibt nichts zurueck, meldet alles ueber die
   // Fortschrittsanzeige. Wirft nicht - jeder Fehler landet als Meldung.
+  // Settlement- und Reporting-Report holen ihr Ergebnis auf demselben Weg und
+  // unterscheiden sich nur im Namen und in der Ingest-Funktion. Der
+  // Terminal-Report laeuft bewusst NICHT hierueber: er nutzt
+  // holeErgebnisInReport(), das die Antwort selbst auswertet (202/4xx) statt
+  // ueber holeErgebnisText() zu gehen.
+  const BERICHT_INGEST = {
+    settlement: { name: 'Settlement-Report', uebergib: uebergibSettlementCsv },
+    reporting:  { name: 'Reporting-Report',  uebergib: uebergibReportingCsv },
+  };
+
+  async function holeErgebnisInBericht(mode, token, account) {
+    const bericht = BERICHT_INGEST[mode];
+    const r = await holeErgebnisText(token, account);
+    if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return false; }
+    const ok = bericht.uebergib(r.text);
+    zeigeFortschritt(ok
+      ? `Ergebnis geladen – ${bericht.name} erstellt.`
+      : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
+      ok ? 'erfolg' : 'fehler');
+    return ok;
+  }
+
   async function submitUndReport(sql) {
     if (apiLauf) return;                       // schon ein Lauf aktiv
     apiLauf = { token: '', abgebrochen: false };
@@ -4613,14 +6984,8 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
 
       if (state.mode === 'terminal') {
         await holeErgebnisInReport(token, account);
-      } else if (state.mode === 'settlement') {
-        const r = await holeErgebnisText(token, account);
-        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
-        const ok = uebergibSettlementCsv(r.text);
-        zeigeFortschritt(ok
-          ? 'Ergebnis geladen – Settlement-Report erstellt.'
-          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
-          ok ? 'erfolg' : 'fehler');
+      } else if (BERICHT_INGEST[state.mode]) {
+        await holeErgebnisInBericht(state.mode, token, account);
       } else {
         zeigeFortschritt('Fertig — Ergebnis unten im Verlauf als CSV oder Excel herunterladen.', 'erfolg');
       }
@@ -4743,6 +7108,11 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     });
   }
 
+  // Modi mit eigenem Report-Panel: dort gibt es Excel (und beim Settlement- und
+  // Reporting-Report zusaetzlich PDF) gebrandet aus dem Panel selbst, deshalb
+  // traegt ihre Verlaufszeile nur den Roh-CSV-Download.
+  const MODI_MIT_REPORT_PANEL = ['terminal', 'settlement', 'reporting'];
+
   function renderHistory() {
     const list = historyFuerModus(historyLaden(), state.mode);
     queryHistoryBody.innerHTML = '';
@@ -4760,12 +7130,13 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
       const zeit = isNaN(dt.getTime()) ? (e.submittedAt || '')
         : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
       const zsf = escapeHtml([e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · '));
-      // Im Terminal- und im Settlement-Report deckt der Report-Export unten (mit
-      // Titel/Branding, XLSX/CSV/PDF) das Excel ab, und der Report erscheint nach
-      // dem Submit ohnehin - deshalb dort in der Verlaufszeile nur der Roh-CSV-
-      // Download. In den uebrigen Modi zusaetzlich der logikfreie Excel-Download.
+      // Im Terminal-, Settlement- und Reporting-Report deckt der Report-Export
+      // unten (mit Titel/Branding, XLSX/CSV/PDF) das Excel ab, und der Report
+      // erscheint nach dem Submit ohnehin - deshalb dort in der Verlaufszeile
+      // nur der Roh-CSV-Download. In den uebrigen Modi zusaetzlich der
+      // logikfreie Excel-Download.
       const acc = escapeHtml(e.account || '');
-      const xlsxBtn = (e.mode === 'terminal' || e.mode === 'settlement') ? ''
+      const xlsxBtn = MODI_MIT_REPORT_PANEL.includes(e.mode) ? ''
         : `<button class="btn" data-act="xlsx" data-token="${escapeHtml(e.token)}" data-mode="${escapeHtml(e.mode)}" data-account="${acc}">Excel</button>`;
       tr.innerHTML =
         `<td>${escapeHtml(zeit)}</td><td>${escapeHtml(modusLabel(e.mode))}</td><td>${zsf}</td><td>${escapeHtml(e.status || '')}</td>` +
@@ -4791,17 +7162,12 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
       if (!bereit) { settingsOeffnen(); return; }
       const account = aktiverAccount();
       // Gleiches Muster wie submitUndReport (siehe dort): das Token-Feld ist
-      // in jedem API-Modus sichtbar, auch im Settlement-Modus. Ohne diese
-      // Verzweigung liefe der Abruf immer ueber den Terminal-Report-Pfad und
-      // wuerde im Settlement-Modus mit "Pflichtspalten fehlen" scheitern.
-      if (state.mode === 'settlement') {
-        const r = await holeErgebnisText(token, account);
-        if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return; }
-        const ok = uebergibSettlementCsv(r.text);
-        zeigeFortschritt(ok
-          ? 'Ergebnis geladen – Settlement-Report erstellt.'
-          : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
-          ok ? 'erfolg' : 'fehler');
+      // in jedem API-Modus sichtbar, auch im Settlement- und im
+      // Reporting-Modus. Ohne diese Verzweigung liefe der Abruf immer ueber den
+      // Terminal-Report-Pfad und wuerde dort mit "Pflichtspalten fehlen"
+      // scheitern.
+      if (BERICHT_INGEST[state.mode]) {
+        await holeErgebnisInBericht(state.mode, token, account);
       } else {
         await holeErgebnisInReport(token, account);
       }
@@ -5522,6 +7888,31 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     return div;
   }
 
+  // --- Reporting: die beiden Regeln der Verdrahtung ------------------------
+  // Bewusst reine Funktionen und nicht inline in setMode/generate: beide Regeln
+  // haengen an State-Feldern, die sich WAEHREND des Modus aendern (Radio,
+  // Checkbox), nicht nur am Modus selbst - und beide waeren sonst nur ueber den
+  // Umweg des gerenderten DOM pruefbar. Die Liste der gueltigen Kanalwahlen
+  // (REPORTING_KANAL_WAHL) steht bei den uebrigen Reporting-Konstanten, weil
+  // loadState() ihr einziger Konsument ist.
+
+  // 'BOTH' ergibt eine LEERE Liste, nicht ['POS','ECOM']: leer heisst fuer
+  // buildReportingQuery "gar kein saleschannel-Filter", und nur so bleibt ein
+  // Versuch mit einem dritten Verkaufskanal als OTHER sichtbar (SPEC 7).
+  // ['POS','ECOM'] wuerde ihn dagegen still herausfiltern.
+  function reportingKanalFilter(wahl) {
+    if (wahl === 'POS')  return ['POS'];
+    if (wahl === 'ECOM') return ['ECOM'];
+    return [];
+  }
+
+  // Das Terminal-Panel gehoert nur dann zum Reporting-Modus, wenn die
+  // Aufschluesselung gewaehlt ist UND der Kanal ueberhaupt Terminals kennt -
+  // E-Commerce-Versuche haben keines (SPEC 7).
+  function reportingTerminalPanelSichtbar(kanal, byTerminal) {
+    return !!byTerminal && kanal !== 'ECOM';
+  }
+
   function generate() {
     const start = `${state.startDate} ${state.startTime}`;
     const end   = `${state.endDate} ${state.endTime}`;
@@ -5538,6 +7929,19 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
       sql = buildCardQuery({ spaceIds, start, end, terminalIds: ids, last4: state.cardLast4 || '' });
     } else if (state.mode === 'settlement') {
       sql = buildSettlementQuery({ start, end, reference: state.settlementReference });
+    } else if (state.mode === 'reporting') {
+      // Terminals nur mitgeben, wenn das Terminal-Panel im Reporting-Modus
+      // ueberhaupt gilt. Sonst filterte eine aus einem anderen Modus
+      // stehengebliebene Auswahl unsichtbar mit - das Panel ist dann ja gar
+      // nicht eingeblendet.
+      const mitTerminal = reportingTerminalPanelSichtbar(state.reportingChannel, state.reportingByTerminal);
+      const ids = mitTerminal ? state.terminals.filter(t => t.selected).map(t => t.id) : [];
+      sql = buildReportingQuery({
+        spaceIds, start, end,
+        channels: reportingKanalFilter(state.reportingChannel),
+        byTerminal: mitTerminal,
+        terminalIds: ids,
+      });
     } else {
       sql = buildBrandQuery({ spaceIds, start, end });
     }
@@ -5572,7 +7976,8 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
 
     if (api) {
       apiHinweis.textContent = 'Die Query wird über den lokalen Proxy ausgeführt. '
-        + 'Das Ergebnis erscheint im Verlauf (CSV/Excel); im Terminal- und im Settlement-Report zusätzlich als Auswertung.';
+        + 'Das Ergebnis erscheint im Verlauf (CSV/Excel); im Terminal-, im Settlement- und '
+        + 'im Reporting-Modus zusätzlich als Auswertung.';
     }
   }
 
@@ -5580,7 +7985,12 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     state.mode = mode;
     modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     // Settlement ist seit v5.8 account-basiert: weder Space- noch Terminal-Filter.
-    const showTerminal = (mode === 'terminal' || mode === 'export' || mode === 'card');
+    // Reporting filtert dagegen wie brand/terminal nach Space; sein
+    // Terminal-Panel haengt zusaetzlich an zwei eigenen Feldern (siehe
+    // reportingTerminalPanelSichtbar).
+    const showTerminal = (mode === 'terminal' || mode === 'export' || mode === 'card')
+      || (mode === 'reporting'
+        && reportingTerminalPanelSichtbar(state.reportingChannel, state.reportingByTerminal));
     spaceSection.classList.toggle('hidden', mode === 'settlement');
     terminalSection.classList.toggle('active', showTerminal);
     exportSection.classList.toggle('active', mode === 'export');
@@ -5589,6 +7999,10 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
     // Terminal-Report ist die Ausgabe von 'terminal': Filter oben, Report unten.
     reportSection.classList.toggle('active', mode === 'terminal');
     settlementReportSection.classList.toggle('active', mode === 'settlement');
+    // Reporting: Filter-Panel oben, Report-Panel unten - dasselbe Muster wie
+    // Terminal- und Settlement-Report.
+    reportingSection.classList.toggle('active', mode === 'reporting');
+    reportingReportSection.classList.toggle('active', mode === 'reporting');
     // tip_total/unsettled_anzahl erscheinen nur in brand/terminal;
     // der Settlement-Modus (seit v5.8 account-basiert) liefert kein tip_total mehr
     // und hat dafuer keinen eigenen Hinweis.
@@ -5604,6 +8018,9 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
       terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl wird über alle Terminals der gewählten Spaces gesucht.';
     } else if (mode === 'settlement') {
       modeBadge.textContent = 'Settlement';
+    } else if (mode === 'reporting') {
+      modeBadge.textContent = 'Reporting';
+      terminalModeHint.innerHTML = '<strong>Optionaler Filter:</strong> Ohne Terminal-Auswahl werden alle Terminals der gewählten Spaces aufgeschlüsselt. Betrifft nur den POS-Anteil.';
     } else {
       modeBadge.textContent = 'Brand';
     }
@@ -5676,6 +8093,461 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
       const { status, daten } = await leseCredentials();
       if (status === 200 && daten && daten.accountId) settlementAccountInput.value = String(daten.accountId);
     } catch (e) { /* Kopieren-Modus oder Proxy nicht erreichbar - Feld bleibt leer */ }
+  }
+
+  // --- Reporting-Report: Ansicht und Ingest --------------------------------
+  // Aufbau wie beim Settlement-Report: ein Modell im Modul-Scope, ein Ingest,
+  // der Parser -> Modell -> Status -> Render verkettet, und eine duenne
+  // UI-Schicht darueber. Anders als der Terminal-/Settlement-Report kennt
+  // dieser Modus zusaetzlich einen CSV-Import (SPEC 5): das Ergebnis ist
+  // vor-aggregiert und traegt keine personenbezogenen Daten.
+  let reportingModell = null;
+  // Die geparsten Zeilen bleiben liegen: das Haendler-Land aendert nur die
+  // Einstufung, nicht die Daten. Statt das Ergebnis erneut abzurufen (bei
+  // wallee zaehlt jeder Abruf als Download) wird das Modell daraus neu gebaut.
+  let reportingRohzeilen = null;
+  let reportingZeitraum = { start: '', end: '', spaces: [] };
+
+  // Lesezugriff auf das zuletzt gebaute Modell - Testnaht wie getState().
+  function reportingModellAktuell() { return reportingModell; }
+
+  // Modell aus den bereits geparsten Zeilen neu bauen (Haendler-Land geaendert).
+  function reportingModellNeuBauen() {
+    if (!reportingRohzeilen) return;
+    reportingModell = buildReportingModel(reportingRohzeilen, {
+      merchantCountry: state.reportingMerchantCountry,
+    });
+    renderReportingReport();
+  }
+
+  function reportingZeigeStatus(text, art) {
+    reportingStatus.textContent = text;
+    reportingStatus.dataset.art = art || '';
+  }
+
+  function reportingExportOptionen() {
+    return {
+      zeitraum: { start: reportingZeitraum.start, end: reportingZeitraum.end },
+      spaces: reportingZeitraum.spaces,
+    };
+  }
+
+  // Ab wie vielen Zeilen eine Tabelle eingeklappt wird. Der Verlauf kann ueber
+  // ein Jahr laufen und die Stundenachse hat immer 24 Zeilen - beides wuerde
+  // die Uebersicht erschlagen. Gleiche Ueberlegung wie beim Transaktionsdetail
+  // des Settlement-Reports, nur mit einer kleineren Schwelle. 20 liegt bewusst
+  // unter den 24 Stunden und ueber der laengsten Sachtabelle (Top-10 Laender).
+  const REPORTING_TABELLE_OFFEN = 20;
+
+  function reportingTabelleHtml(block) {
+    const kopf = block.kopf.map(k =>
+      `<th${k.format === 'text' ? '' : ' class="num"'}>${escapeHtml(k.label)}</th>`).join('');
+    const zeilen = block.zeilen.map((r, ri) => '<tr>' + r.map((wert, c) => {
+      // reportingZellFormat statt kopf[c].format: die Kacheln mischen in ihrer
+      // Wert-Spalte Zaehler, Prozente und Betraege.
+      const format = reportingZellFormat(block, ri, c);
+      return `<td${format === 'text' ? '' : ' class="num"'}>`
+        + `${escapeHtml(reportingZellText(wert, format))}</td>`;
+    }).join('') + '</tr>').join('');
+    return `<table class="report-table"><thead><tr>${kopf}</tr></thead><tbody>${zeilen}</tbody></table>`;
+  }
+
+  // Kacheln: Kennzahl / Wert / Waehrung. Die Waehrung steht vor dem Betrag,
+  // damit keine Kachel eine Zahl ohne ihre Einheit zeigt.
+  function reportingKachelnHtml(block) {
+    const kacheln = block.zeilen.map((z, r) => {
+      const wert = reportingZellText(z[1], reportingZellFormat(block, r, 1));
+      const waehrung = String(z[2] == null ? '' : z[2]);
+      return '<div class="kpi-kachel">'
+        + `<span class="kpi-label">${escapeHtml(String(z[0] == null ? '' : z[0]))}</span>`
+        + `<span class="kpi-wert">${escapeHtml(waehrung ? `${waehrung} ${wert}` : wert)}</span></div>`;
+    }).join('');
+    return `<div class="kpi-kacheln">${kacheln}</div>`;
+  }
+
+  function reportingBalkenHtml(block) {
+    const { achse, serien } = reportingBalkenSerien(block);
+    if (!achse.length || !serien.length) return '';
+    const achsenName = block.kopf.length ? block.kopf[0].label : '';
+    return serien.map(s => {
+      const svg = svgBalken(s.werte, {
+        hoehe: s.format === 'pct' ? 60 : 90,
+        max: s.max,
+        farbe: s.format === 'pct' ? 'accent-dark' : 'accent',
+        beschriftung: `${s.label} je ${achsenName}`,
+      });
+      if (!svg) return '';
+      // Ohne feste Obergrenze skaliert die Reihe auf ihr eigenes Maximum - das
+      // gehoert dazugeschrieben, sonst laesst sich die Balkenhoehe nicht lesen.
+      // s.max setzt reportingBalkenSerien ausschliesslich an der pct-Serie
+      // (feste 0-100-Achse), deshalb ist der Skala-Zweig immer der Prozentfall.
+      const spitze = s.max
+        ? `Skala 0–${reportingZellText(s.max, 'zahl')} %`
+        : `Maximum ${reportingZellText(Math.max(...s.werte.map(v => (typeof v === 'number' ? v : 0))), s.format)}`;
+      return '<figure class="balken-block">'
+        + `<figcaption>${escapeHtml(s.label)} · ${escapeHtml(spitze)}</figcaption>${svg}`
+        + `<div class="balken-achse"><span>${escapeHtml(achse[0])}</span>`
+        + `<span>${escapeHtml(achse[achse.length - 1])}</span></div></figure>`;
+    }).join('');
+  }
+
+  function reportingBlockHtml(block) {
+    const titel = `<h3>${escapeHtml(block.titel)}</h3>`;
+    const hinweis = block.hinweis ? `<p class="hint">${escapeHtml(block.hinweis)}</p>` : '';
+    // Hinweisblock (kopf: [], zeilen: []) - nur seine Aussage, keine Tabelle.
+    // Ein Kopf ohne Spalten waere ein Rahmen um ein Nichts.
+    if (!block.kopf.length) return titel + hinweis;
+    if (block.typ === 'kacheln') return titel + reportingKachelnHtml(block) + hinweis;
+    const balken = block.typ === 'balken' ? reportingBalkenHtml(block) : '';
+    const tabelle = block.zeilen.length > REPORTING_TABELLE_OFFEN
+      ? `<details><summary>Tabelle (${formatIntCH(block.zeilen.length)} Zeilen)</summary>`
+        + `${reportingTabelleHtml(block)}</details>`
+      : reportingTabelleHtml(block);
+    return titel + balken + tabelle + hinweis;
+  }
+
+  // Bildschirm-Ausgabe: Titelblock voran, danach ein Abschnitt je Kanal
+  // (gruppiert ueber block.kanal, nicht ueber den Titel - der Kanal steht dort
+  // zwar auch drin, aber nur damit die XLSX-Blattnamen eindeutig bleiben).
+  function renderReportingReport() {
+    if (!reportingModell) {
+      reportingReportOutput.innerHTML = '';
+      reportingReportActions.classList.add('hidden');
+      return;
+    }
+    const bloecke = reportingExportBloecke(reportingModell, reportingExportOptionen());
+    const teile = [];
+    let letzterKanal = null;
+    bloecke.forEach(b => {
+      if (b.kanal !== letzterKanal) {
+        letzterKanal = b.kanal;
+        if (b.kanal) {
+          teile.push(`<h2 class="report-kanal">${escapeHtml(REPORTING_KANAL_LABEL[b.kanal] || b.kanal)}</h2>`);
+        }
+      }
+      teile.push(reportingBlockHtml(b));
+    });
+    reportingReportOutput.innerHTML = teile.join('');
+    reportingReportActions.classList.remove('hidden');
+  }
+
+  // Die Failure-Reason-Namen kommen aus der statischen Tabelle FAILURE_REASONS
+  // im Modell selbst - die wallee-Web-Service-API kennt keinen Dienst, der die
+  // IDs aufloest (vollstaendig geprueft, siehe Kommentar an der Konstante).
+  // Deshalb wird hier bewusst KEINE Namenstabelle durchgereicht.
+  function ingestReportingCsv(text) {
+    const res = parseReportingCsv(text);
+    if (res.error) {
+      reportingModell = null;
+      reportingRohzeilen = null;
+      renderReportingReport();
+      reportingZeigeStatus(res.error.message, 'fehler');
+      return false;
+    }
+    reportingRohzeilen = res.rows;
+
+    // Zeitraum genau so zusammensetzen wie generate() es fuer die Query tut -
+    // state haelt Datum und Uhrzeit getrennt.
+    reportingZeitraum = {
+      start: `${state.startDate} ${state.startTime}`,
+      end: `${state.endDate} ${state.endTime}`,
+      spaces: selectedSpaceIds(),
+    };
+    reportingModell = buildReportingModel(res.rows, {
+      merchantCountry: state.reportingMerchantCountry,
+    });
+    renderReportingReport();
+
+    // Die beiden Verlust-Zaehler haengen an der Datei, nicht am Modell - sie
+    // gehoeren deshalb an BEIDE Statuszeilen. Gerade "keine Zahlungsversuche"
+    // ist der Fall, in dem ein unlesbares Zahlenformat sich sonst als leeres
+    // Ergebnis tarnte.
+    let hinweise = '';
+    if (res.unbekannteBloecke > 0) {
+      hinweise += ` · ${formatIntCH(res.unbekannteBloecke)} Zeilen mit unbekanntem Block übersprungen`;
+    }
+    // Ein unerwartetes Zahlen- oder Boolean-Format meldet sich damit beim ersten
+    // Import, statt einen plausibel aussehenden falschen Report zu erzeugen.
+    if (res.unbrauchbareWerte > 0) {
+      hinweise += ` · ${formatIntCH(res.unbrauchbareWerte)} Werte im unerwarteten Format `
+        + '(als 0 bzw. unbekannt gewertet)';
+    }
+
+    if (!reportingModell.hatDaten) {
+      reportingZeigeStatus('Keine Zahlungsversuche im gewählten Zeitraum.' + hinweise, 'info');
+      return true;
+    }
+    const attempts = reportingModell.kanalListe
+      .reduce((s, k) => s + reportingModell.kanaele[k].kpi.attempts, 0);
+    const kanaele = reportingModell.kanalListe
+      .map(k => REPORTING_KANAL_LABEL[k] || k).join(', ');
+    reportingZeigeStatus(
+      `${formatIntCH(attempts)} Zahlungsversuche · ${kanaele}${hinweise}`, 'erfolg');
+    return true;
+  }
+
+  // Wie uebergibReportCsv/uebergibSettlementCsv: der Report ist die Ausgabe des
+  // Modus, kein eigener Tab - setMode frischt die Ansicht auf.
+  function uebergibReportingCsv(csv) {
+    const ok = ingestReportingCsv(csv);
+    if (ok) setMode('reporting');
+    return ok;
+  }
+
+  // --- Reporting-Report: die drei Exporte ----------------------------------
+  // Alle drei sitzen auf reportingExportBloecke() auf - vier Ausgaben aus einer
+  // Quelle, wie beim Terminal- und beim Settlement-Report. XLSX und PDF laufen
+  // ueber die eingebetteten Vendor-Bloecke und deshalb ausschliesslich hier,
+  // im Event-Pfad; die reinen Funktionen oben bleiben vendorfrei.
+  function reportingDateiname(endung) {
+    const d = new Date();
+    const stempel = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return `reporting-report_${stempel}.${endung}`;
+  }
+
+  function exportReportingCsv() {
+    if (!reportingModell) return;
+    downloadDatei(buildReportingReportCsv(reportingModell, reportingExportOptionen()),
+      reportingDateiname('csv'), 'text/csv;charset=utf-8');
+  }
+
+  // Excel-Zahlformate je Blockformat. 0.0"%" zeigt den Wert mit genau einer
+  // Nachkommastelle und haengt das Prozentzeichen an, OHNE ihn wie das
+  // eingebaute Format 0.0% mit 100 zu multiplizieren - die Bloecke fuehren
+  // bereits Werte von 0 bis 100.
+  const REPORTING_XLSX_FORMAT = { betrag: '#,##0.00', zahl: '#,##0', pct: '0.0"%"', faktor: '0.00' };
+
+  // Ein Blatt je Kanal, die Abschnitte darin untereinander gestapelt (Muster
+  // exportReportXlsx beim Terminal-Report), statt ein Blatt je Block: der
+  // Fixture-Bericht haette sonst 34 Tabs. Der kanaluebergreifende Titelblock
+  // bekommt sein eigenes, vorangestelltes Blatt.
+  function exportReportingXlsx() {
+    if (!reportingModell) return;
+    const bloecke = reportingExportBloecke(reportingModell, reportingExportOptionen());
+    const wb = XLSX.utils.book_new();
+    const d = new Date();
+    const datum = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+
+    const gruppen = [];
+    bloecke.forEach(b => {
+      const schluessel = b.kanal || '';
+      let g = gruppen.find(x => x.kanal === schluessel);
+      if (!g) { g = { kanal: schluessel, bloecke: [] }; gruppen.push(g); }
+      g.bloecke.push(b);
+    });
+
+    gruppen.forEach(gruppe => {
+      const maxCols = Math.max(1, ...gruppe.bloecke.map(b => b.kopf.length));
+      const aoa = [];
+      const stile = [];               // { r, c, s, z } - nach aoa_to_sheet angewandt
+      const merges = [];
+      const spanne = r => merges.push({ s: { r, c: 0 }, e: { r, c: maxCols - 1 } });
+
+      aoa.push(['wallee — Reporting-Report']); spanne(0);
+      stile.push({ r: 0, c: 0, s: { font: { bold: true, sz: 14, color: { rgb: XLSX_FARBE.text } },
+        alignment: { horizontal: 'left', vertical: 'center' } } });
+      aoa.push([`Erstellt am ${datum}`]); spanne(1);
+      stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: '6B7A79' } } } });
+      aoa.push([]);
+      let r = 3;
+
+      gruppe.bloecke.forEach(block => {
+        aoa.push([block.titel]); spanne(r);
+        stile.push({ r, c: 0, s: { font: { bold: true, sz: 12, color: { rgb: XLSX_FARBE.text } } } });
+        r++;
+        if (block.kopf.length) {
+          aoa.push(block.kopf.map(k => k.label));
+          for (let c = 0; c < block.kopf.length; c++) stile.push({ r, c, s: xlsxKopfStil() });
+          r++;
+          block.zeilen.forEach((zeile, i) => {
+            const zebra = i % 2 === 1;
+            aoa.push(zeile.map((wert, c) => reportingZellZahl(wert, reportingZellFormat(block, i, c))));
+            zeile.forEach((wert, c) => {
+              const format = REPORTING_XLSX_FORMAT[reportingZellFormat(block, i, c)] || null;
+              stile.push({ r, c, s: xlsxZellStil(zebra, !!format, format), z: format });
+            });
+            r++;
+          });
+        }
+        if (block.hinweis) {
+          aoa.push([block.hinweis]); spanne(r);
+          stile.push({ r, c: 0,
+            s: { font: { color: { rgb: XLSX_FARBE.text }, italic: true, sz: 9 } } });
+          r++;
+        }
+        aoa.push([]); r++;            // Leerzeile zwischen den Abschnitten
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!merges'] = merges;
+      stile.forEach(op => {
+        const zelle = ws[XLSX.utils.encode_cell({ r: op.r, c: op.c })];
+        if (!zelle) return;
+        if (op.s) zelle.s = op.s;
+        if (op.z && zelle.t === 'n') zelle.z = op.z;
+      });
+      ws['!cols'] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 26 : 15 }));
+      XLSX.utils.book_append_sheet(wb, ws,
+        xlsxBlattName(gruppe.kanal ? (REPORTING_KANAL_LABEL[gruppe.kanal] || gruppe.kanal) : 'Reporting'));
+    });
+
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    downloadDatei(
+      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      reportingDateiname('xlsx'),
+    );
+  }
+
+  // Muster exportSettlementPdf. Bewusst eine eigene Schleife statt einer
+  // gemeinsamen: der Settlement-Export ist ausgeliefert und getestet, und ein
+  // geteilter Schreiber haette sein Verhalten mit angefasst.
+  function exportReportingPdf() {
+    if (!reportingModell) return;
+    const p = reportingPdfBloecke(reportingModell, reportingExportOptionen());
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+    doc.setFontSize(16);
+    doc.text(p.titel, 40, 50);
+    doc.setFontSize(9);
+    p.kopfzeilen.forEach((z, i) => doc.text(z, 40, 68 + i * 12));
+
+    let y = 68 + p.kopfzeilen.length * 12 + 16;
+    p.tabellen.forEach(tab => {
+      if (tab.seitenumbruchDavor) { doc.addPage(); y = 50; }
+      // Gleiche Schwelle und dieselbe Begruendung wie beim Settlement-PDF:
+      // reicht der Platz nicht mehr fuer Titel UND Kopfzeile, stuende der
+      // Titel sonst verwaist am Seitenende.
+      const MIN_PLATZ_FUER_TITEL = 70;
+      if (!tab.seitenumbruchDavor
+        && y + MIN_PLATZ_FUER_TITEL > doc.internal.pageSize.getHeight() - 40) {
+        doc.addPage();
+        y = 50;
+      }
+      doc.setFontSize(11);
+      doc.text(tab.titel, 40, y);
+      y += 8;
+      if (!tab.nurHinweis) {
+        const spalten = {};
+        tab.ausrichtung.forEach((a, i) => { spalten[i] = { halign: a }; });
+        // Breite Tabellen (Zahlungsmittel mit neun Spalten, Betraege je
+        // Waehrung mit elf) sprengen bei Schriftgroesse 8 die nutzbaren 515pt.
+        const schrift = tab.header.length >= 9 ? 7 : 8;
+        doc.autoTable({
+          head: [tab.header],
+          body: tab.rows,
+          startY: y,
+          margin: { left: 40, right: 40 },
+          styles: { fontSize: schrift, cellPadding: 3 },
+          headStyles: { fillColor: [17, 217, 204], textColor: [255, 255, 255] },
+          alternateRowStyles: { fillColor: [241, 251, 250] },
+          columnStyles: spalten,
+        });
+        y = doc.lastAutoTable.finalY + 20;
+      } else {
+        y += 6;
+      }
+      if (tab.hinweis) {
+        doc.setFontSize(8);
+        const zeilen = doc.splitTextToSize(tab.hinweis, 515);
+        doc.text(zeilen, 40, y);
+        y += zeilen.length * 10 + 14;
+      }
+    });
+
+    doc.save(reportingDateiname('pdf'));
+  }
+
+  // --- Event bindings: Reporting -------------------------------------------
+  function reportingKanalSetzen(wahl) {
+    state.reportingChannel = wahl;
+    saveState();
+    // Bewusst NUR die Radios abgleichen: aktualisiereReportingInputs() wuerde
+    // auch das Landfeld neu setzen und dem Nutzer mitten im Tippen einen Wert
+    // in die Box schreiben, den er gerade loescht.
+    aktualisiereReportingKanalInputs();
+    // Der Kanal entscheidet mit, ob das Terminal-Panel gilt - und er aendert
+    // die Query. Deshalb beides nachziehen.
+    aktualisiereReportingTerminalPanel();
+    generate();
+  }
+
+  [[reportingChannelPos, 'POS'], [reportingChannelEcom, 'ECOM'], [reportingChannelBoth, 'BOTH']]
+    .forEach(([el, wahl]) => el.addEventListener('change', () => {
+      if (el.checked) reportingKanalSetzen(wahl);
+    }));
+
+  reportingMerchantCountryEl.addEventListener('input', () => {
+    // Nur Buchstaben, hoechstens zwei, immer gross - normLand im Modell
+    // akzeptiert ausschliesslich ISO-2, alles andere waere UNKNOWN.
+    const wert = String(reportingMerchantCountryEl.value || '')
+      .replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 2);
+    reportingMerchantCountryEl.value = wert;
+    // Ein Rumpf von weniger als zwei Buchstaben ist kein Land: er wuerde im
+    // Modell jede Karte auf UNKNOWN werfen. Solange er dasteht, bleibt der
+    // zuletzt GUELTIGE Wert stehen und das Modell unberuehrt - bewusst kein
+    // stiller Rueckfall auf den Vorgabewert, der im Kopf des Reports
+    // "Haendler-Land: CH" behaupten wuerde, waehrend das Feld leer ist.
+    if (wert.length !== 2) return;
+    state.reportingMerchantCountry = wert;
+    saveState();
+    // Reine Auswertungsgroesse: sie steckt nicht in der Query, sondern im
+    // Modell - deshalb neu rechnen statt generate().
+    reportingModellNeuBauen();
+  });
+
+  // Beim Verlassen des Feldes den gueltigen Stand zurueckschreiben. Der
+  // input-Handler laesst einen Rumpf ("", "D") bewusst stehen, ohne ihn in
+  // State und Modell zu uebernehmen - ohne diesen Abgleich bliebe das Feld den
+  // Rest der Sitzung leer, waehrend der Report-Kopf "Haendler-Land: DE"
+  // ausweist. Genau diese Diskrepanz waere im Bericht sichtbar.
+  reportingMerchantCountryEl.addEventListener('blur', () => {
+    reportingMerchantCountryEl.value = state.reportingMerchantCountry || REPORTING_DEFAULT_LAND;
+  });
+
+  reportingByTerminalToggle.addEventListener('change', () => {
+    state.reportingByTerminal = reportingByTerminalToggle.checked;
+    saveState();
+    aktualisiereReportingTerminalPanel();
+    generate();
+  });
+
+  reportingCsvImportBtn.addEventListener('click', () => reportingCsvImport.click());
+  reportingCsvImport.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) {
+      const reader = new FileReader();
+      reader.onload = () => uebergibReportingCsv(String(reader.result || ''));
+      // Bewusst nicht ueber leseDatei(): dessen Fehlerpfad schreibt in die
+      // Statuszeile des Terminal-Reports.
+      reader.onerror = () => reportingZeigeStatus('Die Datei konnte nicht gelesen werden.', 'fehler');
+      reader.readAsText(f, 'utf-8');
+    }
+    reportingCsvImport.value = '';
+  });
+
+  reportingCsvBtn.addEventListener('click', () => exportReportingCsv());
+  reportingXlsxBtn.addEventListener('click', () => exportReportingXlsx());
+  reportingPdfBtn.addEventListener('click', () => exportReportingPdf());
+
+  function aktualisiereReportingTerminalPanel() {
+    if (state.mode !== 'reporting') return;
+    terminalSection.classList.toggle('active',
+      reportingTerminalPanelSichtbar(state.reportingChannel, state.reportingByTerminal));
+  }
+
+  function aktualisiereReportingKanalInputs() {
+    reportingChannelPos.checked  = state.reportingChannel === 'POS';
+    reportingChannelEcom.checked = state.reportingChannel === 'ECOM';
+    reportingChannelBoth.checked = state.reportingChannel === 'BOTH';
+  }
+
+  // Vollabgleich - nur beim Init. Waehrend der Bedienung fasst niemand das
+  // Landfeld an ausser dem Nutzer selbst.
+  function aktualisiereReportingInputs() {
+    aktualisiereReportingKanalInputs();
+    reportingMerchantCountryEl.value = state.reportingMerchantCountry || REPORTING_DEFAULT_LAND;
+    reportingByTerminalToggle.checked = !!state.reportingByTerminal;
   }
 
   // --- Event bindings: Einstellungs-Dialog ---------------------------------
@@ -6185,6 +9057,7 @@ ORDER BY settlement_valuedate, space_id, transaction_id;`;
   renderColumns();
   renderUserPresets();
   aktualisiereSettlementAccount();
+  aktualisiereReportingInputs();
   // Ausgangszustand des Dialogs bewusst im Code setzen und nicht nur ueber die
   // Klasse im Markup: faellt die dort mal weg, stuende der Dialog beim Laden offen.
   settingsZustandZu();

@@ -251,3 +251,66 @@ test('Settlement-State: alter State ohne die neuen Felder bekommt die Defaults',
   assert.ok(!('settlementByTerminal' in st),
     'Das veraltete Feld muss beim Laden aus dem State verschwinden');
 });
+
+// --- Reporting-Modus (v5.11) ----------------------------------------------
+// Die drei Felder sind rein additiv: ein State aus v5.10 kennt sie nicht und
+// muss die Defaults bekommen, ohne dass der STORAGE_KEY hochgezaehlt wird.
+test('Reporting-State: neue Felder mit Defaults, kein STORAGE_KEY-Bump noetig', () => {
+  const { getState, STORAGE_KEY } = loadBuilders();
+  const st = getState();
+  assert.strictEqual(st.reportingChannel, 'BOTH');
+  assert.strictEqual(st.reportingMerchantCountry, 'CH');
+  assert.strictEqual(st.reportingByTerminal, false);
+  assert.strictEqual(STORAGE_KEY, 'wallee_query_builder_v6', 'Die Aenderung ist additiv - kein Bump');
+});
+
+test('Reporting-State: alter State ohne die neuen Felder bekommt die Defaults', () => {
+  const alt = JSON.stringify({
+    mode: 'brand',
+    spaces: [{ id: '123', label: '', selected: true }],
+  });
+  const { getState } = loadBuilders({ seedLocalStorage: { wallee_query_builder_v6: alt } });
+  const st = getState();
+  assert.strictEqual(st.reportingChannel, 'BOTH');
+  assert.strictEqual(st.reportingMerchantCountry, 'CH');
+  assert.strictEqual(st.reportingByTerminal, false);
+});
+
+test('Reporting-State: gespeicherte Werte ueberleben das Laden', () => {
+  const alt = JSON.stringify({
+    mode: 'reporting',
+    reportingChannel: 'ECOM',
+    reportingMerchantCountry: 'de',
+    reportingByTerminal: true,
+  });
+  const { getState } = loadBuilders({ seedLocalStorage: { wallee_query_builder_v6: alt } });
+  const st = getState();
+  assert.strictEqual(st.mode, 'reporting', 'Der Modus muss den Reload ueberleben');
+  assert.strictEqual(st.reportingChannel, 'ECOM');
+  assert.strictEqual(st.reportingMerchantCountry, 'DE', 'ISO-2 wird auf Grossbuchstaben normalisiert');
+  assert.strictEqual(st.reportingByTerminal, true);
+});
+
+test('Reporting-State: unsinnige Werte fallen auf die Defaults zurueck', () => {
+  // Ein Kanal, den die App nicht kennt, wuerde in generate() zu einem stillen
+  // Vollfilter; ein Land wie "Schweiz" wuerde jede Karte auf UNKNOWN werfen.
+  const alt = JSON.stringify({
+    mode: 'reporting', reportingChannel: 'ALLES', reportingMerchantCountry: 'Schweiz',
+  });
+  const { getState } = loadBuilders({ seedLocalStorage: { wallee_query_builder_v6: alt } });
+  const st = getState();
+  assert.strictEqual(st.reportingChannel, 'BOTH');
+  assert.strictEqual(st.reportingMerchantCountry, 'CH');
+});
+
+test('Modus-Whitelist: reporting ist gueltig, Unsinn faellt weiter auf brand', () => {
+  const gut = loadBuilders({
+    seedLocalStorage: { wallee_query_builder_v6: JSON.stringify({ mode: 'reporting' }) },
+  });
+  assert.strictEqual(gut.getState().mode, 'reporting');
+
+  const schlecht = loadBuilders({
+    seedLocalStorage: { wallee_query_builder_v6: JSON.stringify({ mode: 'gibtsnicht' }) },
+  });
+  assert.strictEqual(schlecht.getState().mode, 'brand');
+});
