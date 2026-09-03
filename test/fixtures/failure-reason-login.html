@@ -1,14 +1,16 @@
 <!--
   Eingefrorenes Abbild der Login-Seite, die app-wallee.com fuer eine UNBEKANNTE
   Failure-Reason-ID ausliefert - geholt am 2026-09-03 ueber
-  /en-us/doc/api/failure-reason/view/<erfundene ID>.
+  /en-us/doc/api/failure-reason/view/999999999999 (eine erfundene ID). Das
+  versteckte Feld "target" unten im Formular zeigt genau diese Ziel-URL - der
+  Beleg dafuer, dass die Weiterleitung von dort kommt.
 
   Das ist der Grund, warum parseFailureReasonSeite auf den maintitle-Block
   prueft und NICHT auf den Statuscode: die unbekannte ID antwortet mit 302 auf
   diese Seite, Nodes fetch folgt der Weiterleitung von selbst und liefert dann
   eine 200. Ein Statuscode-Check hielte diese Seite fuer einen Treffer.
 
-  GEKUERZT wie das Gegenstueck (17 KB -> unter 3 KB): Asset-Tags, Tag-Manager
+  GEKUERZT wie das Gegenstueck (rund 17 KB -> gut 4 KB): Asset-Tags, Tag-Manager
   und die langen data-*-Attribute am <body> sind weg, darunter der
   Sitzungs-Token in data-guided-tour (oeffentliches Repo). UNVERAENDERT sind
   <title> und der Login-Block - also genau das, was hier zaehlt: kein

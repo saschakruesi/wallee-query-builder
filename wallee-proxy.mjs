@@ -212,6 +212,12 @@ export const FAILURE_DOC_BASE = 'https://app-wallee.com/en-us/doc/api/failure-re
 export const FAILURE_MAX_IDS = 50;
 export const FAILURE_ABSTAND_MS = 200;
 
+// Ein haengender Doku-Server darf den Abruf nicht endlos offen halten: fetch
+// hat von sich aus KEINEN Timeout, und die App wartet auf diese Antwort. Nach
+// Ablauf verhaelt sich der Abruf wie ein Netzfehler - name: null, der Report
+// zeigt weiter '#<id>'.
+export const FAILURE_TIMEOUT_MS = 8000;
+
 // Das Verzeichnis dieses Scripts - dort liegt auch der Cache, damit er beim
 // Kopieren des Ordners mitwandert (anders als die Zugangsdaten, die bewusst im
 // Home des Nutzers bleiben: der Cache ist oeffentliche Doku, kein Geheimnis).
@@ -280,6 +286,10 @@ function htmlText(roh) {
     .replace(/\s+/g, ' ').trim();
 }
 
+// Bewusst eine Regex und kein Parser: der Proxy hat keine Dependencies, und
+// die drei gesuchten Bloecke der Doku-Seite enthalten keine verschachtelten
+// <div>. Kaeme spaeter eines dazu, endete der Treffer an dessen </div> - die
+// Fixtures halten den heutigen Aufbau fest, damit das auffiele.
 function ersterBlock(html, klasse) {
   const re = new RegExp(`<div[^>]*class="[^"]*\\b${klasse}\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>`);
   const treffer = re.exec(String(html == null ? '' : html));
@@ -365,8 +375,10 @@ function schlafe(ms) {
 }
 
 // Holt die Namen zu den IDs - sequentiell und mit Abstand, siehe oben.
-// Rueckgabe { reasons, neu }: neu zaehlt die Treffer, die noch nicht im Cache
-// standen; nur dann lohnt das Schreiben der Datei.
+// Rueckgabe { reasons, neu, cache }: neu zaehlt die Treffer, die noch nicht im
+// Cache standen (nur dann lohnt das Schreiben der Datei), cache ist die Map,
+// in die tatsaechlich geschrieben wurde - der Aufrufer soll nicht raten
+// muessen, ob das die Prozess-Map war oder eine ihm uebergebene.
 //
 // Ein NEGATIVER Treffer (name: null) wird bewusst NICHT gecacht - weder in der
 // Datei noch im Prozess. Eine ID kann in der Doku spaeter auftauchen (genau
@@ -392,7 +404,10 @@ export async function holeFailureReasons(ids, optionen = {}) {
 
     let html = '';
     try {
-      const antwort = await fetch(failureReasonUrl(id), { headers: { Accept: 'text/html' } });
+      const antwort = await fetch(failureReasonUrl(id), {
+        headers: { Accept: 'text/html' },
+        signal: AbortSignal.timeout(FAILURE_TIMEOUT_MS),
+      });
       html = await antwort.text();
     } catch (e) {
       // Netz weg oder Doku-Server nicht erreichbar: dieselbe Antwort wie eine
@@ -409,7 +424,7 @@ export async function holeFailureReasons(ids, optionen = {}) {
     }
     reasons.push(eintrag);
   }
-  return { reasons, neu };
+  return { reasons, neu, cache };
 }
 
 // --- Authentifizierung -----------------------------------------------------
@@ -1007,10 +1022,10 @@ export async function behandleAnfrage(req, res) {
           sendeJson(res, 400, { ok: false, fehler }, origin);
           return;
         }
-        const { reasons, neu } = await holeFailureReasons(ids);
+        const { reasons, neu, cache } = await holeFailureReasons(ids);
         // Nur schreiben, wenn wirklich etwas dazugekommen ist. Ein Aufruf, den
         // der Cache vollstaendig bedient, fasst die Datei nicht an.
-        if (neu > 0) await speichereFailureCache(failureCache);
+        if (neu > 0) await speichereFailureCache(cache);
         sendeJson(res, 200, { ok: true, reasons }, origin);
         return;
       }
@@ -1025,7 +1040,7 @@ export async function behandleAnfrage(req, res) {
           sendeJson(res, 400, { ok: false, fehler: 'Ungueltiger oder fehlender Tag.' }, origin);
           return;
         }
-        const verzeichnis = path.dirname(fileURLToPath(import.meta.url));
+        const verzeichnis = SKRIPT_DIR;
         const ziel = {
           verzeichnis,
           htmlPfad: path.join(verzeichnis, 'wallee_query_builder.html'),
@@ -1147,7 +1162,7 @@ function reicheWalleeDurch(res, antwort, origin, kontext) {
 let appHtmlCache = null;
 function ladeAppHtml() {
   if (appHtmlCache !== null) return appHtmlCache;
-  const datei = path.join(path.dirname(fileURLToPath(import.meta.url)), 'wallee_query_builder.html');
+  const datei = path.join(SKRIPT_DIR, 'wallee_query_builder.html');
   appHtmlCache = fs.readFileSync(datei, 'utf8');
   return appHtmlCache;
 }

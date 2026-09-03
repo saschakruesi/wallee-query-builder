@@ -720,3 +720,16 @@ test('Eine krumme ID kostet nicht den Nachschlag der uebrigen', async () => {
     app.reportingModellAktuell().kanaele.ECOM.failures.find(f => f.id === '9999999999999').name,
     'Neuer Ablehngrund');
 });
+
+test('Ein Parserfehler setzt auch den Nachladelauf zurueck', async () => {
+  // Sonst gaebe reportingNachladeAbwarten() den Lauf des vorigen, geglueckten
+  // Ingests zurueck - eine Testnaht, die auf einen Zustand zeigt, den es nicht
+  // mehr gibt.
+  const { app } = starteMitProxy(apiSeed(),
+    () => treffer('9999999999999', 'Neuer Ablehngrund', 'End User'));
+  app.ingestReportingCsv(FIXTURE_NEUE_ID);
+  assert.strictEqual(await app.reportingNachladeAbwarten(), true);
+
+  assert.strictEqual(app.ingestReportingCsv(''), false);
+  assert.strictEqual(await app.reportingNachladeAbwarten(), false);
+});

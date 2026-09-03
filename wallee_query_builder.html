@@ -8418,8 +8418,9 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // der APP, nicht am Modell: ein Modellneubau (Haendler-Land) darf sie nicht
   // wegwerfen, sonst stuenden die Namen nach dem Umschalten wieder als '#<id>'
   // da und die Route liefe erneut. Form wie der eingebettete Katalog:
-  // { '<id>': [name, kategorie] }.
-  let reportingFailureNachgeladen = {};
+  // { '<id>': [name, kategorie] }. const, weil nur ergaenzt wird (Object.assign):
+  // ein Neuzuweisen wuerde eine bereits gelesene Referenz stehen lassen.
+  const reportingFailureNachgeladen = {};
 
   // Lesezugriff auf das zuletzt gebaute Modell - Testnaht wie getState().
   function reportingModellAktuell() { return reportingModell; }
@@ -8492,9 +8493,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // vorgeprueft - ein einziges krummes Feld duerfte nicht den Nachschlag
     // aller uebrigen kosten. Und nachschlagen liesse es sich ohnehin nicht:
     // die Doku-URL besteht aus Ziffern.
-    // Mehr als die Obergrenze: die ersten nachladen, der Rest bleibt '#<id>'.
-    // Bewusst keine Schleife ueber weitere Bloecke - der Doku-Server ist nicht
-    // unser Server.
+    //
+    // Und mehr als die Obergrenze: die ersten nachladen, der Rest bleibt
+    // '#<id>'. Bewusst keine Schleife ueber weitere Bloecke - der Doku-Server
+    // ist nicht unser Server.
     const ids = offen.filter(id => /^\d+$/.test(id)).slice(0, REPORTING_NACHLADEN_MAX);
     if (!ids.length) return false;
     try {
@@ -8644,6 +8646,9 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     if (res.error) {
       reportingModell = null;
       reportingRohzeilen = null;
+      // Auch die Testnaht zuruecksetzen: sonst gaebe reportingNachladeAbwarten()
+      // den Lauf des VORIGEN, geglueckten Ingests zurueck.
+      reportingNachladeLauf = null;
       renderReportingReport();
       reportingZeigeStatus(res.error.message, 'fehler');
       return false;

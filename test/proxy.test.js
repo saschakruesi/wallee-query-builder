@@ -1223,10 +1223,12 @@ test('dekodiereEntities loest die gaengigen Faelle in EINEM Durchlauf auf', () =
 function dokuFetch(bekannt) {
   const original = globalThis.fetch;
   const rufe = [];
+  const optionen = [];
   let gleichzeitig = 0;
   let maxGleichzeitig = 0;
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, opts) => {
     rufe.push(String(url));
+    optionen.push(opts || {});
     gleichzeitig++;
     maxGleichzeitig = Math.max(maxGleichzeitig, gleichzeitig);
     await new Promise(r => setImmediate(r));
@@ -1239,7 +1241,7 @@ function dokuFetch(bekannt) {
       text: async () => (treffer ? FIXTURE_TREFFER : FIXTURE_LOGIN),
     };
   };
-  return { rufe, wiederherstellen: () => { globalThis.fetch = original; },
+  return { rufe, optionen, wiederherstellen: () => { globalThis.fetch = original; },
     maxGleichzeitig: () => maxGleichzeitig };
 }
 
@@ -1249,6 +1251,10 @@ test('holeFailureReasons: Cache-Treffer erzeugt keinen zweiten fetch', async () 
   try {
     const a = await P.holeFailureReasons(['1568360440179'], { cache, abstandMs: 0 });
     assert.strictEqual(stub.rufe.length, 1);
+    // fetch hat von sich aus keinen Timeout - ein haengender Doku-Server
+    // liesse die App sonst endlos warten.
+    assert.ok(stub.optionen[0].signal, 'der Abruf muss ein Abbruch-Signal tragen');
+    assert.strictEqual(a.cache, cache, 'zurueckgegeben wird die tatsaechlich benutzte Map');
     assert.strictEqual(a.reasons[0].name, '3-D Secure Failure');
     assert.strictEqual(a.neu, 1, 'der erste Lauf hat etwas Neues gefunden');
 
