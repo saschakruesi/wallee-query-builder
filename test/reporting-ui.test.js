@@ -494,3 +494,229 @@ test('Ein Fehler nach einem geglueckten Ingest raeumt den alten Report weg', () 
   assert.ok(!sichtbar(el('reportingReportActions')));
   assert.strictEqual(el('reportingStatus').dataset.art, 'fehler');
 });
+
+// --- Unbekannte Ablehngruende nachladen (Iteration 2, Task 2) -------------
+// Der eingebettete Katalog ist der Stand des letzten Scrapes. Eine ID, die
+// wallee seither neu vergeben hat, steht als '#<id>' im Report; im API-Modus
+// holt der Proxy den Namen von der oeffentlichen Doku-Seite nach.
+
+// Dieselbe Fixture, aber mit einer ID, die der Katalog nicht kennt. Bewusst
+// eine ERSETZUNG statt einer zusaetzlichen Zeile: so bleiben alle Summen und
+// Anteile der Fixture unveraendert, und der Unterschied ist genau der Name.
+const FIXTURE_NEUE_ID = FIXTURE.replace(/1568360440179/g, '9999999999999');
+
+// starte() mit gefaelschtem fetch. Die App ruft beim Init noch anderes ab
+// (Health, Credentials, Update-Check) - gezaehlt wird deshalb nur, was an die
+// Route /failure-reasons geht.
+function starteMitProxy(seed, antwort) {
+  const rufe = [];
+  const dokument = makeDocument();
+  const app = loadBuilders({
+    document: dokument,
+    seedLocalStorage: seed,
+    fetch: async (url) => {
+      const s = String(url);
+      if (s.indexOf('/failure-reasons') !== -1) {
+        rufe.push(s);
+        return antwort(s);
+      }
+      return { status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  return { app, dokument, el: id => dokument.getElementById(id), rufe };
+}
+
+const apiSeed = (over) => ({
+  wallee_query_builder_v6: JSON.stringify(Object.assign(
+    { mode: 'reporting', apiMode: true }, over || {})),
+});
+
+const treffer = (id, name, category) => ({
+  status: 200,
+  json: async () => ({ ok: true, reasons: [{ id, name, category, description: '' }] }),
+});
+
+test('reportingUnbekannteGruende findet genau die IDs, die als #<id> dastuenden', () => {
+  const { app } = starte();
+  const rows = { dim: [
+    { failureReasonId: '1568360440179' },   // im Katalog
+    { failureReasonId: '9999999999999' },   // nicht im Katalog
+    { failureReasonId: '9999999999999' },   // Dublette
+    { failureReasonId: 'UNKNOWN' },         // gar kein Grund (Erfolg/leeres Feld)
+    { failureReasonId: '' },
+  ] };
+  assert.deepStrictEqual(plain(app.reportingUnbekannteGruende(rows, null)), ['9999999999999']);
+
+  // Was bereits nachgeladen ist, faellt heraus - sonst liefe die Route bei
+  // jedem Modellneubau erneut.
+  assert.deepStrictEqual(
+    plain(app.reportingUnbekannteGruende(rows, { 9999999999999: ['Neuer Grund', 'T'] })), []);
+
+  // Kein dim-Block, keine Zeilen: nichts zu tun, kein Wurf.
+  assert.deepStrictEqual(plain(app.reportingUnbekannteGruende(null, null)), []);
+  assert.deepStrictEqual(plain(app.reportingUnbekannteGruende({ dim: [] }, null)), []);
+});
+
+test('reportingFailureNachtrag uebersetzt die Doku-Kategorie und laesst Leeres weg', () => {
+  const { app } = starte();
+  const t = plain(app.reportingFailureNachtrag([
+    { id: '111', name: '3-D Secure Failure', category: 'End User' },
+    { id: '222', name: 'Kommunikationsfehler', category: 'Temporary Issue' },
+    { id: '333', name: 'Ohne Kategorie', category: '' },
+    // name: null heisst "auch die Doku kennt die ID nicht". Ihn zu uebernehmen
+    // hiesse, den Namen '#<id>' durch nichts zu ersetzen und nie wieder
+    // nachzufragen.
+    { id: '444', name: null, category: 'End User' },
+    { id: 'abc', name: 'Keine Zahl', category: 'End User' },
+    null,
+  ]));
+  assert.deepStrictEqual(t, {
+    111: ['3-D Secure Failure', 'END_USER'],
+    222: ['Kommunikationsfehler', 'TEMPORARY'],
+    333: ['Ohne Kategorie', ''],
+  });
+  assert.deepStrictEqual(plain(app.reportingFailureNachtrag(null)), {});
+});
+
+test('Nach dem Ingest werden unbekannte Gruende nachgeladen und ins Modell gebaut', async () => {
+  const { app, rufe } = starteMitProxy(apiSeed(),
+    () => treffer('9999999999999', 'Neuer Ablehngrund', 'Temporary Issue'));
+
+  assert.strictEqual(app.ingestReportingCsv(FIXTURE_NEUE_ID), true);
+  // Vor dem Nachladen steht der Rohwert da - genau das, was der Kunde im
+  // Kopieren-Modus sieht.
+  assert.strictEqual(
+    app.reportingModellAktuell().kanaele.ECOM.failures[0].name, '#9999999999999');
+
+  assert.strictEqual(await app.reportingNachladeAbwarten(), true);
+  assert.strictEqual(rufe.length, 1, 'genau EIN Aufruf fuer alle unbekannten IDs');
+  assert.match(rufe[0], /\/failure-reasons\?ids=9999999999999$/);
+
+  const grund = app.reportingModellAktuell().kanaele.ECOM.failures[0];
+  assert.strictEqual(grund.name, 'Neuer Ablehngrund');
+  assert.strictEqual(grund.kategorie, 'TEMPORARY', 'die Doku-Kategorie kommt mit');
+  // Das Modell wird aus den bereits geparsten Zeilen neu gebaut, nicht neu
+  // abgerufen - Zahlen und Anteile bleiben deshalb unveraendert.
+  assert.strictEqual(grund.attempts,
+    app.reportingModellAktuell().kanaele.ECOM.failures[0].attempts);
+});
+
+test('Ein zweiter Ingest fragt nicht erneut nach - die Tabelle haengt an der App', async () => {
+  const { app, rufe } = starteMitProxy(apiSeed(),
+    () => treffer('9999999999999', 'Neuer Ablehngrund', 'End User'));
+  app.ingestReportingCsv(FIXTURE_NEUE_ID);
+  await app.reportingNachladeAbwarten();
+  assert.strictEqual(rufe.length, 1);
+
+  app.ingestReportingCsv(FIXTURE_NEUE_ID);
+  await app.reportingNachladeAbwarten();
+  assert.strictEqual(rufe.length, 1, 'die ID ist bekannt, es gibt nichts nachzuschlagen');
+  assert.strictEqual(
+    app.reportingModellAktuell().kanaele.ECOM.failures[0].name, 'Neuer Ablehngrund');
+});
+
+test('Ein Wechsel des Haendler-Landes verliert die nachgeladenen Namen nicht', async () => {
+  // Der Modellneubau ist derselbe Pfad, den das Landfeld schon benutzt. Haengte
+  // die Tabelle am Modell statt an der App, stuende nach dem Umschalten wieder
+  // '#<id>' da - und die Route liefe ein zweites Mal.
+  const { app, el, rufe } = starteMitProxy(apiSeed(),
+    () => treffer('9999999999999', 'Neuer Ablehngrund', 'End User'));
+  app.ingestReportingCsv(FIXTURE_NEUE_ID);
+  await app.reportingNachladeAbwarten();
+
+  el('reportingMerchantCountry').value = 'DE';
+  el('reportingMerchantCountry').dispatch('input');
+  assert.strictEqual(app.reportingModellAktuell().merchantCountry, 'DE');
+  assert.strictEqual(
+    app.reportingModellAktuell().kanaele.ECOM.failures[0].name, 'Neuer Ablehngrund');
+  assert.strictEqual(rufe.length, 1);
+});
+
+test('Im Kopieren-Modus wird nichts nachgeladen', async () => {
+  // Dort gibt es keinen Proxy. Genau dafuer ist der eingebettete Katalog da;
+  // was er nicht kennt, bleibt '#<id>'.
+  const { app, rufe } = starteMitProxy(
+    { wallee_query_builder_v6: JSON.stringify({ mode: 'reporting', apiMode: false }) },
+    () => treffer('9999999999999', 'Neuer Ablehngrund', 'End User'));
+  assert.strictEqual(app.ingestReportingCsv(FIXTURE_NEUE_ID), true);
+  assert.strictEqual(await app.reportingNachladeAbwarten(), false);
+  assert.strictEqual(rufe.length, 0);
+  assert.strictEqual(
+    app.reportingModellAktuell().kanaele.ECOM.failures[0].name, '#9999999999999');
+});
+
+test('Ein Fehlschlag laesst den Report stehen, statt ihn zu verhindern', async () => {
+  // Drei Wege, auf denen es schiefgehen kann - keiner darf werfen und keiner
+  // darf den Report anfassen. Haltung der ganzen App: Rueckfall, nie Blockade.
+  const faelle = {
+    'Proxy weg': () => { throw new Error('Failed to fetch'); },
+    '400 vom Proxy': () => ({ status: 400, json: async () => ({ ok: false, fehler: 'x' }) }),
+    'Antwort ohne reasons': () => ({ status: 200, json: async () => ({ ok: true }) }),
+    'Doku kennt die ID auch nicht': () => ({
+      status: 200,
+      json: async () => ({ ok: true, reasons: [{ id: '9999999999999', name: null }] }),
+    }),
+  };
+  for (const [was, antwort] of Object.entries(faelle)) {
+    const { app, el } = starteMitProxy(apiSeed(), antwort);
+    assert.strictEqual(app.ingestReportingCsv(FIXTURE_NEUE_ID), true, was);
+    assert.strictEqual(await app.reportingNachladeAbwarten(), false, was);
+    assert.ok(app.reportingModellAktuell(), `${was}: das Modell steht weiterhin`);
+    assert.strictEqual(
+      app.reportingModellAktuell().kanaele.ECOM.failures[0].name, '#9999999999999', was);
+    assert.strictEqual(el('reportingStatus').dataset.art, 'erfolg',
+      `${was}: die Statuszeile meldet weiterhin den geglueckten Ingest`);
+  }
+});
+
+test('Mehr als 50 unbekannte IDs: die ersten 50, kein Nachschlagen in Schleife', async () => {
+  // Der Doku-Server ist nicht unser Server. Der Rest bleibt '#<id>' - sichtbar
+  // und nachvollziehbar, statt in einer Kette von Abrufen aufzuloesen.
+  //
+  // Die Vorlage ist die eine FAILED-Zeile der Fixture, 60-mal geklont und je
+  // mit einer anderen unbekannten ID versehen. Zaehlwerte und Betraege werden
+  // dadurch groesser als in der Fixture - hier zaehlt allein, wie viele IDS in
+  // den Aufruf gehen.
+  const zeilen = FIXTURE_NEUE_ID.split('\n');
+  const vorlage = zeilen.find(z => z.indexOf('"9999999999999"') !== -1);
+  const viele = FIXTURE_NEUE_ID.trimEnd() + '\n'
+    + Array.from({ length: 60 }, (_, i) =>
+      vorlage.replace('"9999999999999"', `"${9000000000000 + i}"`)).join('\n') + '\n';
+
+  const { app, rufe } = starteMitProxy(apiSeed(),
+    () => ({ status: 200, json: async () => ({ ok: true, reasons: [] }) }));
+  assert.strictEqual(app.ingestReportingCsv(viele), true);
+  await app.reportingNachladeAbwarten();
+
+  assert.strictEqual(rufe.length, 1, 'ein Aufruf, nicht zwei fuer den Rest');
+  const ids = rufe[0].split('ids=')[1].split(',');
+  assert.strictEqual(ids.length, 50);
+  assert.strictEqual(app.REPORTING_NACHLADEN_MAX, 50,
+    'muss zu FAILURE_MAX_IDS im Proxy passen, sonst antwortet der mit 400');
+  // Die 61 unbekannten IDs (die eine der Fixture plus 60 geklonte) sind
+  // tatsaechlich alle da - der Aufruf ist also gekuerzt, nicht die Erkennung.
+  const rows = { dim: Array.from({ length: 61 }, (_, i) => ({ failureReasonId: String(9000000000000 + i) })) };
+  assert.strictEqual(app.reportingUnbekannteGruende(rows, null).length, 61);
+});
+
+test('Eine krumme ID kostet nicht den Nachschlag der uebrigen', async () => {
+  // Die IDs kommen ungeprueft aus dem CSV. Der Proxy weist die GANZE Liste mit
+  // 400 ab, sobald ein Eintrag keine Zahl ist - eine einzige krumme Zeile
+  // liesse sonst alle anderen Gruende als '#<id>' stehen. Nachschlagen liesse
+  // sie sich ohnehin nicht: die Doku-URL besteht aus Ziffern.
+  const zeilen = FIXTURE_NEUE_ID.split('\n');
+  const vorlage = zeilen.find(z => z.indexOf('"9999999999999"') !== -1);
+  const mitMuell = FIXTURE_NEUE_ID.trimEnd() + '\n'
+    + vorlage.replace('"9999999999999"', '"nicht-numerisch"') + '\n';
+
+  const { app, rufe } = starteMitProxy(apiSeed(),
+    () => treffer('9999999999999', 'Neuer Ablehngrund', 'End User'));
+  assert.strictEqual(app.ingestReportingCsv(mitMuell), true);
+  await app.reportingNachladeAbwarten();
+
+  assert.strictEqual(rufe.length, 1);
+  assert.match(rufe[0], /ids=9999999999999$/, 'nur die numerische ID geht in den Aufruf');
+  assert.strictEqual(
+    app.reportingModellAktuell().kanaele.ECOM.failures.find(f => f.id === '9999999999999').name,
+    'Neuer Ablehngrund');
+});

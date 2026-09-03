@@ -11,6 +11,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+// Der Cache der Route /failure-reasons liegt sonst als Datei neben dem
+// Proxy-Script, also IM REPO. Die Tests sollen dort nichts anlegen, deshalb
+// zeigt er hier in ein Temp-Verzeichnis. Die Zuweisung muss vor dem Import
+// unten stehen: FAILURE_CACHE_PATH wird beim Laden des Moduls einmal
+// ausgewertet - und der Modulrumpf hier laeuft vor jedem test.before-Hook.
+process.env.WALLEE_FAILURE_CACHE = path.join(
+  fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-failure-')), 'failure-reasons.cache.json');
+
 // wallee-proxy.mjs ist ein ES-Modul, diese Datei laeuft als CommonJS -
 // deshalb dynamisch importieren. Der Import darf keinen Server starten
 // (die Datei prueft dafuer process.argv[1]).
@@ -1116,4 +1124,304 @@ test('/update ohne X-Wallee-Proxy-Header wird abgelehnt (403, gleicher Schutz wi
 
   assert.strictEqual(res._status, 403, 'ohne den Header muss /update wie /submit blockiert werden');
   assert.match(res._body, /x-wallee-proxy/i, 'Fehlermeldung soll den fehlenden Header benennen');
+});
+
+// --- Ablehngruende aus der oeffentlichen Doku ------------------------------
+// GET /failure-reasons?ids=... Keine API-Route: kein JWT, kein Account-Header,
+// nur ein fetch gegen die oeffentliche Doku-Seite. Getestet wird gegen zwei
+// eingefrorene Abbilder echter Seiten (Stand 2026-09-03) - nie gegen das Netz.
+
+const FIXTURE_TREFFER = fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'failure-reason-treffer.html'), 'utf8');
+const FIXTURE_LOGIN = fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'failure-reason-login.html'), 'utf8');
+
+test('Routing: GET /failure-reasons wird erkannt, ids kommt aus dem Query', () => {
+  const r = P.findeRoute('GET', '/failure-reasons?ids=1,2');
+  assert.strictEqual(r.name, 'failure-reasons');
+  assert.strictEqual(r.ids, '1,2');
+  // Ohne Parameter kein Absturz, sondern ein leeres ids - die Route antwortet
+  // dann mit 400 statt mit einem Aufruf ins Blaue.
+  assert.strictEqual(P.findeRoute('GET', '/failure-reasons').ids, '');
+});
+
+test('failureReasonUrl baut die URL ausschliesslich aus Ziffern', () => {
+  assert.strictEqual(P.failureReasonUrl('1568360440179'),
+    'https://app-wallee.com/en-us/doc/api/failure-reason/view/1568360440179');
+  // Alles, was kein reiner Zahlenwert ist, waere ein Weg, einen fremden Pfad
+  // anzuhaengen - deshalb wirft die Funktion, statt zu bereinigen.
+  ['../../etc', '1;2', '1 2', '', null, 'e5'].forEach(schlecht => {
+    assert.throws(() => P.failureReasonUrl(schlecht), /Ungueltige Ablehngrund-ID/,
+      `"${schlecht}" darf keine URL ergeben`);
+  });
+});
+
+test('failureIdsZerlegen: leer, Nicht-Zahl und mehr als 50 ergeben je einen Fehler', () => {
+  assert.match(P.failureIdsZerlegen('').fehler, /fehlt/);
+  assert.match(P.failureIdsZerlegen('   ').fehler, /fehlt/);
+  assert.match(P.failureIdsZerlegen(undefined).fehler, /fehlt/);
+
+  assert.match(P.failureIdsZerlegen('123,abc').fehler, /Ungültige Ablehngrund-ID/);
+  assert.match(P.failureIdsZerlegen('123,').fehler, /Ungültige Ablehngrund-ID/,
+    'ein leerer Eintrag ist ein Tippfehler, kein "nichts"');
+  assert.deepStrictEqual(P.failureIdsZerlegen('123,abc').ids, [],
+    'bei einem Fehler wird keine Teilliste zurueckgegeben');
+
+  const zuViele = Array.from({ length: 51 }, (_, i) => String(1000 + i)).join(',');
+  assert.match(P.failureIdsZerlegen(zuViele).fehler, /Höchstens 50/);
+  assert.strictEqual(P.FAILURE_MAX_IDS, 50);
+});
+
+test('failureIdsZerlegen entdoppelt - eine doppelte ID kostet keinen zweiten Abruf', () => {
+  assert.deepStrictEqual(P.failureIdsZerlegen(' 7 , 8 ,7').ids, ['7', '8']);
+  // Und die Obergrenze zaehlt die entdoppelte Liste: 60x dieselbe ID ist EIN
+  // Abruf, kein Grund fuer eine Abweisung.
+  const einmal = Array.from({ length: 60 }, () => '7').join(',');
+  assert.deepStrictEqual(P.failureIdsZerlegen(einmal).ids, ['7']);
+});
+
+test('parseFailureReasonSeite liest Name, Kategorie und Beschreibung', () => {
+  const e = P.parseFailureReasonSeite(FIXTURE_TREFFER, '1568360440179');
+  assert.strictEqual(e.id, '1568360440179');
+  // Der Name steht auf der Seite eingerueckt ueber mehrere Zeilen; ohne
+  // Normalisierung stuenden Tabulatoren mitten im Report.
+  assert.strictEqual(e.name, '3-D Secure Failure');
+  // Die Kategorie ist der Text NACH dem <span class="separator"></span> - die
+  // ID davor darf nicht mit hineinrutschen.
+  assert.strictEqual(e.category, 'End User');
+  assert.strictEqual(e.description, 'The 3-D Secure authentication failed.');
+});
+
+test('parseFailureReasonSeite: die Login-Seite ist KEIN Treffer', () => {
+  // Der Kern des Ganzen: eine unbekannte ID antwortet mit 302 auf die
+  // Login-Seite, fetch folgt der Weiterleitung und liefert 200. Ueber den
+  // Statuscode entschiede der Parser also genau falsch.
+  const e = P.parseFailureReasonSeite(FIXTURE_LOGIN, '999999999999');
+  assert.deepStrictEqual(plainish(e), { id: '999999999999', name: null });
+  // Und Datenmuell ebenfalls nicht.
+  assert.strictEqual(P.parseFailureReasonSeite('', '5').name, null);
+  assert.strictEqual(P.parseFailureReasonSeite('<html>nichts</html>', '5').name, null);
+  assert.strictEqual(P.parseFailureReasonSeite(null, '5').name, null);
+});
+
+// JSON-Runde: die Objekte kommen aus dem ES-Modul-Realm, deepStrictEqual
+// vergleicht sonst auch den Prototyp (gleiches Muster wie plain() im Harness).
+function plainish(v) { return JSON.parse(JSON.stringify(v)); }
+
+test('dekodiereEntities loest die gaengigen Faelle in EINEM Durchlauf auf', () => {
+  assert.strictEqual(P.dekodiereEntities('Tom&#39;s &amp; Jerry'), "Tom's & Jerry");
+  assert.strictEqual(P.dekodiereEntities('&lt;b&gt;&quot;x&quot;&lt;/b&gt;'), '<b>"x"</b>');
+  // Ein Durchlauf heisst: '&amp;#39;' bleibt der TEXT '&#39;' und wird nicht
+  // versehentlich zum Apostroph weitergedreht.
+  assert.strictEqual(P.dekodiereEntities('&amp;#39;'), '&#39;');
+  // Unbekanntes bleibt stehen, statt zu verschwinden.
+  assert.strictEqual(P.dekodiereEntities('a &fooo; b'), 'a &fooo; b');
+});
+
+// Stellt globalThis.fetch so, dass die Doku-Seiten aus den Fixtures kommen.
+// Zaehlt die Abrufe - daran haengen die Cache-Zusicherungen.
+function dokuFetch(bekannt) {
+  const original = globalThis.fetch;
+  const rufe = [];
+  let gleichzeitig = 0;
+  let maxGleichzeitig = 0;
+  globalThis.fetch = async (url) => {
+    rufe.push(String(url));
+    gleichzeitig++;
+    maxGleichzeitig = Math.max(maxGleichzeitig, gleichzeitig);
+    await new Promise(r => setImmediate(r));
+    gleichzeitig--;
+    const id = String(url).split('/').pop();
+    const treffer = bekannt.includes(id);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => (treffer ? FIXTURE_TREFFER : FIXTURE_LOGIN),
+    };
+  };
+  return { rufe, wiederherstellen: () => { globalThis.fetch = original; },
+    maxGleichzeitig: () => maxGleichzeitig };
+}
+
+test('holeFailureReasons: Cache-Treffer erzeugt keinen zweiten fetch', async () => {
+  const stub = dokuFetch(['1568360440179']);
+  const cache = new Map();
+  try {
+    const a = await P.holeFailureReasons(['1568360440179'], { cache, abstandMs: 0 });
+    assert.strictEqual(stub.rufe.length, 1);
+    assert.strictEqual(a.reasons[0].name, '3-D Secure Failure');
+    assert.strictEqual(a.neu, 1, 'der erste Lauf hat etwas Neues gefunden');
+
+    const b = await P.holeFailureReasons(['1568360440179'], { cache, abstandMs: 0 });
+    assert.strictEqual(stub.rufe.length, 1, 'die zweite Anfrage kommt aus dem Cache');
+    assert.strictEqual(b.reasons[0].name, '3-D Secure Failure');
+    assert.strictEqual(b.neu, 0, 'nichts Neues heisst: die Cache-Datei bleibt unberuehrt');
+  } finally { stub.wiederherstellen(); }
+});
+
+test('holeFailureReasons: ein negativer Treffer wird NICHT gecacht', async () => {
+  // Eine ID kann in der Doku spaeter auftauchen - genau dafuer gibt es die
+  // Route. Ein eingefrorenes null waere dann dauerhaft falsch, ohne dass
+  // irgendwo etwas rot wird. Deshalb landet er weder in der Map noch spaeter
+  // in der Datei.
+  const stub = dokuFetch([]);
+  const cache = new Map();
+  try {
+    const a = await P.holeFailureReasons(['999999999999'], { cache, abstandMs: 0 });
+    assert.strictEqual(a.reasons[0].name, null);
+    assert.strictEqual(a.neu, 0);
+    assert.strictEqual(cache.size, 0, 'nichts im Prozess-Cache');
+
+    await P.holeFailureReasons(['999999999999'], { cache, abstandMs: 0 });
+    assert.strictEqual(stub.rufe.length, 2, 'beim naechsten Mal wird wieder nachgefragt');
+  } finally { stub.wiederherstellen(); }
+});
+
+test('holeFailureReasons: sequentiell und mit Abstand zwischen zwei Abrufen', async () => {
+  const stub = dokuFetch(['1568360440179']);
+  try {
+    const einer = Date.now();
+    await P.holeFailureReasons(['1568360440179'], { cache: new Map(), abstandMs: 40 });
+    assert.ok(Date.now() - einer < 40,
+      'vor dem ERSTEN Abruf wird nicht gewartet - sonst kostete jede einzelne ID den Abstand');
+
+    const start = Date.now();
+    await P.holeFailureReasons(['111', '222', '333'], { cache: new Map(), abstandMs: 40 });
+    const dauer = Date.now() - start;
+    assert.ok(dauer >= 80, `drei Abrufe brauchen zwei Pausen, waren ${dauer} ms`);
+    assert.strictEqual(stub.maxGleichzeitig(), 1,
+      'nacheinander, nicht parallel - es ist ein Doku-Server, kein API-Vertrag');
+  } finally { stub.wiederherstellen(); }
+});
+
+test('holeFailureReasons: ein Netzfehler ergibt name: null, kein Wurf', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('Netz weg'); };
+  try {
+    const r = await P.holeFailureReasons(['123'], { cache: new Map(), abstandMs: 0 });
+    assert.strictEqual(r.reasons[0].name, null, 'Rueckfall, nie Blockade');
+  } finally { globalThis.fetch = original; }
+});
+
+test('Cache-Datei: kaputt oder fehlend ergibt einen leeren Cache, keinen Wurf', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-fc-'));
+  const fehlt = path.join(dir, 'gibt-es-nicht.json');
+  assert.strictEqual(P.ladeFailureCache(fehlt).size, 0);
+
+  const kaputt = path.join(dir, 'kaputt.json');
+  fs.writeFileSync(kaputt, '{ das ist kein JSON');
+  assert.strictEqual(P.ladeFailureCache(kaputt).size, 0,
+    'eine kaputte Datei darf den Proxy nie am Starten hindern');
+
+  fs.writeFileSync(path.join(dir, 'liste.json'), '[1,2,3]');
+  assert.strictEqual(P.ladeFailureCache(path.join(dir, 'liste.json')).size, 0);
+});
+
+test('Cache-Datei: Runde aus Schreiben und Lesen, Muell wird ausgesiebt', async () => {
+  const pfad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-fc-')), 'c.json');
+  const cache = new Map([
+    ['1568360440179', { name: '3-D Secure Failure', category: 'End User', description: 'x' }],
+  ]);
+  assert.strictEqual(await P.speichereFailureCache(cache, pfad), true);
+  const zurueck = P.ladeFailureCache(pfad);
+  assert.strictEqual(zurueck.get('1568360440179').name, '3-D Secure Failure');
+  assert.strictEqual(zurueck.get('1568360440179').category, 'End User');
+
+  // Ein von Hand hineingeschriebener Eintrag ohne Namen waere ein
+  // eingefrorenes "unbekannt" - genau das soll nie dauerhaft werden.
+  fs.writeFileSync(pfad, JSON.stringify({
+    '111': { name: 'Gut' }, '222': { name: '' }, '333': null, abc: { name: 'Keine Zahl' },
+  }));
+  const gesiebt = P.ladeFailureCache(pfad);
+  assert.deepStrictEqual([...gesiebt.keys()], ['111']);
+  assert.strictEqual(gesiebt.get('111').category, '', 'fehlende Felder werden zu leeren Strings');
+});
+
+// --- Die Route am Dispatcher ----------------------------------------------
+
+async function failureRoute(url) {
+  const { req, res } = fakeReqRes({ method: 'GET', url, origin: 'null' });
+  await P.behandleAnfrage(req, res);
+  await warteAufAntwort(res);
+  return res;
+}
+
+test('/failure-reasons: kaputte ids ergeben 400 - und keinen einzigen Abruf', async () => {
+  const stub = dokuFetch(['1568360440179']);
+  try {
+    for (const url of ['/failure-reasons',
+      '/failure-reasons?ids=',
+      '/failure-reasons?ids=123,abc',
+      '/failure-reasons?ids=' + Array.from({ length: 51 }, (_, i) => 2000 + i).join(',')]) {
+      const res = await failureRoute(url);
+      assert.strictEqual(res._status, 400, `${url} muss 400 ergeben`);
+      assert.match(res._body, /"ok":false/);
+    }
+    assert.strictEqual(stub.rufe.length, 0,
+      'geprueft wird VOR dem Netzzugriff - eine kaputte Liste loest keinen Abruf aus');
+  } finally { stub.wiederherstellen(); }
+});
+
+test('/failure-reasons: bekannte ID mit Namen, unbekannte mit name null', async () => {
+  const stub = dokuFetch(['1568360440179']);
+  try {
+    const res = await failureRoute('/failure-reasons?ids=1568360440179,999999999999');
+    assert.strictEqual(res._status, 200);
+    const daten = JSON.parse(res._body);
+    assert.strictEqual(daten.ok, true);
+    assert.deepStrictEqual(daten.reasons.map(r => r.id), ['1568360440179', '999999999999']);
+    assert.strictEqual(daten.reasons[0].name, '3-D Secure Failure');
+    assert.strictEqual(daten.reasons[0].category, 'End User');
+    // Die App zeigt fuer diesen Eintrag weiterhin '#<id>' - der einzige Fall,
+    // in dem das noch vorkommt.
+    assert.strictEqual(daten.reasons[1].name, null);
+
+    // Zweiter Aufruf: der Treffer kommt aus dem Prozess-Cache, der Nicht-Treffer
+    // wird erneut geholt (er wird bewusst nicht gecacht).
+    const vorher = stub.rufe.length;
+    await failureRoute('/failure-reasons?ids=1568360440179,999999999999');
+    assert.deepStrictEqual(stub.rufe.slice(vorher).map(u => u.split('/').pop()),
+      ['999999999999']);
+  } finally { stub.wiederherstellen(); }
+});
+
+test('/failure-reasons ohne X-Wallee-Proxy-Header wird abgelehnt (403)', async () => {
+  // Die Route ist ein fetch der App, keine Browser-Navigation - sie gehoert
+  // deshalb NICHT in die Ausnahmeliste (app-seite/setup/health). Gleicher
+  // Schutz wie /submit und /update; bewusst ohne fakeReqRes, der den Header
+  // immer setzt.
+  const req = new (require('node:events').EventEmitter)();
+  req.method = 'GET';
+  req.url = '/failure-reasons?ids=1568360440179';
+  req.headers = { origin: 'null' };
+
+  const res = {
+    _status: 0, _headers: {}, _body: '',
+    writeHead(status, headers) { this._status = status; Object.assign(this._headers, headers || {}); },
+    end(text) { this._body = text || ''; this._fertig = true; },
+  };
+  setImmediate(() => { req.emit('end'); });
+
+  const stub = dokuFetch(['1568360440179']);
+  try {
+    await P.behandleAnfrage(req, res);
+    await warteAufAntwort(res);
+    assert.strictEqual(res._status, 403);
+    assert.match(res._body, /x-wallee-proxy/i);
+    assert.strictEqual(stub.rufe.length, 0, 'abgewiesen, bevor irgendetwas geholt wird');
+  } finally { stub.wiederherstellen(); }
+});
+
+test('/failure-reasons schreibt den Cache neben den Proxy - hier ins Temp', async () => {
+  // Der Pfad steht am Anfang dieser Datei auf ein Temp-Verzeichnis (sonst
+  // legte der Test eine Datei im Repo an). Geprueft wird, dass ueberhaupt
+  // persistiert wird: nach einem Neustart soll der Proxy die Namen kennen,
+  // ohne den Doku-Server erneut zu fragen.
+  const stub = dokuFetch(['1531373451516']);
+  try {
+    await failureRoute('/failure-reasons?ids=1531373451516');
+    const inhalt = P.ladeFailureCache(P.FAILURE_CACHE_PATH);
+    assert.strictEqual(inhalt.get('1531373451516').name, '3-D Secure Failure',
+      'die Fixture liefert fuer jede bekannte ID denselben Namen - hier zaehlt, DASS geschrieben wurde');
+  } finally { stub.wiederherstellen(); }
 });

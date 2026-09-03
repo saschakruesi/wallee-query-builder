@@ -187,6 +187,231 @@ export function sanityProxy(text) {
   return typeof text === 'string' && text.includes('function starteServer');
 }
 
+// --- Ablehngruende aus der oeffentlichen Doku ------------------------------
+//
+// DAS IST KEINE API-ROUTE. Kein JWT, kein Account-Header, kein rufeApi() -
+// bitte auch spaeter nicht "vereinheitlichen". Gruende:
+//   1. Es gibt in der wallee-Web-Service-API keinen Failure-Reason-Dienst
+//      (vollstaendig untersucht, siehe den Kommentar an FAILURE_REASONS in
+//      wallee_query_builder.html - den Endpunkt nicht erneut suchen).
+//   2. https://app-wallee.com/en-us/doc/api/failure-reason/view/<id> ist eine
+//      oeffentliche Doku-Seite ohne Login. Sie durch rufeApi() zu schicken
+//      hiesse, einen Pfad zu signieren, den es unter /api/v2.0 gar nicht gibt,
+//      und Zugangsdaten fuer etwas zu verlangen, das jeder abrufen kann.
+//
+// Wozu die Route trotzdem: die App traegt den gescrapten Katalog eingebettet
+// mit (deshalb steht auch im Kopieren-Modus kein '#<id>' mehr). Eine ID, die
+// wallee NACH dem Scrape neu vergeben hat, kennt dieser Katalog nicht - genau
+// die holt die App hier nach, sofern der API-Modus laeuft.
+export const FAILURE_DOC_BASE = 'https://app-wallee.com/en-us/doc/api/failure-reason/view/';
+
+// Hoechstens so viele IDs pro Aufruf, und dazwischen dieser Abstand: das ist
+// ein Doku-Server, kein API-Vertrag mit uns. 50 x 200 ms sind rund 10 Sekunden
+// im schlimmsten Fall - langsam genug, um niemanden zu stoeren, schnell genug
+// fuer den einen Nachschlag nach einem Report.
+export const FAILURE_MAX_IDS = 50;
+export const FAILURE_ABSTAND_MS = 200;
+
+// Das Verzeichnis dieses Scripts - dort liegt auch der Cache, damit er beim
+// Kopieren des Ordners mitwandert (anders als die Zugangsdaten, die bewusst im
+// Home des Nutzers bleiben: der Cache ist oeffentliche Doku, kein Geheimnis).
+export const SKRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+export const FAILURE_CACHE_PATH = process.env.WALLEE_FAILURE_CACHE
+  || path.join(SKRIPT_DIR, 'failure-reasons.cache.json');
+
+// Die URL wird ausschliesslich aus Ziffern zusammengesetzt - deshalb die
+// Pruefung HIER und nicht erst beim Aufrufer. Alles andere waere ein Weg,
+// einen fremden Pfad an app-wallee.com anzuhaengen.
+export function failureReasonUrl(id) {
+  const s = String(id == null ? '' : id).trim();
+  if (!/^\d+$/.test(s)) throw new Error('Ungueltige Ablehngrund-ID.');
+  return FAILURE_DOC_BASE + s;
+}
+
+// Zerlegt den Query-Parameter ids=1,2,3. Alles wird VOR dem ersten Netzzugriff
+// geprueft (Muster accountValide und die space-Pruefung der Route terminals):
+// eine kaputte Liste soll gar keinen Abruf ausloesen.
+export function failureIdsZerlegen(roh) {
+  const text = String(roh == null ? '' : roh).trim();
+  if (!text) return { ids: [], fehler: 'Query-Parameter "ids" (Liste von Zahlen) fehlt.' };
+  const teile = text.split(',').map(s => s.trim());
+  // Ein leerer Eintrag ("1,,2") faellt hier bewusst mit durch: er ist ein
+  // Tippfehler des Aufrufers, und ihn stillschweigend zu schlucken hiesse, eine
+  // kaputte Liste als in Ordnung zu melden.
+  const ungueltig = teile.find(s => !/^\d+$/.test(s));
+  if (ungueltig !== undefined) {
+    return { ids: [], fehler: `Ungültige Ablehngrund-ID: "${ungueltig.slice(0, 40)}".` };
+  }
+  // Erst entdoppeln, dann zaehlen: die Obergrenze schuetzt den Doku-Server vor
+  // zu vielen ABRUFEN, und eine doppelt genannte ID wird nur einmal geholt.
+  const ids = [];
+  teile.forEach(s => { if (ids.indexOf(s) === -1) ids.push(s); });
+  if (ids.length > FAILURE_MAX_IDS) {
+    return { ids: [], fehler: `Höchstens ${FAILURE_MAX_IDS} IDs pro Aufruf (angefragt: ${ids.length}).` };
+  }
+  return { ids, fehler: '' };
+}
+
+// Nur die gaengigen Entities - eine Bibliothek waere fuer fuenf Zeichen zu viel
+// (der Proxy hat bewusst keine Dependencies). Ein EINZIGER Durchlauf, damit
+// '&amp;#39;' nicht doppelt aufgeloest wird.
+const HTML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+export function dekodiereEntities(text) {
+  return String(text == null ? '' : text).replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (ganz, code) => {
+    if (code[0] === '#') {
+      const zahl = code[1] === 'x' || code[1] === 'X'
+        ? parseInt(code.slice(2), 16)
+        : parseInt(code.slice(1), 10);
+      return Number.isFinite(zahl) && zahl > 0 && zahl <= 0x10ffff
+        ? String.fromCodePoint(zahl) : ganz;
+    }
+    const k = code.toLowerCase();
+    return Object.prototype.hasOwnProperty.call(HTML_ENTITIES, k) ? HTML_ENTITIES[k] : ganz;
+  });
+}
+
+// Tags raus, Entities auf, Whitespace-Folgen auf ein Leerzeichen. Die Seite
+// formatiert mit Tabs und Zeilenumbruechen (der Name steht eingerueckt in
+// mehreren Zeilen) - ohne die Normalisierung stuende im Report ein Name mit
+// eingebauten Tabulatoren.
+function htmlText(roh) {
+  return dekodiereEntities(String(roh == null ? '' : roh).replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ').trim();
+}
+
+function ersterBlock(html, klasse) {
+  const re = new RegExp(`<div[^>]*class="[^"]*\\b${klasse}\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>`);
+  const treffer = re.exec(String(html == null ? '' : html));
+  return treffer ? treffer[1] : null;
+}
+
+// Der Separator trennt in der subtitle-Zeile die ID von der Kategorie:
+//   #1568360440179<span class="separator"></span> End User
+const SEPARATOR_RE = /<span[^>]*class="[^"]*\bseparator\b[^"]*"[^>]*>\s*<\/span>/;
+
+// An der echten Seite verifiziert (2026-09-03, eingefrorene Fixtures in
+// test/fixtures/failure-reason-*.html).
+//
+// WICHTIG: Die Erkennung "kennt die Doku diese ID?" laeuft ueber maintitle,
+// NIE ueber den Statuscode. Eine unbekannte ID antwortet mit 302 auf die
+// Login-Seite; Nodes fetch folgt Weiterleitungen von selbst und liefert dann
+// eine 200 mit '<title>Log in'. Ein Statuscode-Check entschiede also genau
+// falsch: er wuerde die Login-Seite fuer einen Treffer halten.
+export function parseFailureReasonSeite(html, id) {
+  const key = String(id == null ? '' : id);
+  const titel = ersterBlock(html, 'maintitle');
+  const name = titel === null ? '' : htmlText(titel);
+  if (!name) return { id: key, name: null };
+
+  let category = '';
+  const untertitel = ersterBlock(html, 'subtitle');
+  if (untertitel !== null) {
+    const teile = untertitel.split(SEPARATOR_RE);
+    if (teile.length > 1) category = htmlText(teile.slice(1).join(' '));
+  }
+  const beschreibung = ersterBlock(html, 'documentation-panel-description');
+  return {
+    id: key,
+    name,
+    category,
+    description: beschreibung === null ? '' : htmlText(beschreibung),
+  };
+}
+
+// Zweistufiger Cache: im Prozess eine Map, daneben eine JSON-Datei. Beides
+// fehlertolerant - eine kaputte oder fehlende Datei darf den Proxy nie am
+// Starten hindern (Muster ladeZugangsdaten).
+let failureCache = null;
+
+export function ladeFailureCache(pfad = FAILURE_CACHE_PATH) {
+  const map = new Map();
+  try {
+    const daten = JSON.parse(fs.readFileSync(pfad, 'utf8'));
+    if (!daten || typeof daten !== 'object' || Array.isArray(daten)) return map;
+    Object.keys(daten).forEach(id => {
+      const e = daten[id];
+      // Nur was wie ein Treffer aussieht. Ein Eintrag ohne Namen waere ein
+      // eingefrorenes "unbekannt" - und genau das soll nie dauerhaft werden.
+      if (!/^\d+$/.test(id) || !e || typeof e !== 'object') return;
+      if (typeof e.name !== 'string' || !e.name.trim()) return;
+      map.set(id, {
+        name: e.name,
+        category: String(e.category == null ? '' : e.category),
+        description: String(e.description == null ? '' : e.description),
+      });
+    });
+  } catch (e) {
+    // Datei fehlt oder ist kaputt: leerer Cache, der naechste Abruf fuellt ihn.
+  }
+  return map;
+}
+
+export async function speichereFailureCache(cache, pfad = FAILURE_CACHE_PATH) {
+  try {
+    const objekt = {};
+    for (const [id, eintrag] of cache) objekt[id] = eintrag;
+    await fsp.writeFile(pfad, JSON.stringify(objekt, null, 2));
+    return true;
+  } catch (e) {
+    console.error('[failure-reasons] Cache nicht schreibbar:',
+      e && e.message ? e.message : e);
+    return false;
+  }
+}
+
+function schlafe(ms) {
+  return ms > 0 ? new Promise(erfuellen => setTimeout(erfuellen, ms)) : Promise.resolve();
+}
+
+// Holt die Namen zu den IDs - sequentiell und mit Abstand, siehe oben.
+// Rueckgabe { reasons, neu }: neu zaehlt die Treffer, die noch nicht im Cache
+// standen; nur dann lohnt das Schreiben der Datei.
+//
+// Ein NEGATIVER Treffer (name: null) wird bewusst NICHT gecacht - weder in der
+// Datei noch im Prozess. Eine ID kann in der Doku spaeter auftauchen (genau
+// dafuer gibt es diese Route), und ein eingefrorenes null waere dann dauerhaft
+// falsch, ohne dass irgendwo etwas rot wird. Der Proxy laeuft tagelang, die
+// Prozess-Map ist also kein kurzer Moment.
+export async function holeFailureReasons(ids, optionen = {}) {
+  if (!failureCache) failureCache = ladeFailureCache();
+  const cache = optionen.cache || failureCache;
+  const abstand = optionen.abstandMs === undefined ? FAILURE_ABSTAND_MS : optionen.abstandMs;
+  const reasons = [];
+  let neu = 0;
+  let geholt = 0;
+
+  for (const id of ids) {
+    const treffer = cache.get(id);
+    if (treffer) { reasons.push({ id, ...treffer }); continue; }
+
+    // Der Abstand gilt ZWISCHEN zwei Abrufen, nicht vor dem ersten und nicht
+    // nach dem letzten - sonst wartete auch ein Aufruf mit einer einzigen ID.
+    if (geholt > 0) await schlafe(abstand);
+    geholt++;
+
+    let html = '';
+    try {
+      const antwort = await fetch(failureReasonUrl(id), { headers: { Accept: 'text/html' } });
+      html = await antwort.text();
+    } catch (e) {
+      // Netz weg oder Doku-Server nicht erreichbar: dieselbe Antwort wie eine
+      // unbekannte ID. Der Report steht dann mit '#<id>' da - Rueckfall, nie
+      // Blockade, wie ueberall in dieser Anwendung.
+      html = '';
+    }
+    const eintrag = parseFailureReasonSeite(html, id);
+    if (eintrag.name) {
+      cache.set(id, {
+        name: eintrag.name, category: eintrag.category, description: eintrag.description,
+      });
+      neu++;
+    }
+    reasons.push(eintrag);
+  }
+  return { reasons, neu };
+}
+
 // --- Authentifizierung -----------------------------------------------------
 // Am offiziellen SDK verifiziert. Drei unabhaengige Implementierungen stimmen
 // ueberein:
@@ -344,6 +569,14 @@ export function findeRoute(methode, pfad) {
     const query = String(pfad || '').split('?')[1] || '';
     const space = (new URLSearchParams(query).get('space') || '').trim();
     return { name: 'terminals', space };
+  }
+
+  // Nachschlagen von Ablehngrund-Namen in der oeffentlichen Doku (keine
+  // API-Route, siehe den Abschnitt oben). ids wie bei "terminals" aus dem
+  // vollen Pfad lesen, nicht aus p.
+  if (m === 'GET' && p === '/failure-reasons') {
+    const query = String(pfad || '').split('?')[1] || '';
+    return { name: 'failure-reasons', ids: new URLSearchParams(query).get('ids') || '' };
   }
 
   if (m === 'POST' && p === '/update') return { name: 'update' };
@@ -766,6 +999,22 @@ export async function behandleAnfrage(req, res) {
         return;
       }
 
+      case 'failure-reasons': {
+        // Erst pruefen, dann erst ins Netz - eine kaputte Liste loest keinen
+        // einzigen Abruf aus.
+        const { ids, fehler } = failureIdsZerlegen(route.ids);
+        if (fehler) {
+          sendeJson(res, 400, { ok: false, fehler }, origin);
+          return;
+        }
+        const { reasons, neu } = await holeFailureReasons(ids);
+        // Nur schreiben, wenn wirklich etwas dazugekommen ist. Ein Aufruf, den
+        // der Cache vollstaendig bedient, fasst die Datei nicht an.
+        if (neu > 0) await speichereFailureCache(failureCache);
+        sendeJson(res, 200, { ok: true, reasons }, origin);
+        return;
+      }
+
       case 'update': {
         // Selbst-Update: neue Laufzeit-Dateien vom Release-Tag laden, pruefen,
         // ersetzen und den Proxy neu starten. Der Tag kommt von der App (die ihn
@@ -993,6 +1242,9 @@ export function starteNeustart(verzeichnis) {
 
 export function starteServer({ port = PORT, host = HOST } = {}) {
   zugangsdaten = ladeZugangsdaten();
+  // Beim Start lesen, damit ein Neustart die bereits nachgeschlagenen Namen
+  // nicht erneut vom Doku-Server holt. Wirft nie (kaputte Datei = leerer Cache).
+  failureCache = ladeFailureCache();
   const server = http.createServer((req, res) => { behandleAnfrage(req, res); });
   // Ohne diesen Handler wirft ein Listen-Fehler (z. B. belegter Port) ein
   // unbehandeltes 'error'-Event und beendet den Prozess mit Stacktrace.

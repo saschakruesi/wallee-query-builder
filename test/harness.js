@@ -126,6 +126,18 @@ const EXPORTED = [
   'FAILURE_ADVICE',
   'REPORTING_FAILURE_KATEGORIEN',
   'reportingFailureEintrag',
+  // Nachladen unbekannter Ablehngruende (Iteration 2, Task 2). Die beiden
+  // reinen Funktionen tragen die Entscheidungen: "welche ID fehlt" (an
+  // demselben '#<id>', das der Nutzer sieht - keine zweite Definition) und
+  // "was davon geht ins Modell" (Eintraege ohne Namen nie). Der async-Lauf
+  // daneben ist die Verdrahtung; reportingNachladeAbwarten() ist die Naht, an
+  // der ein Test auf ihn wartet, statt Ticks zu zaehlen.
+  'FAILURE_KATEGORIE_DOKU',
+  'REPORTING_NACHLADEN_MAX',
+  'reportingUnbekannteGruende',
+  'reportingFailureNachtrag',
+  'reportingGruendeNachladen',
+  'reportingNachladeAbwarten',
   // Reporting-Report Export-Bloecke (Task 4). Bewusst nur die beiden
   // Funktionen: die Konstanten (REPORTING_TOP_N, REPORTING_KANAL_LABEL,
   // REPORTING_TOP_JE_BRAND) haben ausserhalb der App keinen Konsumenten -

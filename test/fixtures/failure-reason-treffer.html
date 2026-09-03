@@ -1,0 +1,69 @@
+<!--
+  Eingefrorenes Abbild von
+  https://app-wallee.com/en-us/doc/api/failure-reason/view/1568360440179
+  geholt am 2026-09-03. Quelle der Proxy-Route GET /failure-reasons
+  (wallee-proxy.mjs, parseFailureReasonSeite).
+
+  GEKUERZT gegenueber dem Original (39 KB -> unter 3 KB), und zwar bewusst nur
+  um Dinge, die mit dem Parsen nichts zu tun haben:
+    - die Asset-Tags (<link>/<script> auf compressed.css/js) und der
+      Google-Tag-Manager-Block,
+    - die langen data-*-Attribute am <body>. Eines davon (data-guided-tour)
+      trug einen Sitzungs-Token der Aufnahme - dieses Repo ist oeffentlich,
+      der Token gehoert hier nicht hinein und war der eigentliche Anlass zu
+      kuerzen.
+  UNVERAENDERT uebernommen ist alles, woran der Parser arbeitet: der <title>
+  und der komplette entity-view-Block mit maintitle, subtitle (inklusive des
+  <span class="separator"></span>) und documentation-panel-description - samt
+  der originalen Tabulatoren und Zeilenumbrueche darin. Genau die machen das
+  Parsen realistisch: der Name steht ueber mehrere eingerueckte Zeilen.
+
+  Erwartung: name "3-D Secure Failure", category "End User",
+  description "The 3-D Secure authentication failed."
+-->
+<!DOCTYPE html>
+<html class="no-js" lang="en" data-locale="en-US">
+<head>
+    <meta charset="utf-8">
+    <title>                                      Failure Reason                                  -
+          3-D Secure Failure      </title>
+</head>
+<body class="app">
+<div class="entity-view ">
+					<div class="entity-view-heading">
+                					<div class="heading-context">
+					        						            					<div class="heading-parent">
+                            		<a href="../list"
+                            		    data-bind-grid-state="ifailurereason">
+                            			<i class="fa fa-chevron-left"></i> Failure Reasons                        			</a>
+                            	</div>
+                        	                    	                	</div>
+				        		<div class="heading-main">
+            		<div class="title">
+            			            		        <div class="maintitle">
+            			        3-D Secure Failure        			        </div>
+            				<div class="subtitle">
+            						#1568360440179	<span class="separator"></span>
+	End User        					</div>
+            			            		</div>
+            		<div class="actions">
+        				                                                                                                        
+				                            						            		</div>
+        		</div>
+        	</div>
+					<div class="documentation-panel-description">
+		The 3-D Secure authentication failed.	</div>
+    	    		    	    </div>
+		                                                                    </div>
+                            	                        </div>
+                        <div class="col-body-overlay" data-toggle="resetOffscreen"></div>
+                    </div>
+                	            </div>
+        
+                            
+                                </div>
+
+
+
+</body>
+</html>

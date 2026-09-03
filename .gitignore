@@ -30,3 +30,8 @@ dashboard/discovery-results/
 
 # Sperrdateien von LibreOffice/OpenOffice neben geoeffneten Tabellen.
 .~lock.*#
+
+# Cache der Route GET /failure-reasons: Namen von Ablehngruenden, die der
+# eingebettete Katalog noch nicht kennt. Reine Laufzeitdatei neben dem Proxy,
+# jederzeit neu aufbaubar - und je Rechner ein anderer Stand.
+failure-reasons.cache.json

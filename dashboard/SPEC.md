@@ -280,8 +280,33 @@ Konsequenz für den Code:
 - Die **Route** bleibt trotzdem sinnvoll, aber mit anderer Quelle: nicht die
   Web-Service-API, sondern die Doku-Seite `failure-reason/view/<id>` (kein Auth-Header,
   kein JWT). Sie deckt IDs ab, die nach dem Scrape neu dazukommen —
-  SPEC-ITERATION-2 §1.3 Punkt 3, gebaut in Iteration 2 Task 2. Bis dahin bleibt
-  `#<id>` der Fallback für genau diesen Fall.
+  SPEC-ITERATION-2 §1.3 Punkt 3.
+
+**Gebaut in Iteration 2 Task 2** als `GET /failure-reasons?ids=<id>,<id>,…` →
+`{ ok: true, reasons: [{ id, name, category, description }] }`. Die Form der ersten
+Fassung oben (`{ id: name }`) ist damit überholt — der Report braucht neben dem Namen
+auch die Kategorie, sonst stünde ein nachgeladener Grund in der Kategorie-Auswertung
+auf `UNKNOWN`. Im Einzelnen:
+
+- **Kein JWT, kein `Account`-Header, kein `rufeApi()`** — ein schlichter `fetch` gegen
+  die öffentliche Doku-Seite. Der Kommentar im Proxy sagt das ausdrücklich.
+- Höchstens **50** IDs pro Aufruf, **sequentiell mit 200 ms Abstand** (Doku-Server,
+  kein API-Vertrag). `ids` fehlt, leer, ein Nicht-Zahl-Eintrag oder mehr als 50 → `400`,
+  geprüft **vor** jedem Netzzugriff.
+- Cache zweistufig: im Prozess und in `failure-reasons.cache.json` neben dem Proxy
+  (gitignored). Beim Start gelesen, nach neuen Treffern geschrieben; eine kaputte oder
+  fehlende Datei hindert den Proxy nie am Starten. **Negative Treffer werden nicht
+  gecacht** — eine ID kann später in der Doku auftauchen, ein eingefrorenes `null` wäre
+  dann dauerhaft falsch.
+- Die Erkennung „kennt die Doku diese ID?" läuft über `<div class="maintitle">`,
+  **nie über den Statuscode**: eine unbekannte ID antwortet mit `302` auf die
+  Login-Seite, Nodes `fetch` folgt der Weiterleitung und liefert `200`.
+- Die App ruft die Route **nur im API-Modus** und nur für IDs, die als `#<id>` dastünden;
+  die Treffer landen in einer Laufzeit-Tabelle (überlebt einen Modellneubau) und das
+  Modell wird aus `reportingRohzeilen` neu gebaut — **kein zweiter Ergebnis-Abruf**, bei
+  wallee zählt jeder Abruf als Download. Ein Fehlschlag lässt den Report stehen.
+- `#<id>` bleibt der Fallback: im Kopieren-Modus (kein Proxy), bei mehr als 50
+  unbekannten IDs, und wenn die Doku die ID selbst nicht kennt.
 
 ## 7. Edge Cases
 

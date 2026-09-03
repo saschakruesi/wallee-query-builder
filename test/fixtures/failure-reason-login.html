@@ -1,0 +1,114 @@
+<!--
+  Eingefrorenes Abbild der Login-Seite, die app-wallee.com fuer eine UNBEKANNTE
+  Failure-Reason-ID ausliefert - geholt am 2026-09-03 ueber
+  /en-us/doc/api/failure-reason/view/<erfundene ID>.
+
+  Das ist der Grund, warum parseFailureReasonSeite auf den maintitle-Block
+  prueft und NICHT auf den Statuscode: die unbekannte ID antwortet mit 302 auf
+  diese Seite, Nodes fetch folgt der Weiterleitung von selbst und liefert dann
+  eine 200. Ein Statuscode-Check hielte diese Seite fuer einen Treffer.
+
+  GEKUERZT wie das Gegenstueck (17 KB -> unter 3 KB): Asset-Tags, Tag-Manager
+  und die langen data-*-Attribute am <body> sind weg, darunter der
+  Sitzungs-Token in data-guided-tour (oeffentliches Repo). UNVERAENDERT sind
+  <title> und der Login-Block - also genau das, was hier zaehlt: kein
+  Ueberschriftsblock, nirgends.
+
+  Erwartung: name null.
+-->
+<!DOCTYPE html>
+<html class="no-js" lang="en" data-locale="en-US">
+<head>
+    <meta charset="utf-8">
+    <title>	Log in</title>
+</head>
+<body class="app">
+<div class="layout-wrapper layout-splash-screen    		        		            		            		        allow-noscript                                        reset-print                                    ">
+            <div class="layout-content">
+        <noscript>
+	<div class="noscript center">
+		<div class="center-body">
+			<i class="fa fa-warning"></i>
+			<h1>Javascript is required.</h1>
+			<div class="description">Please enable it in your browser and reload this page.</div>
+		</div>
+	</div>
+</noscript>
+        <div class="content-container">
+            <div class="col-left">
+                <div class="brand">
+                    <a href="https://wallee.com/" target="_blank"><img
+                                src="/assets/images/wallee-logo-white.svg"/></a>
+                </div>
+                <div class="content">
+                    	<ul class="navigation-list">
+					<li><a href="https://app-wallee.com/doc" class="no-ajax" target="_blank">Documentation</a></li>
+			<li><a href="https://en.wallee.com/ueber-wallee/kontakt" target="_blank">Contact</a></li>
+			<li><a href="https://en.wallee.com/ueber-wallee/support" target="_blank">Support</a></li>
+			</ul>
+                </div>
+                <div class="footer">
+                    		<div class="footer-link">
+		<span>Don&#39;t have a user yet?</span>
+		<a href="/user/signup" class="btn no-ajax">Sign up</a>
+	</div>
+                </div>
+            </div>
+            <div class="col-body">
+                <div class="main-content">
+                    <div class="content">
+                                                                                                    	<h1>Welcome back to wallee</h1>
+	<h2>Log in to manage your payments.</h2>
+
+	<form
+	id=""
+	action=""
+	method="POST"
+	class="no-ajax"		data-parsley-validate		>
+
+	
+			<input type="hidden" name="_token" value="ENTFERNT" />
+		<div class="form-group ">
+	<div class="control-label">
+		<label
+	for="email"
+				>
+	Email address	</label>	</div>
+	<div class="form-input">
+		<input
+	id="email"
+	name="email"
+		type="text"
+	value=""
+	class="form-control "
+		 data-parsley-type="email" data-parsley-type-message="The email address must be valid." data-parsley-required="true" data-parsley-required-message="The email address is required."	 data-toggle="focus"	/>	</div>
+	<div class="form-error-message">
+			</div>
+</div>		<div class="form-group ">
+	<div class="control-label">
+		<label
+	for="password"
+				>
+	Password	</label>					<a href="https://app-wallee.com/user/password/reset">Forgot Password?</a>
+	    	</div>
+	<div class="form-input">
+		<input
+	id="password"
+	name="password"
+		type="password"
+	autocomplete="off" 
+		class="form-control "
+		 data-parsley-required="true" data-parsley-required-message="The password is required."	 autocomplete="off"	/>	</div>
+	<div class="form-error-message">
+			</div>
+	</div>
+		
+					<input type="hidden" name="target" value="https://app-wallee.com/doc/api/failure-reason/view/999999999999" />		
+		<button
+	id="login"	name="login"	type="submit"
+	value="submit"
+		class="btn btn-primary btn-brand btn-block"
+			>
+	Log in</button>	</form>
+</body>
+</html>
