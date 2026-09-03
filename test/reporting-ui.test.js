@@ -585,20 +585,29 @@ test('Nach dem Ingest werden unbekannte Gruende nachgeladen und ins Modell gebau
   assert.strictEqual(app.ingestReportingCsv(FIXTURE_NEUE_ID), true);
   // Vor dem Nachladen steht der Rohwert da - genau das, was der Kunde im
   // Kopieren-Modus sieht.
-  assert.strictEqual(
-    app.reportingModellAktuell().kanaele.ECOM.failures[0].name, '#9999999999999');
+  const vorher = app.reportingModellAktuell();
+  assert.strictEqual(vorher.kanaele.ECOM.failures[0].name, '#9999999999999');
+  // Zaehlwerte JETZT festhalten, als Zahlen. Sie nach dem Neubau gegen das
+  // dann aktuelle Modell zu vergleichen waere tautologisch: der Neubau
+  // ersetzt das Modell, beide Seiten waeren dasselbe Objekt.
+  const attemptsVorher = vorher.kanaele.ECOM.failures[0].attempts;
+  const anteilVorher = vorher.kanaele.ECOM.failures[0].anteil;
 
   assert.strictEqual(await app.reportingNachladeAbwarten(), true);
   assert.strictEqual(rufe.length, 1, 'genau EIN Aufruf fuer alle unbekannten IDs');
   assert.match(rufe[0], /\/failure-reasons\?ids=9999999999999$/);
 
-  const grund = app.reportingModellAktuell().kanaele.ECOM.failures[0];
+  const nachher = app.reportingModellAktuell();
+  assert.notStrictEqual(nachher, vorher, 'Vorbedingung: es wurde wirklich neu gebaut');
+  const grund = nachher.kanaele.ECOM.failures[0];
   assert.strictEqual(grund.name, 'Neuer Ablehngrund');
   assert.strictEqual(grund.kategorie, 'TEMPORARY', 'die Doku-Kategorie kommt mit');
   // Das Modell wird aus den bereits geparsten Zeilen neu gebaut, nicht neu
-  // abgerufen - Zahlen und Anteile bleiben deshalb unveraendert.
-  assert.strictEqual(grund.attempts,
-    app.reportingModellAktuell().kanaele.ECOM.failures[0].attempts);
+  // abgerufen - Zahlen und Anteile bleiben deshalb unveraendert. Zieht der
+  // Nachladelauf spaeter doch die Zeilen neu oder verliert er beim Neubau
+  // Zaehlwerte, faellt genau hier auf.
+  assert.strictEqual(grund.attempts, attemptsVorher);
+  assert.strictEqual(grund.anteil, anteilVorher);
 });
 
 test('Ein zweiter Ingest fragt nicht erneut nach - die Tabelle haengt an der App', async () => {

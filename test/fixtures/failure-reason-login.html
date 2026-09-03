@@ -11,10 +11,19 @@
   eine 200. Ein Statuscode-Check hielte diese Seite fuer einen Treffer.
 
   GEKUERZT wie das Gegenstueck (rund 17 KB -> gut 4 KB): Asset-Tags, Tag-Manager
-  und die langen data-*-Attribute am <body> sind weg, darunter der
-  Sitzungs-Token in data-guided-tour (oeffentliches Repo). UNVERAENDERT sind
-  <title> und der Login-Block - also genau das, was hier zaehlt: kein
+  und die langen data-*-Attribute am <body> sind weg. UNVERAENDERT sind <title>
+  und der Login-Block - also genau das, was hier zaehlt: kein
   Ueberschriftsblock, nirgends.
+
+  ENTSCHAERFT: JEDER _token-Wert der Seite steht als "ENTFERNT" da - der in
+  data-guided-tour (mit dem Attribut ganz weggefallen) und ebenso der im
+  versteckten Feld des Login-Formulars weiter unten. Beide hatten die Form
+  <ts>p0000:<session-id>:<hmac>; die Session war anonym und ist laengst
+  abgelaufen, aber dieses Repo ist oeffentlich, und was so aussieht wie ein
+  Geheimnis, gehoert nicht hinein. WER DIESE FIXTURE NEU ZIEHT, muss sie
+  wieder ersetzen: `grep -n _token` ueber die Datei, jeden Wert auf
+  "ENTFERNT" setzen. Der Parser fasst das Formular nicht an, die Werte tragen
+  hier also nichts.
 
   Erwartung: name null.
 -->
