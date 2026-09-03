@@ -811,15 +811,184 @@ test('P6: Ablehncodes mit ISO_RESPONSE_CODES, unbekannter Code bleibt roh', () =
     [['AUTHORIZATION_DECLINED', 'AUTHORIZATION_DECLINED']]);
 });
 
-test('FAILURE_REASONS traegt die an echten Daten belegten IDs', () => {
+// --- Ablehngruende im Klartext (Iteration 2, §1) -----------------------------
+
+test('FAILURE_REASONS ist der generierte Katalog: Paar [name, kategorie-kuerzel]', () => {
   const { FAILURE_REASONS } = loadBuilders();
-  assert.strictEqual(FAILURE_REASONS['1579281555663'], 'Transaction declined');
-  assert.strictEqual(FAILURE_REASONS['1579281542342'], 'Automatically cancelled');
-  assert.strictEqual(FAILURE_REASONS['1568360440179'], '3-D Secure Failure');
-  assert.strictEqual(FAILURE_REASONS['1000009999999'], 'Authorization Canceled by Scheme');
-  // Nicht belegte IDs stehen bewusst NICHT drin - erfundene Namen waeren
-  // schlimmer als die rohe ID.
-  assert.strictEqual(FAILURE_REASONS['1758896189449'], undefined);
+  // Frueher stand hier eine Handliste von sieben IDs mit blossem Namen. Seit
+  // tools/build-failure-reasons.mjs kommt die Tabelle aus
+  // dashboard/catalog/failure-reasons.json - vollstaendig und als Paar.
+  assert.ok(Object.keys(FAILURE_REASONS).length > 2000,
+    'Katalog wirkt zu klein - lief tools/build-failure-reasons.mjs?');
+  assert.deepStrictEqual(plain(FAILURE_REASONS['1579281555663']), ['Transaction declined', 'C']);
+  assert.deepStrictEqual(plain(FAILURE_REASONS['1579281542342']), ['Automatically cancelled', 'C']);
+  assert.deepStrictEqual(plain(FAILURE_REASONS['1568360440179']), ['3-D Secure Failure', 'E']);
+  // Die Schreibweise ist die des Katalogs, nicht mehr die von Hand notierte -
+  // frueher stand hier 'Authorization Canceled by Scheme'.
+  assert.deepStrictEqual(plain(FAILURE_REASONS['1000009999999']),
+    ['Authorization canceled by scheme.', 'I']);
+  // Und die Security-Decline-ID, die vor Iteration 2 ausdruecklich als "nicht
+  // belegt, deshalb nicht drin" festgenagelt war, IST jetzt im Katalog.
+  assert.deepStrictEqual(plain(FAILURE_REASONS['1758896189449']), ['Security Decline', 'E']);
+});
+
+test('Die IDs aus SPEC-ITERATION-2 §1.2 loesen alle auf - Name UND Kategorie', () => {
+  const { reportingFailureEintrag } = loadBuilders();
+  // Genau die Tabelle aus §1.2, von Hand aus der Spec uebernommen. Sie ist der
+  // Grund fuer die ganze Task: in den beiden Referenz-Reports stand hier '#<id>'.
+  const erwartet = [
+    ['1568360440179', '3-D Secure Failure', 'END_USER'],
+    ['1568360434240', '3-D Secure Timeout', 'END_USER'],
+    ['1460695272591', 'Cancellation Initiated by User', 'END_USER'],
+    ['1460695272599', 'Transaction declined.', 'END_USER'],
+    ['1000009999999', 'Authorization canceled by scheme.', 'INTERNAL'],
+    ['1553239734976', 'Authorization Declined', 'END_USER'],
+    ['1758896451165', 'Security Decline', 'END_USER'],
+    ['1758896189449', 'Security Decline', 'END_USER'],
+    ['1758896220795', 'Life Cycle Decline', 'END_USER'],
+    ['1675956162243', 'Checkout Id Expired', 'END_USER'],
+    ['1553239772995', 'Suspicion of Manipulation', 'END_USER'],
+    ['1531373420464', 'Withdrawal Limit Exceeded', 'END_USER'],
+    ['1531373398963', 'Authorization Failed', 'CONFIGURATION'],
+    ['1586248831896', 'User Authorization Timed Out', 'END_USER'],
+    ['1675958152135', 'Process rejected', 'CONFIGURATION'],
+    ['1532355373702', 'Authorization Declined', 'END_USER'],
+    ['1532355373703', 'Invalid Card', 'END_USER'],
+    ['1532355373706', 'Card Expired', 'END_USER'],
+    ['1553239789832', 'Unexpected Failure', 'INTERNAL'],
+    ['1000000000065', 'Soft Decline', 'END_USER'],
+    ['1553239765055', 'Card Expired', 'END_USER'],
+    ['1454390669106', 'Unexpected payment attempt', 'INTERNAL'],
+    ['1553239810659', 'Communication Error', 'TEMPORARY'],
+    ['1562045949960', 'Configuration Error', 'CONFIGURATION'],
+    ['1580367235835', 'Processing not Initiated', 'DEVELOPER'],
+    ['1580367235834', 'Transaction Timed Out', 'END_USER'],
+  ];
+  erwartet.forEach(([id, name, kategorie]) => {
+    const e = plain(reportingFailureEintrag(id));
+    assert.strictEqual(e.name, name, id);
+    assert.strictEqual(e.kategorie, kategorie, id);
+  });
+});
+
+test('Eine ID, die selbst der Katalog nicht kennt, bleibt #<id> mit Kategorie UNKNOWN', () => {
+  const { reportingFailureEintrag } = loadBuilders();
+  const e = plain(reportingFailureEintrag('9999999999999'));
+  assert.strictEqual(e.name, '#9999999999999');
+  assert.strictEqual(e.kategorie, 'UNKNOWN');
+  // Kein Text geraten: weder Bedeutung noch Empfehlung.
+  assert.strictEqual(e.bedeutung, '');
+  assert.strictEqual(e.empfehlung, '');
+  // Und die Zeile ohne jede ID (der Parser setzt dort 'UNKNOWN').
+  assert.strictEqual(plain(reportingFailureEintrag('UNKNOWN')).name, 'Unbekannt');
+  assert.strictEqual(plain(reportingFailureEintrag('UNKNOWN')).kategorie, 'UNKNOWN');
+});
+
+test('FAILURE_CATEGORY_OVERRIDE schlaegt die Katalog-Kategorie - genau viermal', () => {
+  const { FAILURE_REASONS, FAILURE_CATEGORY_OVERRIDE, reportingFailureEintrag } = loadBuilders();
+  const ids = Object.keys(plain(FAILURE_CATEGORY_OVERRIDE));
+  assert.deepStrictEqual(ids.sort(),
+    ['1531373394895', '1531373451516', '1579281542342', '1579281555663'].sort());
+  ids.forEach(id => {
+    // Der Katalog sagt 'C' (Configuration) - der Report sagt END_USER, weil es
+    // Kundenverhalten ist (SPEC-ITERATION-2 §1.2/§5.4).
+    assert.strictEqual(plain(FAILURE_REASONS[id])[1], 'C', id);
+    assert.strictEqual(plain(reportingFailureEintrag(id)).kategorie, 'END_USER', id);
+  });
+});
+
+test('Bedeutung und Empfehlung stehen nur fuer belegte IDs, nie geraten', () => {
+  const { FAILURE_BEDEUTUNG, FAILURE_ADVICE, FAILURE_REASONS } = loadBuilders();
+  const bedeutung = plain(FAILURE_BEDEUTUNG);
+  const advice = plain(FAILURE_ADVICE);
+  // Jede ID beider Tabellen muss es im Katalog geben - sonst beschriebe der
+  // Report einen Grund, den es gar nicht gibt.
+  Object.keys(bedeutung).forEach(id => {
+    assert.ok(FAILURE_REASONS[id], `Bedeutung fuer unbekannte ID ${id}`);
+    assert.ok(bedeutung[id].length > 10, id);
+  });
+  // Die Empfehlungen sind eine Teilmenge der erklaerten Gruende: eine
+  // Handlungsanweisung ohne Erklaerung daneben waere eine Zumutung.
+  const erlaubt = ['RETRY_OK', 'RETRY_NO', 'OTHER_METHOD', 'CONTACT_WALLEE'];
+  Object.keys(advice).forEach(id => {
+    assert.ok(bedeutung[id], `Empfehlung ohne Bedeutung fuer ${id}`);
+    assert.ok(erlaubt.indexOf(advice[id]) !== -1, `${id}: ${advice[id]}`);
+  });
+  // Stichproben aus §1.3 Punkt 2, woertlich zugeordnet.
+  assert.strictEqual(advice['1758896189449'], 'RETRY_NO');      // Security Decline
+  assert.strictEqual(advice['1000000000065'], 'OTHER_METHOD');  // Soft Decline
+  assert.strictEqual(advice['1562045949960'], 'CONTACT_WALLEE');// Configuration Error
+  assert.strictEqual(advice['1553239810659'], 'RETRY_OK');      // Communication Error
+  // Nicht genannt und deshalb ohne Empfehlung, obwohl eine naheliegt.
+  assert.strictEqual(advice['1675956162243'], undefined);       // Checkout Id Expired
+});
+
+test('failureReasons-Override nimmt einen String ebenso wie ein [name, kategorie]-Paar', () => {
+  const { reportingFailureEintrag } = loadBuilders();
+  // Blosser String: ersetzt nur den Namen, die Katalog-Kategorie bleibt.
+  const nurName = plain(reportingFailureEintrag('1553239810659', { 1553239810659: 'Eigener Name' }));
+  assert.strictEqual(nurName.name, 'Eigener Name');
+  assert.strictEqual(nurName.kategorie, 'TEMPORARY');
+  // Paar in Katalog-Schreibweise (Kuerzel) und in Modell-Schreibweise.
+  assert.strictEqual(plain(reportingFailureEintrag('777', { 777: ['Neu', 'I'] })).kategorie, 'INTERNAL');
+  assert.strictEqual(plain(reportingFailureEintrag('777', { 777: ['Neu', 'D'] })).name, 'Neu');
+  assert.strictEqual(plain(reportingFailureEintrag('777', { 777: ['Neu', 'DEVELOPER'] })).kategorie,
+    'DEVELOPER');
+  // Unsinniges Kuerzel aendert die Kategorie nicht auf gut Glueck.
+  assert.strictEqual(plain(reportingFailureEintrag('777', { 777: ['Neu', 'X'] })).kategorie, 'UNKNOWN');
+});
+
+test('Kategoriesumme ist exakt die Anzahl FAILED des Kanals', () => {
+  const m = modell({ dim: [
+    // Vier Kategorien plus eine ID, die der Katalog nicht kennt.
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '1553239810659', attempts: 3 }),  // TEMPORARY
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '1553239789832', attempts: 5 }),  // INTERNAL
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '1580367235835', attempts: 2 }),  // DEVELOPER
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '1531373398963', attempts: 4 }),  // CONFIGURATION
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '1531373451516', attempts: 7 }),  // Override -> END_USER
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '9999999999999', attempts: 1 }),  // UNKNOWN
+    dimZeile({ attemptState: 'SUCCESSFUL', attempts: 100 }),
+    dimZeile({ attemptState: 'PENDING', attempts: 6 }),
+  ] });
+  const kanal = m.kanaele.POS;
+  const gruppen = plain(kanal.failureKategorien.gruppen);
+  assert.deepStrictEqual(gruppen.map(g => [g.schluessel, g.attempts]), [
+    ['END_USER', 7], ['TEMPORARY', 3], ['CONFIGURATION', 4],
+    ['INTERNAL', 5], ['DEVELOPER', 2], ['UNKNOWN', 1],
+  ]);
+  // Der Pruefsatz aus der Definition of Done: weder die erfolgreichen noch die
+  // offenen Versuche duerfen hier auftauchen, und keiner der 22 Fehlschlaege
+  // darf fehlen.
+  assert.strictEqual(gruppen.reduce((a, g) => a + g.attempts, 0), kanal.kpi.fehlgeschlagen);
+  assert.strictEqual(kanal.failureKategorien.basis, 22);
+  assert.ok(Math.abs(gruppen.reduce((a, g) => a + g.anteilAttempts, 0) - 100) < 1e-9);
+});
+
+test('Die Ablehngruende tragen Kategorie, Bedeutung und Empfehlung mit', () => {
+  const m = modell({ dim: [
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '1758896189449', attempts: 9 }),
+    dimZeile({ attemptState: 'FAILED', failureReasonId: '9999999999999', attempts: 1 }),
+  ] });
+  const f = plain(m.kanaele.POS.failures);
+  assert.strictEqual(f[0].name, 'Security Decline');
+  assert.strictEqual(f[0].kategorie, 'END_USER');
+  assert.match(f[0].bedeutung, /hochriskant/);
+  assert.strictEqual(f[0].empfehlung, 'RETRY_NO');
+  assert.strictEqual(f[1].name, '#9999999999999');
+  assert.strictEqual(f[1].bedeutung, '');
+  assert.strictEqual(f[1].empfehlung, '');
+});
+
+test('failuresProBrand kommt vollstaendig aus dem Modell - gekuerzt wird erst in der Ausgabe', () => {
+  // Bis Iteration 2 schnitt das Modell hier auf fuenf Gruende je Brand ab.
+  // Jetzt liefert es alle; die Sammelzeile baut die Blockschicht.
+  const dim = [];
+  for (let i = 0; i < 9; i += 1) {
+    dim.push(dimZeile({ attemptState: 'FAILED', failureReasonId: String(1000 + i), attempts: 9 - i }));
+  }
+  const proBrand = plain(modell({ dim }).kanaele.POS.failuresProBrand);
+  assert.strictEqual(proBrand.length, 9);
+  assert.ok(Math.abs(proBrand.reduce((a, f) => a + f.anteil, 0) - 100) < 1e-9);
 });
 
 test('K10: Verlauf ohne Luecken, Stunden immer 0-23', () => {

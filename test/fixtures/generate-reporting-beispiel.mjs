@@ -44,6 +44,15 @@
 //   - zwei Waehrungen (CHF, EUR) - Betraege je Waehrung, Zaehlwerte gesamt
 //   - SUCCESSFUL- und FAILED-Zeilen (FAILED traegt summe_betrag_failed,
 //     SUCCESSFUL traegt summe_betrag und summe_refund)
+//   - die failure_reason_id ist seit Iteration 2 eine ECHTE ID aus
+//     dashboard/catalog/failure-reasons.json (der Katalog ist oeffentliche
+//     wallee-Dokumentation, kein Kundendatum). Erfundene IDs blieben im Report
+//     'Unbekannt' und liessen die neuen Spalten Kategorie/Bedeutung/Empfehlung
+//     im Fixture-Pfad ungeprueft. Gewaehlt sind drei Faelle mit Aussage: eine
+//     ID mit Kategorie-Override (POS 'Transaction declined'), eine ohne
+//     ('3-D Secure Failure') und eine mit Empfehlung ('Security Decline',
+//     RETRY_NO). Die Zeile mit LEERER ID bleibt daneben stehen - sie deckt den
+//     Fall "Grund unbekannt" ab.
 //   - eine Zeile mit leerem issuer_country -> muss im Parser UNKNOWN werden
 //   - Trinkgeld (P3) NUR am POS und nur an erfolgreichen Attempts, dort aber
 //     nicht auf jeder Zeile: die Query fuehrt summe_tip als
@@ -145,7 +154,7 @@ const DIM_FAELLE = [
     arc: '00', land: 'CH', kat: 'WORLD_ELITE_BUSINESS', funding: 'CREDIT', n: 415 },
   // POS-Ablehnung: FAILED traegt den abgelehnten Betrag, nicht den Umsatz.
   { space: SPACE_POS, channel: 'POS', brand: 'Visa', waehrung: 'CHF', state: 'FAILED',
-    reason: '1487356536632', arc: '51', land: 'CH', kat: 'CLASSIC', funding: 'DEBIT', n: 23 },
+    reason: '1579281555663', arc: '51', land: 'CH', kat: 'CLASSIC', funding: 'DEBIT', n: 23 },
   // Auslaendischer Issuer + DCC.
   { space: SPACE_POS, channel: 'POS', brand: 'Mastercard', waehrung: 'CHF', state: 'SUCCESSFUL',
     arc: '00', land: 'DE', kat: 'CLASSIC', funding: 'CREDIT', dcc: true, n: 58 },
@@ -176,7 +185,7 @@ const DIM_FAELLE = [
     tds: true, cavv: true, eci: '05', n: 212 },
   // 3DS begonnen, aber ohne CAVV -> FAILED_OR_ABANDONED (SPEC 3.1).
   { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF', state: 'FAILED',
-    reason: '1487356536632', arc: 'AUTHORIZATION_DECLINED', land: 'CH', kat: 'CLASSIC',
+    reason: '1568360440179', arc: 'AUTHORIZATION_DECLINED', land: 'CH', kat: 'CLASSIC',
     funding: 'CREDIT', tds: true, cavv: false, n: 41 },
   // Kein 3DS gestartet, aber ECI vorhanden -> WALLET_CRYPTOGRAM. Zugleich die
   // Wallet-Zeile (wallet != '-') und ein Pan Type.
@@ -188,7 +197,7 @@ const DIM_FAELLE = [
     state: 'SUCCESSFUL', arc: 'SUCCESSFUL', land: 'DE', kat: 'CLASSIC', funding: 'CREDIT',
     tds: true, cavv: true, eci: '02', n: 64 },
   { space: SPACE_ECOM, channel: 'ECOM', brand: 'Mastercard', waehrung: 'EUR',
-    state: 'FAILED', reason: '1487356536644', arc: 'SECURITY', land: 'FR', kat: 'CLASSIC',
+    state: 'FAILED', reason: '1758896189449', arc: 'SECURITY', land: 'FR', kat: 'CLASSIC',
     funding: 'CREDIT', tds: true, cavv: false, n: 19 },
   // Attempt ohne aufloesbare Brand (SPEC 7): bleibt in K2 sichtbar.
   { space: SPACE_ECOM, channel: 'ECOM', brand: 'UNKNOWN', waehrung: 'CHF',

@@ -442,6 +442,74 @@ test('Die CSV traegt maschinenlesbare Zahlen, keine formatierten Woerter', () =>
   });
 });
 
+// --- Ablehngruende im Klartext (Iteration 2, §1) -----------------------------
+
+test('Der Bildschirm zeigt Namen, Kategorie, Bedeutung und Empfehlung', () => {
+  const { el } = mitFixture();
+  const html = el('reportingReportOutput').innerHTML;
+  // Die Fixture fuehrt echte Katalog-IDs; genau dafuer ist die Task da.
+  assert.match(html, />3-D Secure Failure</);
+  assert.match(html, />Security Decline</);
+  assert.match(html, /Nicht wiederholen/, 'Empfehlung RETRY_NO in deutscher Beschriftung');
+  assert.match(html, /hochriskant/, 'Bedeutung aus dem Katalog');
+  // Der POS-Grund traegt die korrigierte Kategorie, nicht die des Katalogs.
+  const k8 = html.slice(html.indexOf('POS · Ablehngründe'));
+  assert.match(k8.slice(0, 800), />Endnutzer</,
+    'Transaction declined steht im Katalog als Configuration und wird korrigiert');
+  // Und nirgends mehr eine nackte ID als Grund - das ist der Zweck der Task.
+  assert.doesNotMatch(html, />#\d+</);
+});
+
+test('Der Kategorie-Block steht mit deutschen Beschriftungen auf dem Schirm', () => {
+  const { el } = mitFixture();
+  const html = el('reportingReportOutput').innerHTML;
+  const block = html.slice(html.indexOf('E-Com · Ablehngründe nach Kategorie'));
+  assert.match(block.slice(0, 900), />Endnutzer</);
+  assert.match(block.slice(0, 900), />Vorübergehend</);
+  assert.match(block.slice(0, 900), />Entwickler</);
+});
+
+test('Der Hinweisblock der Ablehncodes rendert ohne leere Tabelle', () => {
+  const { app } = starte();
+  // Form, die reportingKanalBloecke im E-Commerce unter der Schwelle liefert:
+  // kein Kopf, keine Zeilen, nur die Aussage. Eine leere Tabelle waere ein
+  // Rahmen um ein Nichts - dieselbe Regel wie beim Block "Keine Daten".
+  const html = app.reportingBlockHtml({
+    titel: 'E-Com · Ablehncodes', kanal: 'ECOM', typ: 'tabelle',
+    kopf: [], zeilen: [],
+    hinweis: 'Der Processor liefert für diesen Space keinen Response Code '
+      + '(9 von 10 Fehlschlägen ohne Code).',
+  });
+  assert.match(html, /<h3>E-Com · Ablehncodes<\/h3>/);
+  assert.match(html, /9 von 10 Fehlschlägen/);
+  assert.doesNotMatch(html, /<table/);
+});
+
+test('Die „Übrige“-Zeile ueberlebt CSV und PDF - vier Ausgaben, eine Quelle', () => {
+  const { app } = starte();
+  const { REPORTING_GRUENDE_MAX } = app;
+  // Modell von Hand: ein Grund mehr als Schwelle+1, damit die Sammelzeile
+  // entsteht - die Fixture hat dafuer zu wenige Gruende.
+  const dim = [];
+  for (let i = 0; i < REPORTING_GRUENDE_MAX + 2; i += 1) {
+    dim.push({
+      spaceId: '90001', channel: 'POS', brand: 'Visa', wallet: '-', waehrung: 'CHF',
+      attemptState: 'FAILED', failureReasonId: String(2000 + i), authResponseCode: 'UNKNOWN',
+      issuerCountry: 'CH', cardCategory: 'CLASSIC', funding: 'DEBIT', panType: 'UNKNOWN',
+      eci: 'UNKNOWN', dcc: false, tdsStarted: false, tdsCavv: false,
+      terminalIdentifier: 'UNKNOWN', terminalName: 'UNKNOWN',
+      attempts: 20 - i, betrag: 0, betragFailed: 100, refund: 0, tip: 0,
+    });
+  }
+  const modell = app.buildReportingModel({ dim, time: [], conv: [] }, { merchantCountry: 'CH' });
+  const csv = app.buildReportingReportCsv(modell, {});
+  assert.ok(csv.includes('Übrige (2 Gründe)'), 'Sammelzeile fehlt im CSV');
+  const pdf = app.reportingPdfBloecke(modell, {});
+  const gruende = pdf.tabellen.find(t => /Ablehngründe$/.test(t.titel));
+  assert.ok(gruende, 'K8-Abschnitt fehlt im PDF');
+  assert.ok(gruende.rows.some(r => r[0] === 'Übrige (2 Gründe)'), 'Sammelzeile fehlt im PDF');
+});
+
 // --- PDF-Bloecke -----------------------------------------------------------
 
 test('reportingPdfBloecke liefert Titel, Kopfzeilen und Tabellen', () => {

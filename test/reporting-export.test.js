@@ -330,31 +330,163 @@ test('Kacheln: eigener typ und ein Zellformat je Zelle', () => {
 
 // --- Kuerzungen und Blattnamen ---------------------------------------------
 
-test('Ablehngruende werden auf Top-10 gekuerzt, der Hinweis nennt den Rest', () => {
+// Baut n Ablehngruende mit absteigender Haeufigkeit (20, 19, ...) im POS-Kanal.
+function gruende(n, over) {
   const zeilen = [];
-  for (let i = 0; i < 13; i += 1) {
+  for (let i = 0; i < n; i += 1) {
     zeilen.push(Object.assign({}, DIM_POS, {
       attempt_state: 'FAILED', failure_reason_id: String(1000 + i),
       auth_response_code: String(10 + i),
       anzahl_attempts: String(20 - i), summe_betrag: '', summe_betrag_failed: '5.00000000',
-    }));
+    }, over || {}));
   }
-  const b = bloeckeAus(zeilen);
+  return zeilen;
+}
+
+test('Ablehngruende stehen vollstaendig da, der Rest als eine Zeile „Übrige“', () => {
+  const { REPORTING_GRUENDE_MAX } = loadBuilders();
+  const max = REPORTING_GRUENDE_MAX;
+  const b = bloeckeAus(gruende(max + 4));
   const g = b.find(x => x.titel === 'POS · Ablehngründe');
-  assert.strictEqual(g.zeilen.length, 10);
-  assert.ok(/3 weitere/.test(g.hinweis), g.hinweis);
-  const c = b.find(x => x.titel === 'POS · Ablehncodes');
-  assert.strictEqual(c.zeilen.length, 10);
+  assert.strictEqual(g.zeilen.length, max + 1);
+  const letzte = g.zeilen[max];
+  assert.strictEqual(letzte[0], 'Übrige (4 Gründe)');
+  // Summe der vier uebrigen Gruende (Haeufigkeiten 20-max ... 20-max-3).
+  const rest = [0, 1, 2, 3].reduce((a, i) => a + (20 - (max + i)), 0);
+  assert.strictEqual(letzte[2], rest);
+  // Die Anteile gehen jetzt auf 100 % auf - genau der Punkt der Umstellung.
+  const summe = g.zeilen.reduce((a, z) => a + z[3], 0);
+  assert.ok(Math.abs(summe - 100) < 1e-9, String(summe));
+  // Und deshalb steht dort keine Fussnote mehr, die etwas Fehlendes ankuendigt.
+  assert.ok(!/nicht dargestellt/.test(g.hinweis), g.hinweis);
+  // Die Ablehncodes bleiben bei der Top-10-Kuerzung (P6, unveraendert).
+  assert.strictEqual(b.find(x => x.titel === 'POS · Ablehncodes').zeilen.length, 10);
+});
+
+test('Die „Übrige“-Zeile entsteht nie fuer einen einzelnen Grund', () => {
+  const { REPORTING_GRUENDE_MAX, reportingUebrige } = loadBuilders();
+  const max = REPORTING_GRUENDE_MAX;
+  // Genau ein Grund mehr als die Schwelle: er steht selbst da, denn
+  // "Übrige (1 Grund)" braucht dieselbe Zeile und sagt weniger.
+  const g = bloeckeAus(gruende(max + 1)).find(x => x.titel === 'POS · Ablehngründe');
+  assert.strictEqual(g.zeilen.length, max + 1);
+  assert.ok(!/Übrige/.test(String(g.zeilen[max][0])), String(g.zeilen[max][0]));
+  // Dieselbe Regel direkt an der Funktion, ohne den Umweg ueber eine Fixture.
+  const liste = n => Array.from({ length: n }, (_, i) => ({ attempts: 1, anteil: 100 / n }));
+  assert.strictEqual(plain(reportingUebrige(liste(max), 100)).uebrige, null);
+  assert.strictEqual(plain(reportingUebrige(liste(max + 1), 100)).uebrige, null);
+  const zwei = plain(reportingUebrige(liste(max + 2), max + 2));
+  assert.strictEqual(zwei.uebrige.anzahl, 2);
+  assert.strictEqual(zwei.uebrige.attempts, 2);
+  assert.strictEqual(zwei.uebrige.anteil, (2 / (max + 2)) * 100);
+});
+
+test('Der Kategorie-Block steht hinter den Ablehngruenden und summiert auf sie', () => {
+  const b = bloeckeAus([
+    // END_USER (Override), CONFIGURATION, TEMPORARY, unbekannte ID.
+    Object.assign({}, DIM_POS, { attempt_state: 'FAILED', failure_reason_id: '1531373451516',
+      anzahl_attempts: '7', summe_betrag: '', summe_betrag_failed: '5.00000000' }),
+    Object.assign({}, DIM_POS, { attempt_state: 'FAILED', failure_reason_id: '1531373398963',
+      anzahl_attempts: '4', summe_betrag: '', summe_betrag_failed: '5.00000000' }),
+    Object.assign({}, DIM_POS, { attempt_state: 'FAILED', failure_reason_id: '1553239810659',
+      anzahl_attempts: '3', summe_betrag: '', summe_betrag_failed: '5.00000000' }),
+    Object.assign({}, DIM_POS, { attempt_state: 'FAILED', failure_reason_id: '9999999999999',
+      anzahl_attempts: '1', summe_betrag: '', summe_betrag_failed: '5.00000000' }),
+  ]);
+  const t = titel(b);
+  assert.strictEqual(t[t.indexOf('POS · Ablehngründe') + 1], 'POS · Ablehngründe nach Kategorie');
+  const kat = b.find(x => x.titel === 'POS · Ablehngründe nach Kategorie');
+  assert.deepStrictEqual(plain(kat.kopf.map(sp => `${sp.label}:${sp.format}`)),
+    ['Kategorie:text', 'Attempts:zahl', 'Anteil %:pct']);
+  // Deutsche Beschriftung, feste Reihenfolge, Total-Zeile am Schluss.
+  assert.deepStrictEqual(plain(kat.zeilen), [
+    ['Endnutzer', 7, (7 / 15) * 100],
+    ['Vorübergehend', 3, (3 / 15) * 100],
+    ['Konfiguration', 4, (4 / 15) * 100],
+    ['Intern', 0, 0],
+    ['Entwickler', 0, 0],
+    ['Unbekannt', 1, (1 / 15) * 100],
+    ['Total', 15, 100],
+  ]);
+  // Der Hinweis sagt, wofuer die Achse da ist.
+  assert.match(kat.hinweis, /beim Kunden/);
+});
+
+test('K8 traegt Bedeutung und Empfehlung als eigene Spalten', () => {
+  const b = bloeckeAus([
+    Object.assign({}, DIM_POS, { attempt_state: 'FAILED', failure_reason_id: '1758896189449',
+      anzahl_attempts: '9', summe_betrag: '', summe_betrag_failed: '5.00000000' }),
+    Object.assign({}, DIM_POS, { attempt_state: 'FAILED', failure_reason_id: '9999999999999',
+      anzahl_attempts: '1', summe_betrag: '', summe_betrag_failed: '5.00000000' }),
+  ]);
+  const g = b.find(x => x.titel === 'POS · Ablehngründe');
+  assert.deepStrictEqual(plain(g.kopf.map(sp => `${sp.label}:${sp.format}`)), [
+    'Grund:text', 'ID:text', 'Attempts:zahl', 'Anteil %:pct',
+    'Kategorie:text', 'Bedeutung:text', 'Empfehlung:text',
+  ]);
+  assert.strictEqual(g.zeilen[0][0], 'Security Decline');
+  assert.strictEqual(g.zeilen[0][4], 'Endnutzer');
+  assert.match(String(g.zeilen[0][5]), /hochriskant/);
+  assert.strictEqual(g.zeilen[0][6], 'Nicht wiederholen');
+  // Unbekannte ID: Name als '#<id>', aber keine erfundene Erklaerung.
+  assert.strictEqual(g.zeilen[1][0], '#9999999999999');
+  assert.strictEqual(g.zeilen[1][5], '');
+  assert.strictEqual(g.zeilen[1][6], '');
+});
+
+test('P6 im E-Commerce entfaellt als Tabelle, wenn kaum ein Code bekannt ist', () => {
+  const { REPORTING_CODES_MIN_BEKANNT } = loadBuilders();
+  assert.strictEqual(REPORTING_CODES_MIN_BEKANNT, 25);
+  const fehl = (over) => Object.assign({}, DIM_ECOM, {
+    attempt_state: 'FAILED', summe_betrag: '', summe_betrag_failed: '5.00000000',
+  }, over);
+  // 9 von 10 Fehlschlaegen ohne Code = 10 % bekannt, unter der Schwelle.
+  const unten = bloeckeAus([
+    fehl({ auth_response_code: '', failure_reason_id: '1', anzahl_attempts: '9' }),
+    fehl({ auth_response_code: '05', failure_reason_id: '2', anzahl_attempts: '1' }),
+  ]).find(x => x.titel === 'E-Com · Ablehncodes');
+  assert.ok(unten, 'Der Block soll bleiben - die Abwesenheit ist selbst die Aussage');
+  assert.deepStrictEqual(plain(unten.zeilen), []);
+  assert.match(unten.hinweis, /keinen Response Code/);
+  // Die echten Zahlen, kein Platzhalter.
+  assert.match(unten.hinweis, /9 von 10 Fehlschlägen ohne Code/);
+  // Ueber der Schwelle steht wieder die Tabelle.
+  const oben = bloeckeAus([
+    fehl({ auth_response_code: '', failure_reason_id: '1', anzahl_attempts: '5' }),
+    fehl({ auth_response_code: '05', failure_reason_id: '2', anzahl_attempts: '5' }),
+  ]).find(x => x.titel === 'E-Com · Ablehncodes');
+  assert.strictEqual(oben.zeilen.length, 2);
+});
+
+test('P6 am POS kennt keine Schwelle - der ISO-Code ist dort die feinste Achse', () => {
+  const fehl = (over) => Object.assign({}, DIM_POS, {
+    attempt_state: 'FAILED', summe_betrag: '', summe_betrag_failed: '5.00000000',
+  }, over);
+  const c = bloeckeAus([
+    fehl({ auth_response_code: '', failure_reason_id: '1', anzahl_attempts: '99' }),
+    fehl({ auth_response_code: '51', failure_reason_id: '2', anzahl_attempts: '1' }),
+  ]).find(x => x.titel === 'POS · Ablehncodes');
+  assert.strictEqual(c.zeilen.length, 2);
 });
 
 test('Alle Titel ueberleben xlsxBlattName ungekuerzt und bleiben eindeutig', () => {
   const { reportingExportBloecke, xlsxBlattName } = loadBuilders();
   const b = plain(reportingExportBloecke(fixturModell(), {}));
   const namen = new Set();
+  const kanalNamen = new Set(b.map(x => (x.kanal ? x.kanal : 'Reporting')));
   b.forEach(x => {
-    assert.strictEqual(xlsxBlattName(x.titel), x.titel, `gekuerzt: ${x.titel}`);
-    assert.ok(!namen.has(x.titel), `doppelter Blattname: ${x.titel}`);
+    assert.ok(!namen.has(x.titel), `doppelter Blocktitel: ${x.titel}`);
     namen.add(x.titel);
+  });
+  // Blattnamen sind die KANALNAMEN, nicht die Blocktitel: exportReportingXlsx
+  // legt ein Blatt je Kanal an und stapelt die Bloecke darin (ein Blatt je
+  // Block waeren an der Fixture ueber 30 Register). Frueher stand hier die
+  // Erwartung, jeder Blocktitel muesse ungekuerzt durch xlsxBlattName gehen -
+  // das war eine Erwartung an einen Export, den es so nie gab, und sie fiel
+  // beim ersten Titel ueber 31 Zeichen ("… Ablehngründe nach Kategorie").
+  // Geprueft wird deshalb, was wirklich als Blattname landet.
+  kanalNamen.forEach(k => {
+    assert.strictEqual(xlsxBlattName(k), k, `Kanal-Blattname gekuerzt: ${k}`);
   });
 });
 
@@ -495,10 +627,11 @@ test('E5: Kreuztabelle Brand x Ablehngrund, Anteil am Brand selbst', () => {
   assert.deepStrictEqual(e5.kopf.map(s => `${s.label}:${s.format}`),
     ['Brand:text', 'Grund:text', 'ID:text', 'Attempts:zahl', 'Anteil %:pct']);
   // Von Hand aus den DIM-Zeilen der Fixture: Visa 41, Mastercard 19, UNKNOWN 6,
-  // je der einzige Grund des Brands, also je 100 % dieses Brands.
+  // je der einzige Grund des Brands, also je 100 % dieses Brands. Die Namen
+  // kommen aus dem Katalog - die Fixture fuehrt seit Iteration 2 echte IDs.
   assert.deepStrictEqual(e5.zeilen, [
-    ['Visa', '#1487356536632', '1487356536632', 41, 100],
-    ['Mastercard', '#1487356536644', '1487356536644', 19, 100],
+    ['Visa', '3-D Secure Failure', '1568360440179', 41, 100],
+    ['Mastercard', 'Security Decline', '1758896189449', 19, 100],
     ['UNKNOWN', 'Unbekannt', 'UNKNOWN', 6, 100],
   ]);
   // Der Anteil misst den Brand, nicht den Kanal: 41 von 66 gescheiterten
@@ -511,9 +644,10 @@ test('E5 steht direkt hinter K8 und ersetzt die Ablehncodes nicht', () => {
   const { reportingExportBloecke } = loadBuilders();
   const t = plain(reportingExportBloecke(fixturModell(), {})).map(x => x.titel);
   const i = t.indexOf('E-Com · Ablehngründe');
-  assert.strictEqual(t[i + 1], 'E-Com · Ablehngründe je Brand');
-  assert.strictEqual(t[i + 2], 'E-Com · Ablehncodes');
-  assert.strictEqual(t[i + 3], 'E-Com · Conversion');
+  assert.strictEqual(t[i + 1], 'E-Com · Ablehngründe nach Kategorie');
+  assert.strictEqual(t[i + 2], 'E-Com · Ablehngründe je Brand');
+  assert.strictEqual(t[i + 3], 'E-Com · Ablehncodes');
+  assert.strictEqual(t[i + 4], 'E-Com · Conversion');
 });
 
 test('E5 entfaellt, solange nur EIN Brand scheitert - dann waere er K8 mit Zusatzspalte', () => {
@@ -536,25 +670,34 @@ test('E5 entfaellt, solange nur EIN Brand scheitert - dann waere er K8 mit Zusat
     [['Visa', 20, 100], ['TWINT', 5, 100]]);
 });
 
-test('E5 kuerzt je Brand auf fuenf Gruende (SPEC 4.3)', () => {
+test('E5 fasst je Brand zusammen, nicht ueber die ganze Kreuztabelle', () => {
+  const { REPORTING_GRUENDE_MAX } = loadBuilders();
+  const max = REPORTING_GRUENDE_MAX;
   const zeilen = [];
-  for (let i = 0; i < 7; i += 1) {
+  for (let i = 0; i < max + 3; i += 1) {
     zeilen.push(Object.assign({}, DIM_POS, {
       attempt_state: 'FAILED', failure_reason_id: String(100 + i),
       anzahl_attempts: String(20 - i), summe_betrag: '', summe_betrag_failed: '5.00000000',
     }));
   }
-  // Zweiter Brand, damit der Block ueberhaupt erscheint.
+  // Zweiter Brand, damit der Block ueberhaupt erscheint - mit genau einem
+  // Grund, der deshalb keine Sammelzeile bekommen darf.
   zeilen.push(Object.assign({}, DIM_POS, { brand: 'TWINT', attempt_state: 'FAILED',
     failure_reason_id: '900', anzahl_attempts: '3',
     summe_betrag: '', summe_betrag_failed: '5.00000000' }));
   const e5 = plain(bloeckeAus(zeilen)).find(x => x.titel === 'POS · Ablehngründe je Brand');
   const visa = e5.zeilen.filter(z => z[0] === 'Visa');
-  assert.strictEqual(visa.length, 5);
-  // Absteigend nach Anzahl, die beiden kleinsten fallen weg.
-  assert.deepStrictEqual(visa.map(z => z[3]), [20, 19, 18, 17, 16]);
-  // Der Anteil bleibt der am Brand (119 gescheiterte Visa-Versuche).
-  assert.ok(Math.abs(visa[0][4] - (20 / 119) * 100) < 1e-9);
+  assert.strictEqual(visa.length, max + 1);
+  assert.deepStrictEqual(visa.slice(0, 3).map(z => z[3]), [20, 19, 18]);
+  // Die Sammelzeile steht UNTER den Zeilen ihres Brands, nicht am Blockende -
+  // sonst bliebe offen, zu welchem Brand sie zaehlt.
+  assert.strictEqual(visa[max][1], 'Übrige (3 Gründe)');
+  const visaSumme = [0, 1, 2].reduce((a, i) => a + (20 - (max + i)), 0);
+  assert.strictEqual(visa[max][3], visaSumme);
+  // Anteile je Brand auf 100 %.
+  assert.ok(Math.abs(visa.reduce((a, z) => a + z[4], 0) - 100) < 1e-9);
+  const twint = e5.zeilen.filter(z => z[0] === 'TWINT');
+  assert.deepStrictEqual(twint, [['TWINT', '#900', '900', 3, 100]]);
 });
 
 // --- Prosa, die Task 5 braucht (Fix-Runde 1) --------------------------------

@@ -139,3 +139,114 @@ test('App-Block laesst sich isoliert kompilieren', () => {
   const app = blockInhalt('app-logic');
   assert.doesNotThrow(() => new vm.Script(app, { filename: 'app-logic.js' }));
 });
+
+// --- Der Build-Schritt fuer FAILURE_REASONS (Iteration 2, Task 1) ------------
+//
+// tools/build-failure-reasons.mjs schreibt die 2'254 Ablehngruende zwischen die
+// Markerkommentare in wallee_query_builder.html. Er gehoert hierher und nicht
+// in die Reporting-Tests, weil er dasselbe schuetzt wie der Rest dieser Datei:
+// die Unversehrtheit der Single-File-App beim Einbetten - inklusive der
+// $&-Falle, die oben fuer den Vendor-Code beschrieben ist.
+
+const os = require('node:os');
+const { execFileSync: run } = require('node:child_process');
+
+const TOOL = path.join(__dirname, '..', 'tools', 'build-failure-reasons.mjs');
+const KATALOG = path.join(__dirname, '..', 'dashboard', 'catalog', 'failure-reasons.json');
+
+function tempDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'wqb-failure-reasons-'));
+}
+
+// Minimale Ziel-Datei: nur die beiden Marker, mit Platzhalter dazwischen.
+function zielDatei(dir, inhalt) {
+  const p = path.join(dir, 'ziel.html');
+  fs.writeFileSync(p, inhalt !== undefined ? inhalt
+    : 'davor\n  /* FAILURE_REASONS:BEGIN */\n  const FAILURE_REASONS = {};\n  /* FAILURE_REASONS:END */\ndanach\n');
+  return p;
+}
+
+function generierteZeile(html) {
+  const m = /\/\* FAILURE_REASONS:BEGIN \*\/\n(.*)\n\s*\/\* FAILURE_REASONS:END \*\//.exec(html);
+  assert.ok(m, 'Kein generierter Block zwischen den Markern gefunden');
+  return m[1];
+}
+
+test('Build-Schritt erzeugt den Block, sortiert und als [name, kategorie]-Paar', () => {
+  const dir = tempDir();
+  const ziel = zielDatei(dir);
+  const katalog = path.join(dir, 'katalog.json');
+  fs.writeFileSync(katalog, JSON.stringify({
+    2: { name: 'Zweiter', category: 'Internal' },
+    10: { name: 'Zehnter', category: 'Temporary Issue' },
+    1: { name: 'Erster', category: 'End User' },
+    3: { name: 'Ohne Kategorie', category: 'Was Neues' },
+  }));
+  run(process.execPath, [TOOL, ziel, katalog]);
+  const zeile = generierteZeile(fs.readFileSync(ziel, 'utf8'));
+  // String-Sortierung der IDs: '1' < '10' < '2' - Absicht, sie macht den Diff
+  // eines erneuten Laufs stabil, sie ist keine Zahlensortierung.
+  assert.strictEqual(zeile,
+    '  const FAILURE_REASONS = {"1":["Erster","E"],"10":["Zehnter","T"],'
+    + '"2":["Zweiter","I"],"3":["Ohne Kategorie",""]};');
+  // Umgebender Text bleibt unangetastet.
+  const html = fs.readFileSync(ziel, 'utf8');
+  assert.ok(html.startsWith('davor\n'));
+  assert.ok(html.endsWith('danach\n'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Build-Schritt ist idempotent und uebersteht ein $& im Namen', () => {
+  const dir = tempDir();
+  const ziel = zielDatei(dir);
+  const katalog = path.join(dir, 'katalog.json');
+  // Genau die Falle, an der der Vendor-Code einmal still zerbrochen ist: mit
+  // einem Ersatz-STRING statt einer Replacer-Funktion setzte replace() an
+  // dieser Stelle den ganzen gefundenen Block ein.
+  fs.writeFileSync(katalog, JSON.stringify({
+    1: { name: 'Payment $& declined', category: 'End User' },
+    2: { name: "Backtick $` and $' and $1", category: 'Developer' },
+  }));
+  run(process.execPath, [TOOL, ziel, katalog]);
+  const erst = fs.readFileSync(ziel, 'utf8');
+  assert.ok(erst.includes('"Payment $& declined"'), erst);
+  assert.ok(erst.includes('Backtick $` and $\' and $1'), erst);
+  // Zweiter Lauf aendert nichts mehr.
+  const aus = run(process.execPath, [TOOL, ziel, katalog], { encoding: 'utf8' });
+  assert.match(aus, /unveraendert/);
+  assert.strictEqual(fs.readFileSync(ziel, 'utf8'), erst);
+  // Und das Ergebnis ist gueltiges JavaScript.
+  assert.doesNotThrow(() => new vm.Script(generierteZeile(erst), { filename: 'failure-reasons.js' }));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Build-Schritt bricht ab, wenn die Marker fehlen oder doppelt sind', () => {
+  const dir = tempDir();
+  const katalog = path.join(dir, 'katalog.json');
+  fs.writeFileSync(katalog, JSON.stringify({ 1: { name: 'X', category: 'End User' } }));
+  const scheitert = (inhalt) => {
+    const ziel = zielDatei(dir, inhalt);
+    assert.throws(() => run(process.execPath, [TOOL, ziel, katalog], { stdio: 'pipe' }));
+    // Und die Datei bleibt unberuehrt - lieber gar nichts als halb geschrieben.
+    assert.strictEqual(fs.readFileSync(ziel, 'utf8'), inhalt);
+  };
+  scheitert('gar keine Marker\n');
+  scheitert('/* FAILURE_REASONS:BEGIN */\nohne Ende\n');
+  scheitert('/* FAILURE_REASONS:BEGIN */\nx\n/* FAILURE_REASONS:END */\n'
+    + '/* FAILURE_REASONS:BEGIN */\ny\n/* FAILURE_REASONS:END */\n');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Der eingecheckte Block ist der aktuelle Stand des Katalogs', () => {
+  // Waechter gegen Drift: wer dashboard/catalog/failure-reasons.json neu
+  // scrapt und den Build-Schritt vergisst, faellt hier auf - nicht erst, wenn
+  // ein Haendler im Report eine ID ohne Namen sieht.
+  const dir = tempDir();
+  const ziel = path.join(dir, 'app.html');
+  fs.copyFileSync(APP, ziel);
+  const aus = run(process.execPath, [TOOL, ziel, KATALOG], { encoding: 'utf8' });
+  assert.match(aus, /unveraendert/,
+    'wallee_query_builder.html ist nicht auf dem Stand des Katalogs - '
+    + 'node tools/build-failure-reasons.mjs laufen lassen');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

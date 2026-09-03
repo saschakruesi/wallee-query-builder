@@ -148,7 +148,7 @@ Nachkommastelle, Schweizer Zahlformat (`formatZahlCH`, `CH_TAUSENDER`).
 | K5 | **Business vs. Privat** | Anteil `card_type` BUSINESS / PRIVATE / UNKNOWN an erfolgreichen **Karten**-Attempts (Brand ∈ `KARTEN_BRANDS`) | DIM |
 | K6 | **Herkunft Karten** | Domestisch / Intra / Inter / Unbekannt an erfolgreichen Karten-Attempts, Anteil Anzahl und Betrag; Top-10 Issuer-Länder als Tabelle | DIM + `EUROPA_REGION` + Händler-Land |
 | K7 | **Durchschnittsbetrag** | `summe_betrag / anzahl_attempts(SUCCESSFUL)` pro Währung, gesamt und pro Brand | DIM |
-| K8 | **Ablehngründe Top 10** | FAILED-Attempts nach `failure_reason_id`, Name via Proxy (§6.4), Anteil an allen FAILED | DIM |
+| K8 | **Ablehngründe** | FAILED-Attempts nach `failure_reason_id`, Name und Kategorie aus dem eingebetteten Katalog (§6.4, Korrektur 2026-09-03), Anteil an allen FAILED. *Seit Iteration 2 vollständig statt Top 10, Rest als eine Zeile «Übrige (n Gründe)» — die Anteile summieren dadurch auf 100 %.* | DIM |
 | K9 | **Refund-Quote** | `summe_refund / summe_betrag` pro Währung | DIM |
 | K10 | **Verlauf** | Success Rate und Betrag pro Tag (Linie/Balken), Attempts pro Stunde (Heatmap-Tabelle 24×7 oder Balken 0–23) | TIME |
 
@@ -258,6 +258,31 @@ Endpunkt in Task 6 verifizieren: Kandidaten `GET /api/v2.0/failure-reasons`
 (v2-Doku) bzw. `GET /api/failure-reason/all` (v1). Liefert der Endpunkt nichts,
 fällt die App auf die ID zurück — der Report bleibt vollständig, nur ohne Klartext.
 
+**Korrektur 2026-09-03 (SPEC-ITERATION-2 §1.1, umgesetzt in Iteration 2 Task 1).**
+Der Befund «kein Failure-Reason-Dienst in der Web-Service-API» bleibt richtig, und der
+Endpunkt ist nicht erneut zu suchen. **Falsch war die Folgerung**, damit sei auch die
+Doku-Liste als Datenquelle unbrauchbar («über 2000 Einträge, ohne IDs in der Tabelle»):
+`GET https://app-wallee.com/en-us/doc/api/failure-reason/list?page=<n>` ist öffentlich
+und liefert 20 Einträge je Seite **samt ID** — jede Zeile ist
+`<tr data-grid-action="view/<id>" data-entity-name="<Name>">`, die Kategorie steht als
+letzte `<td>`. 113 Seiten ergeben **2'254 Einträge**, also den vollständigen Katalog.
+
+Konsequenz für den Code:
+
+- Der Katalog liegt gescrapt im Repo (`dashboard/catalog/failure-reasons.json`, Scraper
+  `dashboard/tools/scrape_wallee_catalogs.py`).
+- `FAILURE_REASONS` wird daraus **generiert** (`node tools/build-failure-reasons.mjs`,
+  Markerblock in `wallee_query_builder.html`) und trägt je ID das Paar
+  `[name, kategorie-kürzel]`. Die Handliste der sieben belegten IDs ist damit abgelöst;
+  K8 (§4.2) zeigt keine `#<id>`-Zeilen mehr, auch nicht im Kopieren-Modus.
+- Die Kategorie ist zugleich eine neue Dimension («Ablehngründe nach Kategorie»),
+  clientseitig aus dem Katalog — die Query bleibt unverändert.
+- Die **Route** bleibt trotzdem sinnvoll, aber mit anderer Quelle: nicht die
+  Web-Service-API, sondern die Doku-Seite `failure-reason/view/<id>` (kein Auth-Header,
+  kein JWT). Sie deckt IDs ab, die nach dem Scrape neu dazukommen —
+  SPEC-ITERATION-2 §1.3 Punkt 3, gebaut in Iteration 2 Task 2. Bis dahin bleibt
+  `#<id>` der Fallback für genau diesen Fall.
+
 ## 7. Edge Cases
 
 - Keine Attempts im Zeitraum → leeres Modell, Report zeigt «Keine Zahlungsversuche».
@@ -303,7 +328,9 @@ fällt die App auf die ID zurück — der Report bleibt vollständig, nur ohne K
 
 ## 9. Offen (vor Task 1 zu klären)
 
-- Failure-Reason-Endpunkt (§6.4) — wird in Task 6 verifiziert.
+- Failure-Reason-Endpunkt (§6.4) — in Task 6 verifiziert (es gibt ihn nicht) und
+  2026-09-03 anders gelöst: eingebetteter Katalog aus der öffentlichen Doku-Liste,
+  siehe die Korrektur in §6.4.
 - Alles andere ist erledigt (Task 0 POS + E-Com, siehe `DESCRIPTORS.md`). Bekannte
   Grenzen, die im Report als Hinweis stehen: kein Liability-Shift-Label; Labels sind
   connectorabhängig — ein anderer Acquirer kann andere IDs schreiben, dann zeigt der

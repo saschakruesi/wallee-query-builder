@@ -117,12 +117,30 @@ const EXPORTED = [
   'KARTEN_BUSINESS_REGEX',
   'ISO_RESPONSE_CODES',
   'FAILURE_REASONS',
+  // Ablehngruende im Klartext (Iteration 2, Task 1). FAILURE_REASONS wird von
+  // tools/build-failure-reasons.mjs erzeugt; die vier kleinen Tabellen daneben
+  // sind von Hand gepflegt und werden deshalb einzeln festgenagelt.
+  'FAILURE_KATEGORIE_KUERZEL',
+  'FAILURE_CATEGORY_OVERRIDE',
+  'FAILURE_BEDEUTUNG',
+  'FAILURE_ADVICE',
+  'REPORTING_FAILURE_KATEGORIEN',
+  'reportingFailureEintrag',
   // Reporting-Report Export-Bloecke (Task 4). Bewusst nur die beiden
   // Funktionen: die Konstanten (REPORTING_TOP_N, REPORTING_KANAL_LABEL,
   // REPORTING_TOP_JE_BRAND) haben ausserhalb der App keinen Konsumenten -
   // Task 5 laeuft im selben Script-Block und sieht sie ohnehin.
+  //
+  // Ausnahme seit Iteration 2: reportingUebrige() und die beiden Schwellen
+  // dahinter. Die Sammelzeile "Uebrige (n Gruende)" darf nie fuer einen
+  // einzelnen Grund entstehen und ihre Summe muss aufgehen - das ist eine
+  // Regel, die sich an der Funktion selbst pruefen laesst, statt sie ueber
+  // eine Fixture mit gerade genug Gruenden zu erraten.
   'reportingExportBloecke',
   'reportingZellFormat',
+  'reportingUebrige',
+  'REPORTING_GRUENDE_MAX',
+  'REPORTING_CODES_MIN_BEKANNT',
   // Reporting-Verdrahtung (Task 5): zwei reine Regeln plus der Ingest-Pfad.
   // reportingModellAktuell() ist die Testnaht auf das zuletzt gebaute Modell -
   // gleiche Rolle wie getState() beim State.
