@@ -473,11 +473,15 @@ test('Alle Titel ueberleben xlsxBlattName ungekuerzt und bleiben eindeutig', () 
   const { reportingExportBloecke, xlsxBlattName } = loadBuilders();
   const b = plain(reportingExportBloecke(fixturModell(), {}));
   const namen = new Set();
-  const kanalNamen = new Set(b.map(x => (x.kanal ? x.kanal : 'Reporting')));
+  // Der Blattname ist der Kanal-Teil des Titels ("E-Com · Ablehngründe" ->
+  // "E-Com") bzw. 'Reporting' fuer den kanalfreien Titelblock - genau das, was
+  // exportReportingXlsx aus REPORTING_KANAL_LABEL zusammensetzt.
+  const kanalNamen = new Set(b.map(x => (x.kanal ? x.titel.split(' · ')[0] : 'Reporting')));
   b.forEach(x => {
     assert.ok(!namen.has(x.titel), `doppelter Blocktitel: ${x.titel}`);
     namen.add(x.titel);
   });
+  assert.deepStrictEqual([...kanalNamen].sort(), ['Andere', 'E-Com', 'POS', 'Reporting']);
   // Blattnamen sind die KANALNAMEN, nicht die Blocktitel: exportReportingXlsx
   // legt ein Blatt je Kanal an und stapelt die Bloecke darin (ein Blatt je
   // Block waeren an der Fixture ueber 30 Register). Frueher stand hier die
