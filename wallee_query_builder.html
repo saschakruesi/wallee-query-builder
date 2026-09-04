@@ -21,6 +21,23 @@
     --warn: #b45309;
     --code-bg: #eff6f5;
     --code-text: #2b3a3d;
+    /* Kuchendiagramme des Reporting-Reports (SPEC-ITERATION-2 §2.2): sechs
+       Farben plus Grau. --kuchen-1 traegt bewusst denselben Wert wie --accent
+       und nicht var(--accent): die sieben stehen als EINE ablesbare Tabelle
+       da, und jsPDF braucht zu jeder denselben Hexwert (SVG_KUCHEN_FARBEN
+       fuehrt beide Darstellungen nebeneinander). Die Aufhellungen der Spec
+       (Tuerkis 55 %, Orange 55 %, Tuerkis 25 %) stehen als DECKENDE
+       Mischwerte gegen Weiss - jsPDF kennt keine Transparenz, und beide
+       Renderer sollen dieselbe Farbe zeigen. --kuchen-text-hell ist die
+       Prozentzahl auf den dunklen Segmenten. */
+    --kuchen-1: #11d9cc;
+    --kuchen-2: #ff4d00;
+    --kuchen-3: #111111;
+    --kuchen-4: #7ceae3;
+    --kuchen-5: #ff9d73;
+    --kuchen-6: #c4f6f2;
+    --kuchen-grau: #9aa3a8;
+    --kuchen-text-hell: #ffffff;
   }
   * { box-sizing: border-box; }
   body {
@@ -393,6 +410,39 @@
   .balken-achse {
     display: flex; justify-content: space-between; font-size: 11px;
     color: var(--muted); margin-top: 2px;
+  }
+  /* Kuchen + Legende nebeneinander, Umbruch unter 640 px (SPEC-ITERATION-2
+     §2.2). Die Reihe traegt bis zu zwei Kuchen (Zahlungsmittel: Attempts und
+     Betrag); alles darunter ist derselbe Block wie beim Balken - Figur ueber
+     der Tabelle, im selben Block-Rahmen. */
+  .kuchen-reihe { display: flex; flex-wrap: wrap; gap: 18px; margin: 12px 0 0; }
+  .kuchen-block {
+    /* max-width, damit ein EINZELNER Kuchen seine Legende nicht ueber die
+       ganze Breite zieht - der Wert stuende dann meterweit vom Namen weg. */
+    margin: 0; flex: 1 1 320px; min-width: 280px; max-width: 430px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  }
+  .kuchen-block figcaption {
+    flex: 1 1 100%; font-size: 12px; color: var(--muted); margin-bottom: 1px;
+  }
+  .kuchen { display: block; flex: 0 0 auto; }
+  .kuchen-legende {
+    list-style: none; margin: 0; padding: 0; flex: 1 1 150px; min-width: 150px;
+    font-size: 12px;
+  }
+  .kuchen-legende li { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+  .kuchen-farbe {
+    width: 10px; height: 10px; flex: 0 0 auto; border-radius: 2px;
+    border: 1px solid var(--panel-3);
+  }
+  .kuchen-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kuchen-wert {
+    margin-left: auto; padding-left: 8px; color: var(--muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  @media (max-width: 640px) {
+    .kuchen-block { flex-direction: column; align-items: flex-start; }
+    .kuchen-legende { width: 100%; }
   }
 
   .report-block { margin-top: 26px; }
@@ -5863,6 +5913,183 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     };
   }
 
+  // --- Kuchendiagramme: Segmente entstehen HIER (SPEC-ITERATION-2 §2.2) ----
+  // Nicht im Renderer. Bildschirm und PDF zeichnen denselben Kuchen, und beide
+  // sollen exakt die Zahlen zeigen, die in der Tabelle darunter stehen - lebte
+  // die 2-%-Regel im Renderer, haetten zwei Ausgaben zwei Wahrheiten. Gleiche
+  // Haltung wie bei reportingTop()/reportingUebrige() darueber: Kuerzen und
+  // Zusammenfassen gehoert in die Blockschicht, nie ins Modell und nie in die
+  // Ausgabe.
+  //
+  // Ein Kuchen: { titel, format, segmente: [{ label, wert, anteil, farbe }] }.
+  // Ein Block traegt sie als LISTE (block.kuchen), weil "Zahlungsmittel" zwei
+  // nebeneinander hat (Attempts je Brand und Betrag je Brand). Ein Block ohne
+  // Kuchen traegt das Feld gar nicht.
+
+  // Whitelist wie SVG_BALKEN_FARBEN: der Renderer nimmt nur einen SCHLUESSEL
+  // entgegen, nie eine freie Farbangabe - das ist der Weg, ueber den sonst
+  // doch ein Inline-Hex ins Markup kaeme. Anders als die Balken-Tabelle steht
+  // diese hier oben in der Blockschicht, weil die Farbe eines Segments dort
+  // vergeben wird; beide Renderer schlagen sie nur noch nach.
+  //
+  // Jeder Eintrag traegt BEIDE Darstellungen an EINER Stelle: css fuer den
+  // Bildschirm (Hausregel: Farben nur ueber :root), hex fuer jsPDF - der kann
+  // keine CSS-Variablen. text/textHex ist die Farbe der Prozentzahl IM
+  // Segment: auf Schwarz und Orange hell, auf den uebrigen dunkel.
+  const SVG_KUCHEN_FARBEN = {
+    tuerkis: { css: 'var(--kuchen-1)', hex: '#11d9cc', text: 'var(--text)', textHex: '#414141' },
+    orange: { css: 'var(--kuchen-2)', hex: '#ff4d00', text: 'var(--kuchen-text-hell)', textHex: '#ffffff' },
+    schwarz: { css: 'var(--kuchen-3)', hex: '#111111', text: 'var(--kuchen-text-hell)', textHex: '#ffffff' },
+    tuerkisHell: { css: 'var(--kuchen-4)', hex: '#7ceae3', text: 'var(--text)', textHex: '#414141' },
+    orangeHell: { css: 'var(--kuchen-5)', hex: '#ff9d73', text: 'var(--text)', textHex: '#414141' },
+    tuerkisBlass: { css: 'var(--kuchen-6)', hex: '#c4f6f2', text: 'var(--text)', textHex: '#414141' },
+    grau: { css: 'var(--kuchen-grau)', hex: '#9aa3a8', text: 'var(--text)', textHex: '#414141' },
+  };
+  const REPORTING_KUCHEN_GRAU = 'grau';
+
+  // Reihenfolge fuer OFFENE Listen (Brands, Gruende, PAN-Quelle): nach Anteil
+  // absteigend durch die sechs Farben - die Bloecke liefern ihre Zeilen bereits
+  // so sortiert. Grau steht nicht in der Reihe: es ist fuer "Uebrige" und
+  // "Unbekannt" reserviert und verbraucht keine der sechs.
+  const SVG_KUCHEN_REIHE = [
+    'tuerkis', 'orange', 'schwarz', 'tuerkisHell', 'orangeHell', 'tuerkisBlass'];
+
+  // Feste Farbe fuer feste Kategorien: dieselbe Kategorie hat in jedem Report
+  // dieselbe Farbe, sonst bedeutete Orange im Kartentyp-Kuchen etwas anderes
+  // als im 3DS-Kuchen daneben. Geschluesselt ueber den MODELL-Schluessel und
+  // beim Nachschlagen durch reportingLabel() uebersetzt - in der Tabelle steht
+  // der deutsche Name, nicht der Schluessel. UNKNOWN fehlt bewusst: es ist
+  // immer Grau (siehe reportingKuchenIstGrau).
+  const REPORTING_KUCHEN_FARBE = {
+    DOMESTIC: 'tuerkis', INTRA: 'orange', INTER: 'schwarz',
+    BUSINESS: 'tuerkis', PRIVATE: 'orange',
+    DEBIT: 'tuerkis', CREDIT: 'orange',
+    AUTHENTICATED: 'tuerkis', FAILED_OR_ABANDONED: 'orange',
+    WALLET_CRYPTOGRAM: 'schwarz', NOT_REQUESTED: 'tuerkisHell',
+    END_USER: 'tuerkis', TEMPORARY: 'orange', CONFIGURATION: 'schwarz',
+    INTERNAL: 'tuerkisHell', DEVELOPER: 'orangeHell',
+  };
+
+  // Segmente unter diesem Anteil (Prozent) werden zu "Uebrige" zusammengefasst.
+  const REPORTING_KUCHEN_MIN_ANTEIL = 2;
+  const REPORTING_UEBRIGE_PRAEFIX = 'Übrige';
+  // Die Beschriftung der Total-Zeile, wie die Bloecke sie schreiben. Sie
+  // gehoert nie in einen Kuchen - sie ist die Summe der Segmente, nicht eines
+  // davon.
+  const REPORTING_TOTAL_ZEILE = 'Total';
+
+  function reportingKuchenIstGrau(label) {
+    return label === reportingLabel(REPORTING_UNBEKANNT)
+      || label.indexOf(REPORTING_UEBRIGE_PRAEFIX) === 0;
+  }
+
+  // Der Modell-Schluessel zu einem angezeigten Label. Die Suche laeuft ueber
+  // hoechstens 16 Eintraege und spart eine zweite, abgeleitete Tabelle, die
+  // beim Ergaenzen einer Kategorie vergessen werden koennte.
+  function reportingKuchenFesteFarbe(label) {
+    const treffer = Object.keys(REPORTING_KUCHEN_FARBE)
+      .find(k => reportingLabel(k) === label);
+    return treffer ? REPORTING_KUCHEN_FARBE[treffer] : '';
+  }
+
+  // Farbschluessel je Segment. Feste Kategorien behalten ihre Farbe, offene
+  // Listen laufen der Reihe nach durch die uebrig gebliebenen - so kollidiert
+  // eine offene Liste nie mit einer festen Zuordnung im selben Kuchen.
+  function reportingKuchenFarben(labels) {
+    const fest = labels.map(l => (reportingKuchenIstGrau(l)
+      ? REPORTING_KUCHEN_GRAU : reportingKuchenFesteFarbe(l)));
+    const vergeben = new Set(fest.filter(f => f && f !== REPORTING_KUCHEN_GRAU));
+    const frei = SVG_KUCHEN_REIHE.filter(f => !vergeben.has(f));
+    // Alle sechs fest vergeben (kommt heute nicht vor, waere aber kein Grund,
+    // ein Segment ohne Farbe zu lassen): dann faengt die volle Reihe von vorn
+    // an. Eine wiederholte Farbe ist besser als eine erfundene siebte - die
+    // Legende benennt jedes Segment ohnehin.
+    const quelle = frei.length ? frei : SVG_KUCHEN_REIHE;
+    let i = 0;
+    return fest.map(f => f || quelle[(i++) % quelle.length]);
+  }
+
+  // Die Segmente eines Kuchens sind die ZEILEN seiner Tabelle - nie eine
+  // zweite, eigene Auswahl (§2.2). Deshalb liest diese Funktion die fertigen
+  // Blockzeilen, statt noch einmal ins Modell zu greifen:
+  //  - Die Total-Zeile faellt weg (sie ist die Summe, nicht ein Segment).
+  //  - Fortsetzungszeilen einer Waehrungsgruppe (leere erste Spalte) gehoeren
+  //    zur Zeile darueber; ihr Gruppenname wird mitgefuehrt, damit der
+  //    Betrags-Kuchen die Waehrungszeile eines Brands seinem Brand zuordnen
+  //    kann.
+  //  - Zellen ohne Zahl (leere Fortsetzung, fehlende Grundlage) und Nullwerte
+  //    ergeben kein Segment: ein Segment mit 0 Grad ist nicht zu sehen und
+  //    verlaengert nur die Legende.
+  // opt: { wertSpalte, anteilSpalte, waehrungSpalte?, waehrung? }.
+  function reportingKuchenAusBlock(block, opt) {
+    // Hinweisbloecke (kopf: [], zeilen: []) bekommen keinen Kuchen. Die
+    // Zeilenpruefung darunter wuerde das auch leisten - hier steht es
+    // ausdruecklich, weil es eine Entscheidung ist und kein Nebeneffekt.
+    if (!block.kopf.length) return [];
+    let gruppe = '';
+    const treffer = [];
+    block.zeilen.forEach(z => {
+      const erste = z[0];
+      if (erste !== '' && erste !== null && erste !== undefined) gruppe = String(erste);
+      if (gruppe === REPORTING_TOTAL_ZEILE) return;
+      if (opt.waehrungSpalte != null && z[opt.waehrungSpalte] !== opt.waehrung) return;
+      const wert = z[opt.wertSpalte];
+      if (typeof wert !== 'number' || !(wert > 0)) return;
+      const anteil = z[opt.anteilSpalte];
+      treffer.push({ label: gruppe, wert, anteil: typeof anteil === 'number' ? anteil : 0 });
+    });
+    return treffer;
+  }
+
+  // 2-%-Regel plus Farbvergabe. Ein EINZELNES kleines Segment wird nicht
+  // eingeklappt: "Uebrige" braucht dann dieselbe Zeile wie der Eintrag selbst
+  // und sagt weniger - genau die Ueberlegung, die reportingUebrige() oben
+  // schon fuer die Tabellen trifft.
+  //
+  // Der Anteil der Sammelzeile ist die SUMME der eingeklappten Anteile, nicht
+  // eine neue Division: es gibt hier keinen Nenner, und die Legende soll
+  // dieselben Zahlen wie die Tabelle tragen. Dass diese Summe minimal von
+  // 100 % abweichen kann, ist folgenlos - die Winkel kommen aus den Werten,
+  // nicht aus den Anteilen (siehe kuchenSegmente).
+  function reportingKuchenSegmente(eintraege) {
+    const klein = eintraege.filter(e => e.anteil < REPORTING_KUCHEN_MIN_ANTEIL);
+    const liste = klein.length > 1
+      ? eintraege.filter(e => e.anteil >= REPORTING_KUCHEN_MIN_ANTEIL).concat([{
+        // Bewusst ohne Anzahl im Namen: die Sammelzeile kann eine bereits
+        // zusammengefasste Zeile "Uebrige (n Gruende)" der Tabelle mit
+        // aufnehmen, und "Uebrige (3)" haette dann 3 gezaehlt, wo mehr
+        // drinsteckt. Wert und Anteil daneben sagen ohnehin mehr als eine
+        // Stueckzahl.
+        label: REPORTING_UEBRIGE_PRAEFIX,
+        wert: klein.reduce((a, e) => a + e.wert, 0),
+        anteil: klein.reduce((a, e) => a + e.anteil, 0),
+      }])
+      : eintraege;
+    const farben = reportingKuchenFarben(liste.map(e => e.label));
+    return liste.map((e, i) => ({
+      label: e.label, wert: e.wert, anteil: e.anteil, farbe: farben[i],
+    }));
+  }
+
+  function reportingKuchen(block, opt) {
+    const eintraege = reportingKuchenAusBlock(block, opt);
+    if (!eintraege.length) return null;
+    return {
+      titel: opt.titel,
+      format: opt.format || 'zahl',
+      segmente: reportingKuchenSegmente(eintraege),
+    };
+  }
+
+  // Haengt die Kuchen an den Block und gibt ihn zurueck, damit der Aufrufer
+  // ihn in einem Zug pushen kann. Ohne Kuchen bleibt das Feld weg - ein
+  // block.kuchen === [] muesste jede Ausgabe erst noch pruefen.
+  function reportingKuchenAnhaengen(block, kuchen) {
+    const liste = (kuchen || []).filter(k => k);
+    if (liste.length) block.kuchen = liste;
+    return block;
+  }
+
   // Zeitraum-Angabe des Pickers. Akzeptiert { start, end } (so heisst es in der
   // App) ebenso wie { von, bis } und einen fertigen String.
   function reportingZeitraumText(zeitraum) {
@@ -5945,10 +6172,18 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (mitErfolg) z.push(g.successRate);
       return z;
     });
-    const total = ['Total', basis, basis > 0 ? 100 : null];
+    const total = [REPORTING_TOTAL_ZEILE, basis, basis > 0 ? 100 : null];
     if (mitErfolg) total.push(null);
     zeilen.push(total);
-    return reportingBlock(kanal, titel, kopf, zeilen, 'tabelle', hinweis);
+    const block = reportingBlock(kanal, titel, kopf, zeilen, 'tabelle', hinweis);
+    // Alle vier Aufrufer dieser Funktion - Kartentyp, Debit und Kredit,
+    // 3DS-Status, Ablehngruende nach Kategorie - stehen in der Kuchen-Liste
+    // von §2.1. Deshalb haengt der Kuchen an der gemeinsamen Funktion statt
+    // viermal daneben: kaeme ein fuenfter Eimer-Block dazu, bekaeme er ihn
+    // automatisch, und das ist hier die richtige Vorgabe.
+    return reportingKuchenAnhaengen(block, [reportingKuchen(block, {
+      titel: `Anteil je ${spaltenName}`, wertSpalte: 1, anteilSpalte: 2, format: 'zahl',
+    })]);
   }
 
   // Ein Block-Satz fuer genau einen Kanal. Die Reihenfolge ist fest (Task 4):
@@ -5983,10 +6218,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         b.waehrungen, zmBetrag, zmLeer).forEach(z => zmZeilen.push(z));
     });
     reportingWaehrungZeilen(
-      ['Total', k.attempts, k.attempts > 0 ? 100 : null, k.successRate, k.failureRate],
+      [REPORTING_TOTAL_ZEILE, k.attempts, k.attempts > 0 ? 100 : null, k.successRate, k.failureRate],
       kanalModell.waehrungen, w => [w.waehrung, w.betrag, w.betrag ? 100 : null, w.schnitt],
       zmLeer).forEach(z => zmZeilen.push(z));
-    bloecke.push(reportingBlock(kanal, t('Zahlungsmittel'), [
+    const zmBlock = reportingBlock(kanal, t('Zahlungsmittel'), [
       reportingSpalte('Brand'), reportingSpalte('Attempts', 'zahl'),
       reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
       reportingSpalte('Failure %', 'pct'), reportingSpalte('Währung'),
@@ -5994,7 +6229,25 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       reportingSpalte('Ø-Betrag', 'betrag'),
     ], zmZeilen, 'tabelle',
     'Attempts, Anteil und Quoten gelten währungsübergreifend und stehen deshalb nur in '
-    + 'der ersten Währungszeile eines Zahlungsmittels; die Beträge stehen je Währung.'));
+    + 'der ersten Währungszeile eines Zahlungsmittels; die Beträge stehen je Währung.');
+    // Der einzige Block mit ZWEI Kuchen (§2.1): Attempts je Brand und Betrag
+    // je Brand. Der Betrags-Kuchen braucht EINE Waehrung - ueber Waehrungen
+    // hinweg zu addieren ist in diesem Modus verboten (SPEC 2.7) -, deshalb
+    // die mit dem groessten Umsatz, und sie steht im Titel: eine Betragszahl
+    // ohne ihre Einheit ist keine Aussage.
+    const leitWaehrung = kanalModell.waehrungen.reduce(
+      (beste, w) => (beste && beste.betrag >= w.betrag ? beste : w), null);
+    bloecke.push(reportingKuchenAnhaengen(zmBlock, [
+      reportingKuchen(zmBlock, {
+        titel: 'Zahlungsversuche je Zahlungsmittel',
+        wertSpalte: 1, anteilSpalte: 2, format: 'zahl',
+      }),
+      leitWaehrung && leitWaehrung.betrag > 0 ? reportingKuchen(zmBlock, {
+        titel: `Umsatz je Zahlungsmittel (${leitWaehrung.waehrung})`,
+        wertSpalte: 6, anteilSpalte: 7, format: 'betrag',
+        waehrungSpalte: 5, waehrung: leitWaehrung.waehrung,
+      }) : null,
+    ]));
 
     // --- K2: Wallets als eigene Zeilen ------------------------------------
     // Bewusst ein eigener Block statt zusaetzlicher Zeilen oben: ein Wallet
@@ -6039,16 +6292,22 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
           g.waehrungen, w => [w.waehrung, w.betrag, w.anteilBetrag], hkLeer)
           .forEach(z => hkZeilen.push(z));
       });
-      reportingWaehrungZeilen(['Total', kanalModell.herkunft.basis, 100],
+      reportingWaehrungZeilen([REPORTING_TOTAL_ZEILE, kanalModell.herkunft.basis, 100],
         kanalModell.herkunft.waehrungen, w => [w.waehrung, w.betrag, w.betrag ? 100 : null], hkLeer)
         .forEach(z => hkZeilen.push(z));
-      bloecke.push(reportingBlock(kanal, t('Kartenherkunft'), [
+      const hkBlock = reportingBlock(kanal, t('Kartenherkunft'), [
         reportingSpalte('Herkunft'), reportingSpalte('Attempts', 'zahl'),
         reportingSpalte('Anteil %', 'pct'), reportingSpalte('Währung'),
         reportingSpalte('Umsatz', 'betrag'), reportingSpalte('Anteil Umsatz %', 'pct'),
       ], hkZeilen, 'tabelle',
       kartenHinweis + ' Der Betragsanteil bezieht sich auf den Karten-Umsatz je Währung, '
-      + 'nicht auf den Umsatz des ganzen Kanals — sonst summierten die vier Eimer nicht auf 100 %.'));
+      + 'nicht auf den Umsatz des ganzen Kanals — sonst summierten die vier Eimer nicht auf 100 %.');
+      // Nur der Attempts-Kuchen (§2.1): der Umsatz steht in diesem Block je
+      // Waehrung, ein zweiter Kuchen darueber waere derselbe Sonderfall wie
+      // beim Zahlungsmittel-Block - dort ist er verlangt, hier nicht.
+      bloecke.push(reportingKuchenAnhaengen(hkBlock, [reportingKuchen(hkBlock, {
+        titel: 'Anteil je Herkunft', wertSpalte: 1, anteilSpalte: 2, format: 'zahl',
+      })]));
 
       // Top-10 Issuer-Laender.
       if (kanalModell.herkunft.laender.length) {
@@ -6098,7 +6357,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         zeilen.push([`Übrige (${formatIntCH(g.uebrige.anzahl)} Gründe)`, '',
           g.uebrige.attempts, g.uebrige.anteil, '', '', '']);
       }
-      bloecke.push(reportingBlock(kanal, t('Ablehngründe'), [
+      const k8Block = reportingBlock(kanal, t('Ablehngründe'), [
         reportingSpalte('Grund'), reportingSpalte('ID'),
         reportingSpalte('Attempts', 'zahl'), reportingSpalte('Anteil %', 'pct'),
         reportingSpalte('Kategorie'), reportingSpalte('Bedeutung'), reportingSpalte('Empfehlung'),
@@ -6106,7 +6365,20 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       `Anteil an allen ${formatIntCH(k.fehlgeschlagen)} gescheiterten Zahlungsversuchen `
       + 'des Kanals; die Anteile summieren auf 100 %. Bedeutung und Empfehlung stehen für '
       + 'die häufigen Gründe aus dem wallee-Katalog — wo sie fehlen, ist nichts belegt und '
-      + 'bewusst nichts geraten.'));
+      + 'bewusst nichts geraten.');
+      // Bewusste Abweichung von SPEC-ITERATION-2 §2.1, dort steht "Top 6 +
+      // Uebrige": §2.2 verlangt im selben Abschnitt, dass Tabelle und Kuchen
+      // dieselben Zahlen zeigen, und die beiden Vorgaben schliessen sich aus.
+      // Aufgeloest zugunsten von §2.2 - der Kuchen zeichnet genau die Zeilen
+      // dieser Tabelle (bis REPORTING_GRUENDE_MAX plus "Uebrige (n Gruende)"),
+      // darueber greift die 2-%-Regel. In der Praxis stellt sie den Richtwert
+      // "Top 6" meist selbst her: an den Referenzdaten liegen ab dem sechsten
+      // bis achten Grund fast alle Anteile unter 2 %. Ein Kuchen, der andere
+      // Zahlen zeigt als die Tabelle direkt darunter, waere der teurere
+      // Fehler - dann muesste der Leser raten, welche der beiden gilt.
+      bloecke.push(reportingKuchenAnhaengen(k8Block, [reportingKuchen(k8Block, {
+        titel: 'Anteil je Grund', wertSpalte: 2, anteilSpalte: 3, format: 'zahl',
+      })]));
 
       // Dieselben Zahlen eine Ebene groeber. Der Block steht direkt hinter K8,
       // weil er dessen Zusammenfassung ist - und er ist die Zeile, die dem
@@ -6191,7 +6463,8 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     if (kanal === 'ECOM' && k.transaktionen > 0) {
       const zeilen = kanalModell.brands.filter(b => b.txMitAttempt > 0)
         .map(b => [b.brand, b.txMitAttempt, b.txErfolgreich, b.conversion, b.attempts, b.retryRate]);
-      zeilen.push(['Total', k.transaktionen, k.txErfolgreich, k.conversion, k.attempts, k.retryRate]);
+      zeilen.push([REPORTING_TOTAL_ZEILE, k.transaktionen, k.txErfolgreich, k.conversion,
+        k.attempts, k.retryRate]);
       bloecke.push(reportingBlock(kanal, t('Conversion'), [
         reportingSpalte('Brand'), reportingSpalte('Transaktionen', 'zahl'),
         reportingSpalte('Erfolgreiche Tx', 'zahl'), reportingSpalte('Conversion %', 'pct'),
@@ -6209,12 +6482,15 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // einzigen Zeile "Unbekannt 100 %" sagt nichts, was nicht schon im
     // fehlenden Block staende.
     if (kanal === 'ECOM' && kanalModell.panTypes.some(p => p.panType !== REPORTING_UNBEKANNT)) {
-      bloecke.push(reportingBlock(kanal, t('PAN-Quelle'), [
+      const panBlock = reportingBlock(kanal, t('PAN-Quelle'), [
         reportingSpalte('PAN-Quelle'), reportingSpalte('Attempts', 'zahl'),
         reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
       ], kanalModell.panTypes.map(p => [reportingLabel(p.panType), p.attempts,
         p.anteilAttempts, p.successRate]), 'tabelle',
-      'Klartext-PAN gegen Device-Token (Apple/Google Pay) und Scheme-Token (Click to Pay).'));
+      'Klartext-PAN gegen Device-Token (Apple/Google Pay) und Scheme-Token (Click to Pay).');
+      bloecke.push(reportingKuchenAnhaengen(panBlock, [reportingKuchen(panBlock, {
+        titel: 'Anteil je PAN-Quelle', wertSpalte: 1, anteilSpalte: 2, format: 'zahl',
+      })]));
     }
 
     // --- K7/K9: Betraege je Waehrung ---------------------------------------
@@ -6548,6 +6824,221 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     return { achse, serien };
   }
 
+  // --- Kuchendiagramme: Geometrie einmal, zwei Renderer --------------------
+  // kuchenSegmente() ist die EINZIGE Stelle, an der Winkel und Punkte
+  // gerechnet werden. Bildschirm (SVG-Pfade) und PDF (jsPDF-Vektoren) bauen
+  // beide daraus - zwei Rechnungen waeren zwei Kuchen, die frueher oder
+  // spaeter auseinanderlaufen.
+  //
+  // Koordinaten sind MITTELPUNKTS-relativ (0,0 = Zentrum), y zeigt nach unten.
+  // So rechnen SVG und jsPDF gleich und jeder Renderer verschiebt nur noch.
+  // 0 Grad ist 12 Uhr, gezaehlt wird im Uhrzeigersinn.
+  const KUCHEN_INNEN_ANTEIL = 0.55;        // Donut, Innenradius 55 % (§2.2)
+  const KUCHEN_MAX_TEILBOGEN = 90;         // Grad je Teilbogen, hoechstens
+  const KUCHEN_MIN_BESCHRIFTUNG = 12;      // ab diesem Winkel steht die Prozentzahl im Segment
+
+  function kuchenPunkt(radius, winkel) {
+    const b = (winkel * Math.PI) / 180;
+    return { x: radius * Math.sin(b), y: -radius * Math.cos(b) };
+  }
+
+  // Kubische Bezier-Naeherung eines Kreisbogens. Die Kontrollpunkte liegen auf
+  // der Tangente, im Abstand k * radius mit k = 4/3 * tan(dWinkel/4) - die
+  // uebliche Naeherung, deren Fehler bei 90 Grad in der Groessenordnung von
+  // 0.03 % des Radius liegt (test/reporting-export.test.js rechnet das an
+  // Stuetzpunkten AUF dem Bogen nach, nicht an den Kontrollpunkten).
+  // Ein negativer dWinkel ergibt ein negatives k und damit denselben Bogen
+  // rueckwaerts - genau das braucht der innere Rand des Donuts.
+  function kuchenBezier(radius, von, bis) {
+    const a1 = (von * Math.PI) / 180;
+    const a2 = (bis * Math.PI) / 180;
+    const k = (4 / 3) * Math.tan((a2 - a1) / 4);
+    const p0 = kuchenPunkt(radius, von);
+    const p1 = kuchenPunkt(radius, bis);
+    return {
+      p0,
+      c1: { x: p0.x + k * radius * Math.cos(a1), y: p0.y + k * radius * Math.sin(a1) },
+      c2: { x: p1.x - k * radius * Math.cos(a2), y: p1.y - k * radius * Math.sin(a2) },
+      p1,
+    };
+  }
+
+  // segmente: [{ label, wert, anteil, farbe }] aus der Blockschicht.
+  // Rueckgabe je Segment: Start-/Endwinkel, die vier Bogenpunkte (aussen und
+  // innen, Start und Ende) und zusaetzlich die Unterteilung in Teilboegen von
+  // hoechstens 90 Grad. Die Unterteilung ist fuer die Bezier-Naeherung des PDF
+  // noetig UND loest den 100-%-Fall im SVG: ein einzelner Bogen von 360 Grad
+  // hat denselben Anfangs- und Endpunkt und zeichnet gar nichts.
+  function kuchenSegmente(segmente, r, rInnen) {
+    const liste = Array.isArray(segmente) ? segmente : [];
+    const zahl = s => (Number(s.wert) > 0 ? Number(s.wert) : 0);
+    const summe = liste.reduce((a, s) => a + zahl(s), 0);
+    if (!liste.length || !(summe > 0)) return [];
+    let start = 0;
+    return liste.map((s, i) => {
+      // Die Winkel kommen aus den WERTEN, nicht aus den Anteilen: nur so
+      // summieren sie exakt auf 360 Grad. Die Anteile des Modells stehen
+      // daneben in der Legende und werden nirgends nachgerechnet - eine
+      // Sammelzeile "Uebrige" traegt die Summe vieler Gleitkommazahlen, und
+      // die ist eben nicht auf die letzte Stelle dieselbe Zahl wie die eine
+      // Division. Das letzte Segment nimmt den Rest, damit die Summe der
+      // Winkel auch nach der Gleitkomma-Division 360 ist und kein Haarriss
+      // im Ring bleibt.
+      const winkel = i === liste.length - 1 ? 360 - start : (zahl(s) / summe) * 360;
+      const teile = Math.max(1, Math.ceil(winkel / KUCHEN_MAX_TEILBOGEN));
+      const winkelPunkte = [];
+      for (let j = 0; j <= teile; j += 1) winkelPunkte.push(start + (winkel / teile) * j);
+      const aussen = winkelPunkte.map(w => kuchenPunkt(r, w));
+      const innen = winkelPunkte.map(w => kuchenPunkt(rInnen, w));
+      const eintrag = {
+        label: s.label, wert: s.wert, anteil: s.anteil, farbe: s.farbe,
+        start, ende: start + winkel, winkel,
+        aussenStart: aussen[0], aussenEnde: aussen[teile],
+        innenStart: innen[0], innenEnde: innen[teile],
+        winkelPunkte, aussen, innen,
+        mitte: kuchenPunkt((r + rInnen) / 2, start + winkel / 2),
+        beschriftet: winkel >= KUCHEN_MIN_BESCHRIFTUNG,
+      };
+      start += winkel;
+      return eintrag;
+    });
+  }
+
+  function kuchenFarbe(schluessel) {
+    return SVG_KUCHEN_FARBEN[schluessel] || SVG_KUCHEN_FARBEN[REPORTING_KUCHEN_GRAU];
+  }
+
+  // --- Kuchen als inline-SVG ------------------------------------------------
+  const SVG_KUCHEN_STANDARD = { groesse: 180 };
+
+  // Aussenbogen vorwaerts, Verbindung nach innen, Innenbogen rueckwaerts. Die
+  // Teilboegen bleiben unter 180 Grad, deshalb ist das large-arc-Flag immer 0;
+  // sweep ist aussen 1 (im Uhrzeigersinn) und innen 0.
+  function kuchenSvgPfad(s, r, rInnen) {
+    const p = v => `${rundeSvg(v.x)} ${rundeSvg(v.y)}`;
+    let d = `M ${p(s.aussen[0])}`;
+    for (let i = 1; i < s.aussen.length; i += 1) {
+      d += ` A ${rundeSvg(r)} ${rundeSvg(r)} 0 0 1 ${p(s.aussen[i])}`;
+    }
+    d += ` L ${p(s.innen[s.innen.length - 1])}`;
+    for (let i = s.innen.length - 2; i >= 0; i -= 1) {
+      d += ` A ${rundeSvg(rInnen)} ${rundeSvg(rInnen)} 0 0 0 ${p(s.innen[i])}`;
+    }
+    return `${d} Z`;
+  }
+
+  // segmente wie oben. optionen: { groesse, beschriftung }.
+  function svgKuchen(segmente, optionen) {
+    const opt = optionen || {};
+    const groesse = Number(opt.groesse) > 0 ? Number(opt.groesse) : SVG_KUCHEN_STANDARD.groesse;
+    // Ein Pixel Luft, sonst schneidet der Rand des Rings an der Bounding Box ab.
+    const r = groesse / 2 - 1;
+    const rInnen = r * KUCHEN_INNEN_ANTEIL;
+    const teile = kuchenSegmente(segmente, r, rInnen);
+    // Kein Segment - kein Kuchen. Ein leerer Ring waere ein Rahmen um ein
+    // Nichts, dieselbe Entscheidung wie bei svgBalken.
+    if (!teile.length) return '';
+    const pfade = teile.map(s =>
+      `<path d="${kuchenSvgPfad(s, r, rInnen)}" fill="${kuchenFarbe(s.farbe).css}"></path>`).join('');
+    // Die Prozentzahlen stehen NACH allen Flaechen, damit keine Beschriftung
+    // von einem spaeteren Segment ueberzeichnet wird.
+    const texte = teile.filter(s => s.beschriftet).map(s =>
+      `<text x="${rundeSvg(s.mitte.x)}" y="${rundeSvg(s.mitte.y)}" text-anchor="middle" `
+      + `dominant-baseline="central" font-size="9" fill="${kuchenFarbe(s.farbe).text}">`
+      + `${escapeHtml(reportingZellText(s.anteil, 'pct'))}</text>`).join('');
+    const label = opt.beschriftung
+      ? ` role="img" aria-label="${escapeHtml(String(opt.beschriftung))}"` : ' aria-hidden="true"';
+    const g = rundeSvg(groesse);
+    return `<svg class="kuchen" viewBox="0 0 ${g} ${g}" width="${g}" height="${g}"${label}>`
+      + `<g transform="translate(${rundeSvg(groesse / 2)} ${rundeSvg(groesse / 2)})">`
+      + `${pfade}${texte}</g></svg>`;
+  }
+
+  // --- Kuchen im PDF --------------------------------------------------------
+  // Anders als die Balken stehen die Kuchen im PDF (§2.2): jsPDF kann Vektoren
+  // selbst, es braucht also weder ein Rasterbild noch einen dritten Vendor.
+  const PDF_KUCHEN = { radius: 45, zeile: 11, abstand: 9, schrift: 7, labelMax: 26 };
+
+  // Hoehe, die ein Kuchen samt Legende im PDF belegt. Wird VOR dem Zeichnen
+  // gebraucht, um zu entscheiden, ob Titel, Kuchen und Tabelle noch gemeinsam
+  // auf die Seite passen.
+  function pdfKuchenHoehe(kuchen) {
+    const n = (kuchen && kuchen.segmente) ? kuchen.segmente.length : 0;
+    if (!n) return 0;
+    return PDF_KUCHEN.zeile + Math.max(2 * PDF_KUCHEN.radius, n * PDF_KUCHEN.zeile);
+  }
+
+  // Die Linienzuege eines Segments fuer doc.lines(): jsPDF erwartet sie
+  // RELATIV zum jeweils vorigen Punkt (zwei Zahlen = Gerade, sechs = kubische
+  // Bezier). Deshalb wird hier absolut gerechnet und am Schluss die Differenz
+  // gebildet - absolute Punkte sind die, die kuchenSegmente liefert.
+  function kuchenPdfLinien(s, r, rInnen) {
+    const linien = [];
+    let cur = s.aussen[0];
+    const bogen = (radius, von, bis) => {
+      const b = kuchenBezier(radius, von, bis);
+      linien.push([b.c1.x - cur.x, b.c1.y - cur.y, b.c2.x - cur.x, b.c2.y - cur.y,
+        b.p1.x - cur.x, b.p1.y - cur.y]);
+      cur = b.p1;
+    };
+    for (let i = 1; i < s.winkelPunkte.length; i += 1) {
+      bogen(r, s.winkelPunkte[i - 1], s.winkelPunkte[i]);
+    }
+    const innenEnde = s.innen[s.innen.length - 1];
+    linien.push([innenEnde.x - cur.x, innenEnde.y - cur.y]);
+    cur = innenEnde;
+    for (let i = s.winkelPunkte.length - 1; i > 0; i -= 1) {
+      bogen(rInnen, s.winkelPunkte[i], s.winkelPunkte[i - 1]);
+    }
+    return linien;
+  }
+
+  // Lange Label in der PDF-Legende hart kuerzen statt umbrechen: die Legende
+  // steht in einer festen Spalte neben dem Ring, und eine zweite Zeile
+  // verschoebe jede folgende Legendenzeile gegen den Ring.
+  function kuchenPdfLabel(text) {
+    const s = String(text == null ? '' : text);
+    return s.length > PDF_KUCHEN.labelMax ? `${s.slice(0, PDF_KUCHEN.labelMax - 1)}…` : s;
+  }
+
+  // Zeichnet EINEN Kuchen samt Legende. x/y ist die linke obere Ecke des
+  // Bereichs; zurueck kommt die belegte Hoehe, damit der Aufrufer weiterrechnen
+  // kann. optionen: { titel, format, radius }.
+  function pdfKuchen(doc, x, y, segmente, optionen) {
+    const opt = optionen || {};
+    const r = Number(opt.radius) > 0 ? Number(opt.radius) : PDF_KUCHEN.radius;
+    const rInnen = r * KUCHEN_INNEN_ANTEIL;
+    const teile = kuchenSegmente(segmente, r, rInnen);
+    if (!teile.length) return 0;
+    const kopfHoehe = opt.titel ? PDF_KUCHEN.zeile : 0;
+    if (opt.titel) {
+      doc.setFontSize(8);
+      doc.setTextColor(90);
+      doc.text(String(opt.titel), x, y + 8);
+    }
+    const cx = x + r;
+    const cy = y + kopfHoehe + r;
+    teile.forEach(s => {
+      doc.setFillColor(kuchenFarbe(s.farbe).hex);
+      // Startpunkt absolut, alles Weitere relativ - siehe kuchenPdfLinien.
+      doc.lines(kuchenPdfLinien(s, r, rInnen),
+        cx + s.aussen[0].x, cy + s.aussen[0].y, [1, 1], 'F', true);
+    });
+    const lx = x + 2 * r + PDF_KUCHEN.abstand;
+    let ly = y + kopfHoehe + 8;
+    doc.setFontSize(PDF_KUCHEN.schrift);
+    teile.forEach(s => {
+      doc.setFillColor(kuchenFarbe(s.farbe).hex);
+      doc.rect(lx, ly - 5, 6, 6, 'F');
+      doc.setTextColor(60);
+      doc.text(`${kuchenPdfLabel(s.label)}  ${reportingZellText(s.wert, opt.format || 'zahl')}`
+        + `  ${reportingZellText(s.anteil, 'pct')}`, lx + 10, ly);
+      ly += PDF_KUCHEN.zeile;
+    });
+    doc.setTextColor(0);
+    return kopfHoehe + Math.max(2 * r, teile.length * PDF_KUCHEN.zeile);
+  }
+
   // --- Reporting-Report: CSV ------------------------------------------------
   // Gleicher Aufbau wie buildSettlementReportCsv: Blocktitel, Spaltenkopf,
   // Zeilen, Hinweis - Semikolon getrennt und mit BOM. Zahlen bleiben
@@ -6575,10 +7066,14 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   //
   // Balken stehen bewusst NICHT im PDF: autotable kann kein SVG, und ein
   // Rasterbild waere ein dritter Vendor. Die Zahlen der Balken-Bloecke stehen
-  // vollstaendig in ihrer Tabelle.
+  // vollstaendig in ihrer Tabelle. Die KUCHEN dagegen schon (§2.2): fuer sie
+  // reichen jsPDF-Vektorprimitive, es braucht also weder Raster noch Vendor.
+  // Sie werden hier nur durchgereicht - gezeichnet wird in
+  // reportingPdfSchreiben, wo ein doc zur Verfuegung steht.
   function reportingPdfTabelle(block, titel, seitenumbruchDavor) {
     return {
       titel,
+      kuchen: block.kuchen || null,
       header: block.kopf.map(k => k.label),
       rows: block.zeilen.map((r, ri) => r.map((wert, c) =>
         reportingZellText(wert, reportingZellFormat(block, ri, c)))),
@@ -8596,6 +9091,37 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     }).join('');
   }
 
+  // Kuchen + Legende nebeneinander (§2.2). Ein Block traegt bis zu zwei Kuchen
+  // (Zahlungsmittel), deshalb eine Reihe statt einer einzelnen Figur.
+  //
+  // Die Legende ist zugleich das aria-label des SVG: ein Ring aus Pfaden sagt
+  // einem Screenreader nichts, und der Text daneben ist genau die Aussage, die
+  // die Grafik traegt.
+  function reportingKuchenHtml(block) {
+    const liste = block.kuchen || [];
+    if (!liste.length) return '';
+    const figuren = liste.map(kuchen => {
+      const zeile = s => `${s.label} ${reportingZellText(s.wert, kuchen.format)}`
+        + ` (${reportingZellText(s.anteil, 'pct')})`;
+      const svg = svgKuchen(kuchen.segmente, {
+        beschriftung: `${kuchen.titel}: ${kuchen.segmente.map(zeile).join(', ')}`,
+      });
+      if (!svg) return '';
+      const legende = kuchen.segmente.map(s =>
+        '<li>'
+        // Die Farbe kommt als CSS-Variable aus der Whitelist, nie als Hex -
+        // dieselbe Regel wie im SVG darueber.
+        + `<span class="kuchen-farbe" style="background:${kuchenFarbe(s.farbe).css}"></span>`
+        + `<span class="kuchen-name">${escapeHtml(String(s.label))}</span>`
+        + `<span class="kuchen-wert">${escapeHtml(reportingZellText(s.wert, kuchen.format))}`
+        + ` · ${escapeHtml(reportingZellText(s.anteil, 'pct'))}</span></li>`).join('');
+      return '<figure class="kuchen-block">'
+        + `<figcaption>${escapeHtml(kuchen.titel)}</figcaption>${svg}`
+        + `<ul class="kuchen-legende">${legende}</ul></figure>`;
+    }).join('');
+    return figuren ? `<div class="kuchen-reihe">${figuren}</div>` : '';
+  }
+
   function reportingBlockHtml(block) {
     const titel = `<h3>${escapeHtml(block.titel)}</h3>`;
     const hinweis = block.hinweis ? `<p class="hint">${escapeHtml(block.hinweis)}</p>` : '';
@@ -8603,12 +9129,16 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // Ein Kopf ohne Spalten waere ein Rahmen um ein Nichts.
     if (!block.kopf.length) return titel + hinweis;
     if (block.typ === 'kacheln') return titel + reportingKachelnHtml(block) + hinweis;
+    // Kuchen ueber der Tabelle, im selben Block-Rahmen - dieselbe Stellung wie
+    // das Balken-SVG. Beide zugleich kommt heute nicht vor (die Balken-Bloecke
+    // Verlauf und Stunden tragen keine Kuchen), waere aber kein Widerspruch.
+    const kuchen = reportingKuchenHtml(block);
     const balken = block.typ === 'balken' ? reportingBalkenHtml(block) : '';
     const tabelle = block.zeilen.length > REPORTING_TABELLE_OFFEN
       ? `<details><summary>Tabelle (${formatIntCH(block.zeilen.length)} Zeilen)</summary>`
         + `${reportingTabelleHtml(block)}</details>`
       : reportingTabelleHtml(block);
-    return titel + balken + tabelle + hinweis;
+    return titel + kuchen + balken + tabelle + hinweis;
   }
 
   // Bildschirm-Ausgabe: Titelblock voran, danach ein Abschnitt je Kanal
@@ -8736,6 +9266,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // exportReportXlsx beim Terminal-Report), statt ein Blatt je Block: der
   // Fixture-Bericht haette sonst 34 Tabs. Der kanaluebergreifende Titelblock
   // bekommt sein eigenes, vorangestelltes Blatt.
+  // Kein Kuchen in Excel (§2.2): der eingebettete Vendor kann keine Charts,
+  // und ein nachgebautes Bild waere ein dritter Vendor. block.kuchen wird hier
+  // schlicht nicht gelesen - die Prozentspalten der Tabelle tragen dieselben
+  // Zahlen, aus denen der Kuchen entsteht. Gleiches gilt fuer die CSV.
   function exportReportingXlsx() {
     if (!reportingModell) return;
     const bloecke = reportingExportBloecke(reportingModell, reportingExportOptionen());
@@ -8816,12 +9350,13 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // Muster exportSettlementPdf. Bewusst eine eigene Schleife statt einer
   // gemeinsamen: der Settlement-Export ist ausgeliefert und getestet, und ein
   // geteilter Schreiber haette sein Verhalten mit angefasst.
-  function exportReportingPdf() {
-    if (!reportingModell) return;
-    const p = reportingPdfBloecke(reportingModell, reportingExportOptionen());
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-
+  //
+  // Der Schreiber ist von der Vendor-Beschaffung getrennt: exportReportingPdf
+  // baut das jsPDF-Dokument und speichert es, reportingPdfSchreiben fuellt es.
+  // Nur so laesst sich der PDF-Pfad - insbesondere, dass jeder Kuchen-Block
+  // genau einmal gezeichnet wird - mit einem gefaelschten doc pruefen, ohne den
+  // ~400 KB grossen Vendor-Block ueberhaupt zu laden.
+  function reportingPdfSchreiben(doc, p) {
     doc.setFontSize(16);
     doc.text(p.titel, 40, 50);
     doc.setFontSize(9);
@@ -8832,16 +9367,32 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       if (tab.seitenumbruchDavor) { doc.addPage(); y = 50; }
       // Gleiche Schwelle und dieselbe Begruendung wie beim Settlement-PDF:
       // reicht der Platz nicht mehr fuer Titel UND Kopfzeile, stuende der
-      // Titel sonst verwaist am Seitenende.
+      // Titel sonst verwaist am Seitenende. Die Kuchen zaehlen mit - sie
+      // stehen zwischen Titel und Tabelle, und ein Kuchen, der ueber den
+      // Seitenrand laeuft, waere schlimmer als ein frueher Umbruch.
+      const kuchenListe = tab.kuchen || [];
+      const kuchenHoehe = kuchenListe.length
+        ? Math.max(...kuchenListe.map(pdfKuchenHoehe)) : 0;
       const MIN_PLATZ_FUER_TITEL = 70;
       if (!tab.seitenumbruchDavor
-        && y + MIN_PLATZ_FUER_TITEL > doc.internal.pageSize.getHeight() - 40) {
+        && y + MIN_PLATZ_FUER_TITEL + kuchenHoehe > doc.internal.pageSize.getHeight() - 40) {
         doc.addPage();
         y = 50;
       }
       doc.setFontSize(11);
       doc.text(tab.titel, 40, y);
       y += 8;
+      if (kuchenHoehe > 0) {
+        // Nebeneinander, in derselben Reihenfolge wie auf dem Bildschirm. Die
+        // Spaltenbreite von 260 pt teilt die nutzbaren 515 pt so auf, dass
+        // Ring (90 pt) und Legende daneben Platz haben.
+        y += 6;
+        kuchenListe.forEach((kuchen, i) => {
+          pdfKuchen(doc, 40 + i * 260, y, kuchen.segmente,
+            { titel: kuchen.titel, format: kuchen.format });
+        });
+        y += kuchenHoehe + 12;
+      }
       if (!tab.nurHinweis) {
         const spalten = {};
         tab.ausrichtung.forEach((a, i) => { spalten[i] = { halign: a }; });
@@ -8869,7 +9420,14 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         y += zeilen.length * 10 + 14;
       }
     });
+  }
 
+  function exportReportingPdf() {
+    if (!reportingModell) return;
+    const p = reportingPdfBloecke(reportingModell, reportingExportOptionen());
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    reportingPdfSchreiben(doc, p);
     doc.save(reportingDateiname('pdf'));
   }
 

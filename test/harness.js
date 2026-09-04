@@ -174,8 +174,29 @@ const EXPORTED = [
   'reportingZellZahl',
   'svgBalken',
   'reportingBalkenSerien',
+  // Kuchendiagramme (Iteration 2, Task 3). Die Geometrie liegt bewusst in
+  // EINER reinen Funktion (kuchenSegmente) und wird von beiden Renderern
+  // benutzt - deshalb ist sie auch ohne den jsPDF-Vendor pruefbar, ebenso die
+  // Bezier-Naeherung darunter. Die Blockschicht kommt mit: dort entstehen die
+  // Segmente (2-%-Regel, Farbvergabe), und genau dort muss sich nachweisen
+  // lassen, dass ein Kuchen die Zeilen SEINER Tabelle zeigt und keine zweite
+  // Auswahl. pdfKuchen/reportingPdfSchreiben laufen im Test gegen ein
+  // gefaelschtes doc, nicht gegen jsPDF.
+  'SVG_KUCHEN_FARBEN',
+  'SVG_KUCHEN_REIHE',
+  'REPORTING_KUCHEN_FARBE',
+  'REPORTING_KUCHEN_MIN_ANTEIL',
+  'reportingKuchenFarben',
+  'reportingKuchenSegmente',
+  'reportingKuchen',
+  'kuchenSegmente',
+  'kuchenBezier',
+  'svgKuchen',
+  'pdfKuchen',
+  'pdfKuchenHoehe',
   'buildReportingReportCsv',
   'reportingPdfBloecke',
+  'reportingPdfSchreiben',
   // Naht auf die Ausgabe EINES Blocks - nur so laesst sich ein von Hand
   // gebauter Block mit zellFormate durch den Bildschirm-Pfad schicken
   // (reportingExportBloecke traegt zellFormate heute nur an den Kacheln).

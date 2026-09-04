@@ -37,6 +37,19 @@ function mitFixture() {
 
 const sichtbar = el => !el.classList.contains('hidden');
 
+// Der Abschnitt EINES Blocks: vom Titel bis zur naechsten <h3>-Ueberschrift.
+// Vorher schnitten die Tests hier eine feste Zeichenzahl heraus ("die ersten
+// 800"); seit Iteration 2 steht zwischen Titel und Tabelle je nach Block ein
+// Kuchen, und die Fenstergroesse entschied dann darueber, ob ein Test noch
+// etwas findet. Die Blockgrenze ist die Aussage, die gemeint war.
+function blockAbschnitt(html, titel) {
+  const start = html.indexOf(titel);
+  assert.notStrictEqual(start, -1, `Block "${titel}" fehlt in der Ausgabe`);
+  const rest = html.slice(start);
+  const ende = rest.indexOf('<h3>');
+  return ende === -1 ? rest : rest.slice(0, ende);
+}
+
 // --- svgBalken: reine Funktion ---------------------------------------------
 
 // Attribut-Werte eines Tags einsammeln, damit die Tests ueber die Geometrie
@@ -276,8 +289,9 @@ test('Lange Tabellen stehen eingeklappt, die kurzen offen', () => {
   // laufen - beides erschluege die Uebersicht.
   assert.match(html, /<details><summary>Tabelle \(24 Zeilen\)<\/summary><table/);
   // Die Zahlungsmittel-Tabelle (5 Zeilen) bleibt offen.
-  const zm = html.slice(html.indexOf('POS · Zahlungsmittel'));
-  assert.match(zm.slice(0, 200), /<table/, 'kurze Tabellen stehen ohne Klappe da');
+  const zm = blockAbschnitt(html, 'POS · Zahlungsmittel');
+  assert.match(zm, /<table/);
+  assert.doesNotMatch(zm, /<details>/, 'kurze Tabellen stehen ohne Klappe da');
 });
 
 test('Ein Block mit zellFormate wird Zelle fuer Zelle formatiert', () => {
@@ -453,8 +467,8 @@ test('Der Bildschirm zeigt Namen, Kategorie, Bedeutung und Empfehlung', () => {
   assert.match(html, /Nicht wiederholen/, 'Empfehlung RETRY_NO in deutscher Beschriftung');
   assert.match(html, /hochriskant/, 'Bedeutung aus dem Katalog');
   // Der POS-Grund traegt die korrigierte Kategorie, nicht die des Katalogs.
-  const k8 = html.slice(html.indexOf('POS · Ablehngründe'));
-  assert.match(k8.slice(0, 800), />Endnutzer</,
+  const k8 = blockAbschnitt(html, 'POS · Ablehngründe');
+  assert.match(k8, />Endnutzer</,
     'Transaction declined steht im Katalog als Configuration und wird korrigiert');
   // Und nirgends mehr eine nackte ID als Grund - das ist der Zweck der Task.
   assert.doesNotMatch(html, />#\d+</);
@@ -463,10 +477,10 @@ test('Der Bildschirm zeigt Namen, Kategorie, Bedeutung und Empfehlung', () => {
 test('Der Kategorie-Block steht mit deutschen Beschriftungen auf dem Schirm', () => {
   const { el } = mitFixture();
   const html = el('reportingReportOutput').innerHTML;
-  const block = html.slice(html.indexOf('E-Com · Ablehngründe nach Kategorie'));
-  assert.match(block.slice(0, 900), />Endnutzer</);
-  assert.match(block.slice(0, 900), />Vorübergehend</);
-  assert.match(block.slice(0, 900), />Entwickler</);
+  const block = blockAbschnitt(html, 'E-Com · Ablehngründe nach Kategorie');
+  assert.match(block, />Endnutzer</);
+  assert.match(block, />Vorübergehend</);
+  assert.match(block, />Entwickler</);
 });
 
 test('Der Hinweisblock der Ablehncodes rendert ohne leere Tabelle', () => {
@@ -620,4 +634,223 @@ test('Terminal und Settlement bleiben ohne Excel-Knopf', () => {
     assert.doesNotMatch(verlaufZeile(mode), /data-act="xlsx"/,
       `Modus ${mode} darf den Excel-Knopf nicht zurueckbekommen`);
   });
+});
+
+// --- Kuchendiagramme: Geometrie und SVG (SPEC-ITERATION-2 §2.2) -------------
+//
+// Die Geometrie liegt bewusst in EINER reinen Funktion (kuchenSegmente), aus
+// der Bildschirm UND PDF bauen. Deshalb steht sie hier neben dem SVG und nicht
+// im Vendor-Test: sie braucht jsPDF nicht.
+
+// Attribute der <path>-Elemente eines Kuchens einsammeln - dieselbe Absicht wie
+// rects() weiter oben: ueber Geometrie reden, nicht ueber Zeichenketten.
+function pfade(svg) {
+  return [...svg.matchAll(/<path d="([^"]*)" fill="([^"]*)"><\/path>/g)]
+    .map(m => ({ d: m[1], fill: m[2] }));
+}
+function texte(svg) {
+  return [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1]);
+}
+// Ein Segment, wie die Blockschicht es liefert.
+const seg = (label, wert, anteil, farbe) => ({ label, wert, anteil, farbe: farbe || 'tuerkis' });
+
+test('kuchenSegmente: die Winkel summieren auf genau 360 Grad', () => {
+  const { app } = starte();
+  // Bewusst Werte, deren Anteile periodisch sind (1/3, 7/13, ...): genau dort
+  // liesse eine Summe gerundeter Anteile einen Haarriss im Ring.
+  [[1, 1, 1], [7, 11, 13], [5], [3, 3, 3, 3, 3, 3, 3]].forEach(werte => {
+    const teile = plain(app.kuchenSegmente(werte.map((w, i) => seg(`S${i}`, w, 0)), 80, 44));
+    const summe = teile.reduce((a, s) => a + s.winkel, 0);
+    assert.strictEqual(summe, 360, `Winkelsumme bei [${werte}]`);
+    // Lueckenlos: jedes Segment faengt da an, wo das vorige aufhoert.
+    teile.forEach((s, i) => {
+      if (i > 0) assert.strictEqual(s.start, teile[i - 1].ende);
+    });
+    assert.strictEqual(teile[0].start, 0);
+    assert.strictEqual(teile[teile.length - 1].ende, 360);
+  });
+});
+
+test('kuchenSegmente: die vier Bogenpunkte liegen auf ihren Kreisen', () => {
+  const { app } = starte();
+  const r = 80;
+  const rInnen = 44;
+  const teile = plain(app.kuchenSegmente([seg('A', 3, 75), seg('B', 1, 25)], r, rInnen));
+  const radius = p => Math.sqrt(p.x * p.x + p.y * p.y);
+  teile.forEach(s => {
+    // §2.2 nennt genau diese vier Punkte; alles Weitere (die Teilboegen) haengt
+    // an denselben Winkeln.
+    assert.ok(Math.abs(radius(s.aussenStart) - r) < 1e-9, 'aussenStart');
+    assert.ok(Math.abs(radius(s.aussenEnde) - r) < 1e-9, 'aussenEnde');
+    assert.ok(Math.abs(radius(s.innenStart) - rInnen) < 1e-9, 'innenStart');
+    assert.ok(Math.abs(radius(s.innenEnde) - rInnen) < 1e-9, 'innenEnde');
+  });
+  // 0 Grad ist 12 Uhr, gezaehlt wird im Uhrzeigersinn: das erste Segment
+  // beginnt oben, y zeigt nach unten.
+  assert.ok(Math.abs(teile[0].aussenStart.x) < 1e-9);
+  assert.strictEqual(Math.round(teile[0].aussenStart.y), -r);
+});
+
+test('kuchenSegmente teilt jeden Bogen in Stuecke von hoechstens 90 Grad', () => {
+  const { app } = starte();
+  const teile = plain(app.kuchenSegmente(
+    [seg('gross', 11, 91.7), seg('klein', 1, 8.3)], 80, 44));
+  teile.forEach(s => {
+    for (let i = 1; i < s.winkelPunkte.length; i += 1) {
+      assert.ok(s.winkelPunkte[i] - s.winkelPunkte[i - 1] <= 90 + 1e-9,
+        'Teilbogen ueber 90 Grad - die Bezier-Naeherung des PDF wird dort ungenau');
+    }
+  });
+  assert.strictEqual(teile[0].aussen.length, 5, '330 Grad ergeben vier Teilboegen');
+  assert.strictEqual(teile[1].aussen.length, 2, '30 Grad bleiben ein Stueck');
+});
+
+test('100 % ergibt einen vollen Ring, kein zerbrochener Pfad und kein NaN', () => {
+  const { app } = starte();
+  const svg = app.svgKuchen([seg('Visa', 42, 100)], { groesse: 180 });
+  const p = pfade(svg);
+  assert.strictEqual(p.length, 1);
+  assert.ok(!/NaN/.test(svg), 'kein NaN im d-Attribut');
+  // Ein EINZELNER Bogen von 360 Grad haette denselben Anfangs- und Endpunkt
+  // und zeichnete gar nichts - deshalb vier Teilboegen aussen und vier innen.
+  assert.strictEqual((p[0].d.match(/A /g) || []).length, 8);
+  assert.match(p[0].d, /^M /);
+  assert.match(p[0].d, / Z$/);
+  assert.deepStrictEqual(texte(svg), ['100.0 %']);
+});
+
+test('svgKuchen zeichnet ohne Segmente gar nichts', () => {
+  const { app } = starte();
+  // Gleiche Entscheidung wie bei svgBalken: ein leerer Ring waere ein Rahmen
+  // um ein Nichts.
+  assert.strictEqual(app.svgKuchen([], {}), '');
+  assert.strictEqual(app.svgKuchen(null, {}), '');
+  // Lauter Nullen: es gibt nichts zu verteilen, und eine Division waere NaN.
+  assert.strictEqual(app.svgKuchen([seg('A', 0, 0), seg('B', 0, 0)], {}), '');
+});
+
+test('svgKuchen faerbt ausschliesslich ueber die CSS-Variablen', () => {
+  const { app } = starte();
+  const svg = app.svgKuchen([seg('A', 3, 75, 'orange'), seg('B', 1, 25, 'grau')], {});
+  assert.doesNotMatch(svg, /#[0-9a-fA-F]{3,8}\b/, 'kein Inline-Hex im SVG');
+  assert.deepStrictEqual(pfade(svg).map(p => p.fill),
+    ['var(--kuchen-2)', 'var(--kuchen-grau)']);
+  // Whitelist wie bei den Balken: ein freier Farbwert kommt nicht durch,
+  // sondern faellt auf Grau zurueck. Sonst waere die Hausregel "Farben nur
+  // ueber :root" nur noch eine Bitte.
+  const bunt = app.svgKuchen([seg('A', 1, 100, '#ff0000')], {});
+  assert.doesNotMatch(bunt, /#ff0000/i);
+  assert.strictEqual(pfade(bunt)[0].fill, 'var(--kuchen-grau)');
+});
+
+test('Ab 12 Grad steht die Prozentzahl im Segment, darunter nur in der Legende', () => {
+  const { app } = starte();
+  // 3.4 % sind 12.2 Grad (knapp drueber), 3.2 % sind 11.5 Grad (knapp drunter).
+  const svg = app.svgKuchen([seg('A', 966, 96.6), seg('B', 34, 3.4)], {});
+  assert.deepStrictEqual(texte(svg), ['96.6 %', '3.4 %']);
+  const knapp = app.svgKuchen([seg('A', 968, 96.8), seg('B', 32, 3.2)], {});
+  assert.deepStrictEqual(texte(knapp), ['96.8 %'],
+    'ein Segment unter 12 Grad traegt keine Zahl - sie passt dort nicht hinein');
+  // Die Flaeche bleibt trotzdem, nur die Beschriftung entfaellt.
+  assert.strictEqual(pfade(knapp).length, 2);
+});
+
+test('Die Prozentzahl ist die des Modells, nicht aus dem Winkel zurueckgerechnet', () => {
+  const { app } = starte();
+  // Konstruierter Widerspruch: gleiche Werte (also je 180 Grad), aber Anteile
+  // 90/10. Wer die Zahl aus dem Winkel herleitete, schriebe zweimal 50 % hin.
+  const svg = app.svgKuchen([seg('A', 1, 90), seg('B', 1, 10)], {});
+  assert.deepStrictEqual(texte(svg), ['90.0 %', '10.0 %']);
+  const teile = plain(app.kuchenSegmente([seg('A', 1, 90), seg('B', 1, 10)], 80, 44));
+  assert.deepStrictEqual(teile.map(s => s.winkel), [180, 180]);
+});
+
+// --- Blockschicht: 2-%-Regel und Farbvergabe -------------------------------
+
+test('„Übrige“ entsteht erst ab zwei kleinen Segmenten und traegt deren Summe', () => {
+  const { app } = starte();
+  const e = (label, wert, anteil) => ({ label, wert, anteil });
+  // Ein einzelnes kleines Segment behaelt seinen Namen: "Uebrige" braeuchte
+  // dieselbe Zeile und sagte weniger - dieselbe Regel wie reportingUebrige().
+  const eins = plain(app.reportingKuchenSegmente([e('Visa', 980, 98), e('Reka', 20, 1.5)]));
+  assert.deepStrictEqual(eins.map(s => s.label), ['Visa', 'Reka']);
+  // Zwei kleine: sie verschmelzen, und zwar mit der SUMME beider Werte.
+  const zwei = plain(app.reportingKuchenSegmente(
+    [e('Visa', 960, 96), e('Reka', 20, 1.5), e('Boncard', 20, 1.5), e('TWINT', 0, 1)]));
+  assert.deepStrictEqual(zwei.map(s => s.label), ['Visa', 'Übrige']);
+  assert.strictEqual(zwei[1].wert, 40);
+  assert.strictEqual(Math.round(zwei[1].anteil * 10) / 10, 4);
+  assert.strictEqual(zwei[1].farbe, 'grau', '„Übrige“ ist immer Grau');
+});
+
+test('Farben: feste Kategorien fest, offene Listen der Reihe nach, Grau extra', () => {
+  const { app } = starte();
+  const f = labels => plain(app.reportingKuchenFarben(labels));
+  // Dieselbe Kategorie hat in jedem Report dieselbe Farbe - auch wenn sie in
+  // anderer Reihenfolge dasteht (das Funding-Modell liefert Kredit vor Debit).
+  assert.deepStrictEqual(f(['Debit', 'Kredit']), ['tuerkis', 'orange']);
+  assert.deepStrictEqual(f(['Kredit', 'Debit']), ['orange', 'tuerkis']);
+  assert.deepStrictEqual(f(['Business', 'Privat', 'Unbekannt']),
+    ['tuerkis', 'orange', 'grau']);
+  // Offene Liste: der Reihe nach durch die sechs Farben, absteigend nach
+  // Anteil - so, wie die Bloecke ihre Zeilen liefern.
+  assert.deepStrictEqual(f(['Visa', 'Mastercard', 'TWINT']),
+    ['tuerkis', 'orange', 'schwarz']);
+  // "Unbekannt" und "Uebrige" sind immer Grau und verbrauchen keine der sechs:
+  // Mastercard bekommt Orange, nicht Schwarz.
+  assert.deepStrictEqual(f(['Visa', 'Unbekannt', 'Mastercard', 'Übrige (7 Gründe)']),
+    ['tuerkis', 'grau', 'orange', 'grau']);
+  // Gemischt: die feste Zuordnung gewinnt, die offene Liste weicht ihr aus -
+  // sonst stuenden zwei Segmente desselben Kuchens in derselben Farbe da.
+  assert.deepStrictEqual(f(['Domestisch', 'Fremdes Label']), ['tuerkis', 'orange']);
+});
+
+// --- Bildschirm ------------------------------------------------------------
+
+test('Der Kuchen steht ueber der Tabelle, im selben Block', () => {
+  const { el } = mitFixture();
+  const html = el('reportingReportOutput').innerHTML;
+  const block = blockAbschnitt(html, 'POS · Kartentyp');
+  assert.ok(block.indexOf('<svg') < block.indexOf('<table'),
+    'der Kuchen gehoert vor die Tabelle - wie das Balken-SVG heute');
+  assert.match(block, /class="kuchen-reihe"/);
+  // Legende: eine Zeile je Segment, Farbe als CSS-Variable.
+  assert.strictEqual((block.match(/class="kuchen-farbe"/g) || []).length, 3);
+  assert.match(block, /style="background:var\(--kuchen-1\)"/);
+  assert.match(block, />Business</);
+});
+
+test('Das aria-label traegt die Legende als Text', () => {
+  const { el } = mitFixture();
+  const block = blockAbschnitt(el('reportingReportOutput').innerHTML, 'POS · Kartentyp');
+  // Ein Ring aus Pfaden sagt einem Screenreader nichts; der Text daneben ist
+  // genau die Aussage der Grafik.
+  const m = block.match(/aria-label="([^"]*)"/);
+  assert.ok(m, 'Kuchen ohne aria-label');
+  assert.match(m[1], /^Anteil je Kartentyp: /);
+  assert.match(m[1], /Business \d/);
+  assert.match(m[1], /Unbekannt \d/);
+});
+
+test('Der Zahlungsmittel-Block zeigt zwei Kuchen nebeneinander', () => {
+  const { el } = mitFixture();
+  const block = blockAbschnitt(el('reportingReportOutput').innerHTML, 'POS · Zahlungsmittel');
+  assert.strictEqual((block.match(/class="kuchen-block"/g) || []).length, 2);
+  assert.match(block, /Zahlungsversuche je Zahlungsmittel/);
+  // Der Betrags-Kuchen nennt seine Waehrung: ueber Waehrungen hinweg zu
+  // addieren ist in diesem Modus verboten (SPEC 2.7).
+  assert.match(block, /Umsatz je Zahlungsmittel \(CHF\)/);
+});
+
+test('Bloecke ohne Kuchen bleiben ohne Kuchen', () => {
+  const { el } = mitFixture();
+  const html = el('reportingReportOutput').innerHTML;
+  ['POS · Verlauf', 'POS · Stunden', 'POS · Top-10 Länder', 'E-Com · Conversion',
+    'E-Com · Wallets', 'E-Com · Ablehngründe je Brand', 'POS · Beträge je Währung',
+  ].forEach(titel => {
+    assert.doesNotMatch(blockAbschnitt(html, titel), /class="kuchen-reihe"/,
+      `${titel} steht nicht in der Kuchen-Liste von §2.1`);
+  });
+  // Gegenprobe zum Balken: der Verlauf behaelt seines.
+  assert.match(blockAbschnitt(html, 'POS · Verlauf'), /class="balken-block"/);
 });

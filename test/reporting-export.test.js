@@ -738,3 +738,321 @@ test('Titelblock schreibt die Tageszahl ohne Tausenderzeichen', () => {
   const v = b.find(x => x.titel === 'POS · Verlauf');
   assert.ok(/lückenlose Tagesachse/.test(v.hinweis), v.hinweis);
 });
+
+// --- Kuchendiagramme in der Blockschicht (SPEC-ITERATION-2 §2) --------------
+//
+// Hier steht die Regel, an der alles haengt: die Segmente eines Kuchens sind
+// die ZEILEN seiner Tabelle, nie eine zweite Auswahl. Deshalb pruefen die
+// Tests unten die Segmente immer GEGEN dieselben Zeilen, statt gegen eine
+// erwartete Liste - eine erwartete Liste waere selbst wieder eine zweite
+// Auswahl und ginge mit derselben Verwechslung mit.
+
+function kuchenNach(bloecke, titel) {
+  const b = bloecke.find(x => x.titel === titel);
+  assert.ok(b, `Block "${titel}" fehlt`);
+  return b.kuchen || null;
+}
+
+// Werte einer Spalte, ohne Total- und Fortsetzungszeilen - genau die Zeilen,
+// die im Kuchen stehen muessen.
+function spaltenWerte(block, labelSpalte, wertSpalte) {
+  let gruppe = '';
+  const raus = [];
+  block.zeilen.forEach(z => {
+    if (z[labelSpalte] !== '' && z[labelSpalte] != null) gruppe = String(z[labelSpalte]);
+    if (gruppe === 'Total') return;
+    if (typeof z[wertSpalte] === 'number' && z[wertSpalte] > 0) {
+      raus.push({ label: gruppe, wert: z[wertSpalte] });
+    }
+  });
+  return raus;
+}
+
+test('Genau die Bloecke aus §2.1 tragen einen Kuchen', () => {
+  const bloecke = plain(reportingExportBloeckeFixtur());
+  const mit = bloecke.filter(b => b.kuchen).map(b => b.titel);
+  assert.deepStrictEqual(mit, [
+    'POS · Zahlungsmittel', 'POS · Kartentyp', 'POS · Kartenherkunft',
+    'POS · Debit und Kredit', 'POS · Ablehngründe', 'POS · Ablehngründe nach Kategorie',
+    'E-Com · Zahlungsmittel', 'E-Com · Kartentyp', 'E-Com · Kartenherkunft',
+    'E-Com · 3DS-Status', 'E-Com · Ablehngründe', 'E-Com · Ablehngründe nach Kategorie',
+    'E-Com · PAN-Quelle',
+    'Andere · Zahlungsmittel', 'Andere · Kartentyp', 'Andere · Kartenherkunft',
+  ]);
+  // Und die Gegenliste: was §2.1 ausdruecklich NICHT als Kuchen fuehrt, traegt
+  // das Feld gar nicht - nicht etwa eine leere Liste, die jede Ausgabe erst
+  // noch pruefen muesste.
+  ['Reporting', 'POS · Kennzahlen', 'POS · Top-10 Länder', 'POS · Verlauf',
+    'POS · Stunden', 'POS · Beträge je Währung', 'POS · Ablehncodes',
+    'E-Com · Wallets', 'E-Com · Ablehngründe je Brand', 'E-Com · Conversion',
+  ].forEach(titel => {
+    const b = bloecke.find(x => x.titel === titel);
+    assert.ok(b, `Block "${titel}" fehlt`);
+    assert.strictEqual('kuchen' in b, false, `${titel} traegt einen Kuchen`);
+  });
+});
+
+test('Ein Kuchen zeichnet exakt die Zeilen seiner Tabelle', () => {
+  const bloecke = plain(reportingExportBloeckeFixtur());
+  const block = bloecke.find(b => b.titel === 'POS · Kartentyp');
+  const zeilen = spaltenWerte(block, 0, 1);
+  const kuchen = block.kuchen[0];
+  assert.deepStrictEqual(kuchen.segmente.map(s => s.label), zeilen.map(z => z.label));
+  assert.deepStrictEqual(kuchen.segmente.map(s => s.wert), zeilen.map(z => z.wert));
+  // Die Summe der Segmente ist die Total-Zeile der Tabelle - die Total-Zeile
+  // selbst steht aber NICHT im Kuchen, sie ist die Summe und kein Segment.
+  const total = block.zeilen[block.zeilen.length - 1];
+  assert.strictEqual(total[0], 'Total');
+  assert.strictEqual(kuchen.segmente.reduce((a, s) => a + s.wert, 0), total[1]);
+  assert.strictEqual(kuchen.segmente.some(s => s.label === 'Total'), false);
+});
+
+test('Auch mit „Übrige“ bleibt die Summe des Kuchens die der Tabelle', () => {
+  const bloecke = plain(reportingExportBloeckeFixtur());
+  // Der E-Com-Zahlungsmittel-Block hat kleine Marken, die die 2-%-Regel
+  // einklappt: die Segmente sind dann WENIGER als die Zeilen, ihre Summe aber
+  // dieselbe. Genau das meint "Tabelle und Kuchen zeigen dieselben Zahlen".
+  const block = bloecke.find(b => b.titel === 'E-Com · Zahlungsmittel');
+  const zeilen = spaltenWerte(block, 0, 1);
+  const kuchen = block.kuchen[0];
+  assert.ok(kuchen.segmente.length < zeilen.length, 'Fixture ohne eingeklappte Marke');
+  assert.strictEqual(kuchen.segmente[kuchen.segmente.length - 1].label, 'Übrige');
+  assert.strictEqual(kuchen.segmente.reduce((a, s) => a + s.wert, 0),
+    zeilen.reduce((a, z) => a + z.wert, 0));
+});
+
+test('Der Betrags-Kuchen nimmt EINE Waehrung und nennt sie im Titel', () => {
+  const bloecke = plain(reportingExportBloeckeFixtur());
+  const block = bloecke.find(b => b.titel === 'POS · Zahlungsmittel');
+  const [attempts, betrag] = block.kuchen;
+  assert.strictEqual(block.kuchen.length, 2, 'der einzige Block mit zwei Kuchen');
+  assert.strictEqual(attempts.format, 'zahl');
+  assert.strictEqual(betrag.format, 'betrag');
+  assert.strictEqual(betrag.titel, 'Umsatz je Zahlungsmittel (CHF)');
+  // Nur die CHF-Zeilen: Betraege ueber Waehrungen hinweg zu addieren ist in
+  // diesem Modus verboten (SPEC 2.7). Spalte 5 ist die Waehrung, 6 der Betrag.
+  const chf = [];
+  let gruppe = '';
+  block.zeilen.forEach(z => {
+    if (z[0] !== '' && z[0] != null) gruppe = String(z[0]);
+    if (gruppe !== 'Total' && z[5] === 'CHF' && typeof z[6] === 'number' && z[6] > 0) {
+      chf.push({ label: gruppe, wert: z[6] });
+    }
+  });
+  assert.deepStrictEqual(betrag.segmente.map(s => ({ label: s.label, wert: s.wert })), chf);
+});
+
+test('Fortsetzungszeilen einer Waehrungsgruppe stehen nicht im Kuchen', () => {
+  const bloecke = plain(reportingExportBloeckeFixtur());
+  const block = bloecke.find(b => b.titel === 'E-Com · Kartenherkunft');
+  // Der Block hat Fortsetzungszeilen (leere erste Spalte, zweite Waehrung).
+  assert.ok(block.zeilen.some(z => z[0] === ''), 'Fixture ohne Fortsetzungszeile');
+  const kuchen = block.kuchen[0];
+  assert.strictEqual(kuchen.segmente.some(s => s.label === ''), false);
+  // Ein Eimer erscheint genau einmal, auch wenn er mehrere Waehrungszeilen hat.
+  const namen = kuchen.segmente.map(s => s.label);
+  assert.strictEqual(new Set(namen).size, namen.length);
+});
+
+test('Der Ablehngrund-Kuchen folgt der Tabelle, nicht „Top 6“ aus §2.1', () => {
+  const { reportingExportBloecke } = loadBuilders();
+  // 15 Gruende: die Tabelle kuerzt auf REPORTING_GRUENDE_MAX plus eine Zeile
+  // "Uebrige (n Gruende)". §2.1 wollte fuer den Kuchen "Top 6 + Uebrige",
+  // §2.2 verlangt dieselben Zahlen wie in der Tabelle - aufgeloest zugunsten
+  // von §2.2. Der Kuchen liest also die Tabellenzeilen, und die 2-%-Regel
+  // besorgt die Kuerzung: hier bleiben sechs Segmente uebrig, ganz ohne eine
+  // fest verdrahtete Sechs.
+  const zeilen = [DIM_ECOM];
+  const anzahl = [400, 300, 200, 60, 40, 30, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+  anzahl.forEach((n, i) => zeilen.push(Object.assign({}, DIM_ECOM, {
+    attempt_state: 'FAILED', failure_reason_id: String(1500000000000 + i),
+    anzahl_attempts: String(n), summe_betrag: '0.00000000',
+  })));
+  const block = plain(reportingExportBloecke(modellAus(zeilen), {}))
+    .find(b => b.titel === 'E-Com · Ablehngründe');
+  const tabelle = spaltenWerte(block, 0, 2);
+  assert.strictEqual(tabelle.length, 13, '12 Gründe plus die Sammelzeile');
+  const kuchen = block.kuchen[0];
+  // Kein Segment des Kuchens steht ausserhalb der Tabelle, und die Summe
+  // stimmt: das ist die Zusage aus §2.2.
+  const nachName = new Map(tabelle.map(z => [z.label, z.wert]));
+  kuchen.segmente.filter(s => s.label !== 'Übrige').forEach(s => {
+    assert.strictEqual(nachName.get(s.label), s.wert, `Segment ${s.label} nicht in der Tabelle`);
+  });
+  assert.strictEqual(kuchen.segmente.reduce((a, s) => a + s.wert, 0),
+    tabelle.reduce((a, z) => a + z.wert, 0));
+  // Gekuerzt wird, aber nicht auf eine verdrahtete Zahl: hier bleiben sieben
+  // Segmente statt dreizehn. Genau das ist gemeint mit "„Top 6“ ist ein
+  // Richtwert, den die 2-%-Regel meist selbst herstellt" - haette der Code
+  // eine feste Sechs, muesste hier eine Sechs stehen.
+  assert.ok(kuchen.segmente.length < tabelle.length);
+  assert.strictEqual(kuchen.segmente[kuchen.segmente.length - 1].label, 'Übrige');
+});
+
+test('Ein Hinweisblock bekommt keinen Kuchen', () => {
+  const { reportingKuchen } = loadBuilders();
+  // Form, die reportingKanalBloecke unter der Ablehncode-Schwelle liefert:
+  // kein Kopf, keine Zeilen, nur die Aussage.
+  assert.strictEqual(reportingKuchen(
+    { kopf: [], zeilen: [], titel: 'E-Com · Ablehncodes' },
+    { titel: 'x', wertSpalte: 1, anteilSpalte: 2 }), null);
+  // Und derselbe Fall am fertigen Blocksatz: 9 von 10 Fehlschlaegen ohne Code
+  // liegen unter REPORTING_CODES_MIN_BEKANNT, der Block wird zum Hinweis.
+  const fehl = over => Object.assign({}, DIM_ECOM, {
+    attempt_state: 'FAILED', summe_betrag: '', summe_betrag_failed: '5.00000000',
+  }, over);
+  const block = plain(bloeckeAus([
+    fehl({ auth_response_code: '', failure_reason_id: '1', anzahl_attempts: '9' }),
+    fehl({ auth_response_code: '05', failure_reason_id: '2', anzahl_attempts: '1' }),
+  ])).find(b => b.titel === 'E-Com · Ablehncodes');
+  assert.strictEqual(block.kopf.length, 0, 'kein Hinweisblock entstanden');
+  assert.strictEqual('kuchen' in block, false);
+});
+
+test('CSV bleibt ohne Kuchen - Excel ebenso, dort kann der Vendor keine Charts', () => {
+  const { buildReportingReportCsv } = loadBuilders();
+  const csvText = buildReportingReportCsv(fixturModell(), {});
+  // Die Kuchen-Titel tauchen in der maschinenlesbaren Ausgabe nirgends auf;
+  // die Prozentspalten der Tabelle tragen dieselben Zahlen.
+  assert.ok(!/Anteil je Kartentyp/.test(csvText));
+  assert.ok(!/Umsatz je Zahlungsmittel/.test(csvText));
+  assert.ok(/Kartentyp/.test(csvText), 'die Tabelle selbst steht sehr wohl drin');
+});
+
+// --- Bezier-Naeherung und der PDF-Pfad --------------------------------------
+
+test('Die Bezier-Naeherung eines 90-Grad-Bogens bleibt auf der Kreisbahn', () => {
+  const { kuchenBezier } = loadBuilders();
+  // Nachgerechnet werden Stuetzpunkte AUF dem Bogen (die Kurve an der Stelle
+  // t), nicht die Kontrollpunkte - die liegen bauartbedingt ausserhalb des
+  // Kreises und sagten nichts ueber den Fehler.
+  const auf = (b, t) => {
+    const u = 1 - t;
+    return {
+      x: u * u * u * b.p0.x + 3 * u * u * t * b.c1.x + 3 * u * t * t * b.c2.x + t * t * t * b.p1.x,
+      y: u * u * u * b.p0.y + 3 * u * u * t * b.c1.y + 3 * u * t * t * b.c2.y + t * t * t * b.p1.y,
+    };
+  };
+  // Toleranz: 0.03 % des Radius. Der bekannte Maximalfehler der Naeherung
+  // k = 4/3 * tan(dWinkel/4) liegt bei 90 Grad bei rund 0.027 % - deshalb
+  // deckt der Wert genau diesen Bogen ab und nicht mehr. Ein groesserer
+  // Teilbogen faellt hier durch, und das soll er auch: er waere sichtbar
+  // eirig.
+  const TOLERANZ = 0.0003;
+  [[100, 0, 90], [100, 90, 180], [45, 270, 360], [55, 90, 0]].forEach(([r, von, bis]) => {
+    const b = kuchenBezier(r, von, bis);
+    for (let i = 0; i <= 20; i += 1) {
+      const p = auf(b, i / 20);
+      const abweichung = Math.abs(Math.hypot(p.x, p.y) - r);
+      assert.ok(abweichung <= r * TOLERANZ,
+        `Bogen ${von}->${bis} bei r=${r}: ${abweichung} > ${r * TOLERANZ}`);
+    }
+  });
+});
+
+// Ein doc, das jeden Aufruf mitschreibt. jsPDF wird dafuer NICHT gebraucht -
+// pdfKuchen benutzt nur Vektorprimitive, und genau deshalb steht der Kuchen
+// ueberhaupt im PDF (die Balken bleiben mangels SVG-Faehigkeit draussen).
+function fakeDoc() {
+  const rufe = [];
+  const doc = {
+    rufe,
+    internal: { pageSize: { getHeight: () => 842 } },
+    lastAutoTable: { finalY: 0 },
+    setFontSize(n) { rufe.push(['setFontSize', n]); },
+    setTextColor(n) { rufe.push(['setTextColor', n]); },
+    setFillColor(c) { rufe.push(['setFillColor', c]); },
+    text(t, x, y) { rufe.push(['text', String(t), x, y]); },
+    rect(x, y, w, h, s) { rufe.push(['rect', x, y, w, h, s]); },
+    lines(l, x, y, sc, st) { rufe.push(['lines', l, x, y, st]); },
+    addPage() { rufe.push(['addPage']); },
+    splitTextToSize(t) { return [String(t)]; },
+    autoTable(opt) { rufe.push(['autoTable', opt.head[0][0]]); doc.lastAutoTable = { finalY: 400 }; },
+  };
+  return doc;
+}
+const nurArt = (doc, art) => doc.rufe.filter(r => r[0] === art);
+
+test('pdfKuchen zeichnet je Segment eine Flaeche und eine Legendenzeile', () => {
+  const { pdfKuchen, pdfKuchenHoehe } = loadBuilders();
+  const segmente = [
+    { label: 'Visa', wert: 60, anteil: 60, farbe: 'tuerkis' },
+    { label: 'Mastercard', wert: 30, anteil: 30, farbe: 'orange' },
+    { label: 'Übrige', wert: 10, anteil: 10, farbe: 'grau' },
+  ];
+  const doc = fakeDoc();
+  const hoehe = pdfKuchen(doc, 40, 100, segmente, { titel: 'Anteil je Brand', format: 'zahl' });
+  assert.strictEqual(nurArt(doc, 'lines').length, 3, 'eine gefuellte Flaeche je Segment');
+  assert.strictEqual(nurArt(doc, 'rect').length, 3, 'ein Farbtupfer je Legendenzeile');
+  assert.ok(hoehe > 0);
+  assert.strictEqual(hoehe, pdfKuchenHoehe({ segmente }),
+    'die vorab berechnete Hoehe muss die tatsaechlich belegte sein');
+  // Die Farbe kommt als HEX aus derselben Whitelist wie die CSS-Variable -
+  // jsPDF kennt keine var(--...).
+  assert.deepStrictEqual([...new Set(nurArt(doc, 'setFillColor').map(r => r[1]))],
+    ['#11d9cc', '#ff4d00', '#9aa3a8']);
+  // Legende: Label, Wert und Prozent, formatiert wie auf dem Bildschirm.
+  const legende = nurArt(doc, 'text').map(r => r[1]);
+  assert.ok(legende.some(t => /^Visa {2}60 {2}60\.0 %$/.test(t)), legende.join(' | '));
+  assert.ok(legende.includes('Anteil je Brand'), 'Titel ueber dem Ring');
+  // Ohne Segmente wird nichts gezeichnet und nichts belegt.
+  const leer = fakeDoc();
+  assert.strictEqual(pdfKuchen(leer, 40, 100, [], {}), 0);
+  assert.strictEqual(leer.rufe.length, 0);
+});
+
+test('pdfKuchen schliesst jedes Segment zu einem Ringstueck', () => {
+  const { pdfKuchen } = loadBuilders();
+  const doc = fakeDoc();
+  // 100 %: der volle Ring. Aussen vier Bezier-Teilboegen, eine Gerade nach
+  // innen, innen vier zurueck - der Fall, an dem ein einzelner Bogen scheitern
+  // wuerde.
+  pdfKuchen(doc, 0, 0, [{ label: 'A', wert: 1, anteil: 100, farbe: 'tuerkis' }], {});
+  const linien = nurArt(doc, 'lines')[0][1];
+  assert.strictEqual(linien.length, 9);
+  assert.strictEqual(linien.filter(l => l.length === 6).length, 8, 'acht Bezier-Stuecke');
+  assert.strictEqual(linien.filter(l => l.length === 2).length, 1, 'eine Gerade nach innen');
+  linien.forEach(l => l.forEach(v => assert.ok(Number.isFinite(v), `NaN im Linienzug: ${l}`)));
+});
+
+test('Der PDF-Pfad zeichnet jeden Kuchen genau einmal, vor seiner Tabelle', () => {
+  const { reportingPdfBloecke, reportingPdfSchreiben } = loadBuilders();
+  const p = reportingPdfBloecke(fixturModell(), {});
+  const doc = fakeDoc();
+  reportingPdfSchreiben(doc, p);
+  // "Genau einmal" wird gezaehlt, nicht behauptet: jedes Segment ist genau ein
+  // lines()-Aufruf, also muss die Zahl der Aufrufe die Summe aller Segmente
+  // aller Kuchen sein. Ein doppelt gezeichneter Kuchen gaebe mehr, ein
+  // vergessener weniger.
+  const segmente = p.tabellen.reduce((a, tab) =>
+    a + (tab.kuchen || []).reduce((b, k) => b + k.segmente.length, 0), 0);
+  assert.ok(segmente > 0, 'PDF-Layout ohne Kuchen');
+  assert.strictEqual(nurArt(doc, 'lines').length, segmente);
+  // Stellung im Dokument: der Kuchen kommt nach dem Blocktitel und vor der
+  // Tabelle desselben Blocks.
+  const folge = doc.rufe.map(r => (r[0] === 'text' ? `T:${r[1]}` : r[0]));
+  const titelIdx = folge.indexOf('T:E-Com · Zahlungsmittel');
+  assert.ok(titelIdx > -1, 'Kanaltitel im PDF nicht gefunden');
+  const linienIdx = folge.indexOf('lines', titelIdx);
+  const tabelleIdx = folge.indexOf('autoTable', titelIdx);
+  assert.ok(linienIdx > titelIdx && linienIdx < tabelleIdx,
+    'der Kuchen gehoert zwischen Titel und Tabelle');
+});
+
+test('Ein Kuchen laeuft nicht ueber den Seitenrand', () => {
+  const { reportingPdfBloecke, reportingPdfSchreiben, pdfKuchenHoehe } = loadBuilders();
+  const p = reportingPdfBloecke(fixturModell(), {});
+  const doc = fakeDoc();
+  reportingPdfSchreiben(doc, p);
+  const hoehe = 842;
+  // Kein gezeichnetes Segment und kein Farbtupfer der Legende darf unter dem
+  // Seitenrand liegen. Der Umbruch davor rechnet die Kuchenhoehe mit ein -
+  // ohne das stuende ein Ring halb neben der Seite.
+  nurArt(doc, 'lines').forEach(r => assert.ok(r[4] === 'F' && r[3] < hoehe - 20,
+    `Segment bei y=${r[3]} unter dem Seitenrand`));
+  nurArt(doc, 'rect').forEach(r => assert.ok(r[2] < hoehe - 20,
+    `Legendenzeile bei y=${r[2]} unter dem Seitenrand`));
+  // Und die Hoehenrechnung selbst: viele Segmente sind hoeher als der Ring.
+  assert.ok(pdfKuchenHoehe({ segmente: new Array(13).fill({}) })
+    > pdfKuchenHoehe({ segmente: new Array(3).fill({}) }));
+});
