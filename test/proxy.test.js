@@ -1204,6 +1204,32 @@ test('parseFailureReasonSeite: die Login-Seite ist KEIN Treffer', () => {
   assert.strictEqual(P.parseFailureReasonSeite(null, '5').name, null);
 });
 
+test('parseFailureReasonSeite: eine Klasse, die den Namen nur enthaelt, zaehlt nicht', () => {
+  // Der Vergleich laeuft ueber die zerlegte Klassenliste, nicht ueber \b in
+  // der Regex: \b sieht den Bindestrich als Wortgrenze, deshalb passten
+  // 'main-maintitle', 'maintitle-lead' und
+  // 'documentation-panel-description-header' allesamt auf die gesuchten Namen.
+  // Und weil der ERSTE Treffer im Dokument gewinnt, haette ein solcher Nachbar
+  // - wie hier: er steht ueber dem echten Block - den falschen Namen
+  // geliefert und ihn zusammen mit der Cache-Datei eingefroren.
+  const seite = '<html><body>'
+    + '<div class="main-maintitle">Falscher Titel</div>'
+    + '<div class="maintitle-lead">Auch falsch</div>'
+    + '<div class="maintitle">Richtiger Titel</div>'
+    + '<div class="subtitle-hint">#1 <span class="separator"></span> Falsche Kategorie</div>'
+    + '<div class="row subtitle">#1 <span class="separator"></span> End User</div>'
+    + '<div class="documentation-panel-description-header">Falscher Text</div>'
+    + '<div class="documentation-panel-description">Richtiger Text</div>'
+    + '</body></html>';
+  assert.deepStrictEqual(plainish(P.parseFailureReasonSeite(seite, '1')), {
+    id: '1', name: 'Richtiger Titel', category: 'End User', description: 'Richtiger Text',
+  });
+  // Mehrere Klassen am selben div sind der Normalfall und muessen weiterhin
+  // treffen (hier: "row subtitle" oben).
+  assert.strictEqual(
+    P.parseFailureReasonSeite('<div class="a maintitle b">Titel</div>', '1').name, 'Titel');
+});
+
 // JSON-Runde: die Objekte kommen aus dem ES-Modul-Realm, deepStrictEqual
 // vergleicht sonst auch den Prototyp (gleiches Muster wie plain() im Harness).
 function plainish(v) { return JSON.parse(JSON.stringify(v)); }
@@ -1300,6 +1326,74 @@ test('holeFailureReasons: sequentiell und mit Abstand zwischen zwei Abrufen', as
   } finally { stub.wiederherstellen(); }
 });
 
+test('holeFailureReasons: ein abgelaufener Eintrag wird neu geholt', async () => {
+  // Der Proxy laeuft tagelang - ein Eintrag kann auch in der Prozess-Map
+  // veralten, ohne dass die Datei je wieder gelesen wird. Deshalb entscheidet
+  // dasselbe Praedikat an beiden Stellen.
+  const stub = dokuFetch(['1568360440179']);
+  const alt = new Date(Date.now() - P.FAILURE_CACHE_MAX_ALTER_MS - 60000).toISOString();
+  const cache = new Map([['1568360440179',
+    { name: 'Alter Name', category: 'End User', description: 'x', geholtAm: alt }]]);
+  try {
+    const r = await P.holeFailureReasons(['1568360440179'], { cache, abstandMs: 0 });
+    assert.strictEqual(stub.rufe.length, 1, 'abgelaufen heisst: erneut fragen');
+    assert.strictEqual(r.reasons[0].name, '3-D Secure Failure', 'der neue Name gewinnt');
+    assert.strictEqual(r.neu, 1);
+    assert.notStrictEqual(cache.get('1568360440179').geholtAm, alt, 'Zeitstempel nachgezogen');
+  } finally { stub.wiederherstellen(); }
+});
+
+test('holeFailureReasons: die Antwort traegt kein geholtAm', async () => {
+  // geholtAm ist Buchhaltung des Caches. In der Antwort an die App hat es
+  // nichts verloren - sie liest Name, Kategorie und Beschreibung.
+  const stub = dokuFetch(['1568360440179']);
+  const cache = new Map();
+  try {
+    const a = await P.holeFailureReasons(['1568360440179'], { cache, abstandMs: 0 });
+    assert.deepStrictEqual(Object.keys(plainish(a.reasons[0])).sort(),
+      ['category', 'description', 'id', 'name']);
+    // Und beim zweiten Mal, aus dem Cache, ebenso.
+    const b = await P.holeFailureReasons(['1568360440179'], { cache, abstandMs: 0 });
+    assert.deepStrictEqual(Object.keys(plainish(b.reasons[0])).sort(),
+      ['category', 'description', 'id', 'name']);
+  } finally { stub.wiederherstellen(); }
+});
+
+test('holeFailureReasons: das Gesamtbudget bricht ab statt zu blockieren', async () => {
+  // FAILURE_TIMEOUT_MS gilt PRO Abruf: 50 haengende IDs waeren rund 6 Minuten
+  // 50 Sekunden, und so lange stuende die App still. Nach dem Budget bricht
+  // der Lauf ab und gibt zurueck, was er hat - der Rest bleibt '#<id>'.
+  const stub = dokuFetch(['111', '222', '333']);
+  try {
+    // Budget 0: der erste Abruf laeuft immer (sonst brachte der Aufruf gar
+    // nichts), danach ist Schluss.
+    const r = await P.holeFailureReasons(['111', '222', '333'],
+      { cache: new Map(), abstandMs: 0, budgetMs: 0 });
+    assert.strictEqual(stub.rufe.length, 1, 'nur der erste Abruf');
+    assert.strictEqual(r.reasons[0].name, '3-D Secure Failure');
+    assert.deepStrictEqual(plainish(r.reasons.slice(1)),
+      [{ id: '222', name: null }, { id: '333', name: null }],
+      'die uebrigen kommen als name: null zurueck, die App laesst sie als #<id> stehen');
+    assert.strictEqual(r.neu, 1, 'nur der eine Treffer wird gecacht');
+    assert.strictEqual(P.FAILURE_GESAMT_BUDGET_MS, 30000);
+  } finally { stub.wiederherstellen(); }
+});
+
+test('holeFailureReasons: Cache-Treffer kosten kein Budget', async () => {
+  // Der Deckel begrenzt die ABRUFE, nicht die Antwort: was im Cache steht,
+  // wird auch nach abgelaufenem Budget noch ausgeliefert.
+  const stub = dokuFetch(['111']);
+  const cache = new Map([
+    ['111', { name: 'Aus dem Cache', category: '', description: '', geholtAm: new Date().toISOString() }],
+    ['222', { name: 'Auch aus dem Cache', category: '', description: '', geholtAm: new Date().toISOString() }],
+  ]);
+  try {
+    const r = await P.holeFailureReasons(['111', '222'], { cache, abstandMs: 0, budgetMs: 0 });
+    assert.strictEqual(stub.rufe.length, 0);
+    assert.deepStrictEqual(r.reasons.map(x => x.name), ['Aus dem Cache', 'Auch aus dem Cache']);
+  } finally { stub.wiederherstellen(); }
+});
+
 test('holeFailureReasons: ein Netzfehler ergibt name: null, kein Wurf', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error('Netz weg'); };
@@ -1323,24 +1417,99 @@ test('Cache-Datei: kaputt oder fehlend ergibt einen leeren Cache, keinen Wurf', 
   assert.strictEqual(P.ladeFailureCache(path.join(dir, 'liste.json')).size, 0);
 });
 
+// Ein Cache-Eintrag, wie holeFailureReasons ihn schreibt: mit Zeitstempel.
+function frischerEintrag(name, ueber = {}) {
+  return Object.assign({
+    name, category: 'End User', description: 'x', geholtAm: new Date().toISOString(),
+  }, ueber);
+}
+// Die Datei in ihrer heutigen Schreibweise - Version aussen, Eintraege innen.
+function cacheDatei(pfad, eintraege, version = P.FAILURE_CACHE_VERSION) {
+  fs.writeFileSync(pfad, JSON.stringify({ version, eintraege }, null, 2));
+}
+
 test('Cache-Datei: Runde aus Schreiben und Lesen, Muell wird ausgesiebt', async () => {
   const pfad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-fc-')), 'c.json');
-  const cache = new Map([
-    ['1568360440179', { name: '3-D Secure Failure', category: 'End User', description: 'x' }],
-  ]);
+  const cache = new Map([['1568360440179', frischerEintrag('3-D Secure Failure')]]);
   assert.strictEqual(await P.speichereFailureCache(cache, pfad), true);
   const zurueck = P.ladeFailureCache(pfad);
   assert.strictEqual(zurueck.get('1568360440179').name, '3-D Secure Failure');
   assert.strictEqual(zurueck.get('1568360440179').category, 'End User');
+  // Die Datei traegt die Schema-Version - daran haengt die Selbstheilung.
+  const roh = JSON.parse(fs.readFileSync(pfad, 'utf8'));
+  assert.strictEqual(roh.version, P.FAILURE_CACHE_VERSION);
+  assert.ok(roh.eintraege['1568360440179'].geholtAm, 'ohne Zeitstempel gaebe es kein Alter');
 
   // Ein von Hand hineingeschriebener Eintrag ohne Namen waere ein
   // eingefrorenes "unbekannt" - genau das soll nie dauerhaft werden.
-  fs.writeFileSync(pfad, JSON.stringify({
-    '111': { name: 'Gut' }, '222': { name: '' }, '333': null, abc: { name: 'Keine Zahl' },
-  }));
+  cacheDatei(pfad, {
+    111: frischerEintrag('Gut', { category: undefined, description: undefined }),
+    222: frischerEintrag(''), 333: null, abc: frischerEintrag('Keine Zahl'),
+  });
   const gesiebt = P.ladeFailureCache(pfad);
   assert.deepStrictEqual([...gesiebt.keys()], ['111']);
   assert.strictEqual(gesiebt.get('111').category, '', 'fehlende Felder werden zu leeren Strings');
+});
+
+test('Cache-Datei: eine fremde Schema-Version wird GANZ verworfen', async () => {
+  // Der Selbstheilungspfad: hat eine fehlerhafte Fassung des Parsers falsche
+  // Namen eingefroren, genuegt das Erhoehen von FAILURE_CACHE_VERSION - kein
+  // Nutzer muss die Datei von Hand loeschen.
+  const pfad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-fc-')), 'c.json');
+  cacheDatei(pfad, { 111: frischerEintrag('Gut') }, P.FAILURE_CACHE_VERSION + 1);
+  assert.strictEqual(P.ladeFailureCache(pfad).size, 0, 'zu neue Version');
+  cacheDatei(pfad, { 111: frischerEintrag('Gut') }, P.FAILURE_CACHE_VERSION - 1);
+  assert.strictEqual(P.ladeFailureCache(pfad).size, 0, 'zu alte Version');
+
+  // Das erste, noch versionslose Format (flaches { "<id>": {...} }) faellt aus
+  // demselben Grund durch - es hat gar kein version-Feld.
+  fs.writeFileSync(pfad, JSON.stringify({
+    111: { name: 'Gut aus v1', category: 'End User', description: 'x' },
+  }));
+  assert.strictEqual(P.ladeFailureCache(pfad).size, 0, 'Format ohne Version');
+});
+
+test('Cache-Datei: ein zu alter Eintrag wird beim Laden fallen gelassen', () => {
+  const pfad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-fc-')), 'c.json');
+  const vor = ms => new Date(Date.now() - ms).toISOString();
+  cacheDatei(pfad, {
+    111: frischerEintrag('Frisch', { geholtAm: vor(P.FAILURE_CACHE_MAX_ALTER_MS - 60000) }),
+    222: frischerEintrag('Abgelaufen', { geholtAm: vor(P.FAILURE_CACHE_MAX_ALTER_MS + 60000) }),
+    // Kein Zeitstempel und Datenmuell: "Alter unbekannt" darf nicht als
+    // "frisch" durchgehen.
+    333: frischerEintrag('Ohne Datum', { geholtAm: undefined }),
+    444: frischerEintrag('Krummes Datum', { geholtAm: 'gestern' }),
+    // Aus der Zukunft (verstellte Uhr, kopierter Ordner) - kein Beleg fuer
+    // Frische, sondern ein Grund, neu zu fragen.
+    555: frischerEintrag('Zukunft', { geholtAm: new Date(Date.now() + 3600000).toISOString() }),
+  });
+  assert.deepStrictEqual([...P.ladeFailureCache(pfad).keys()], ['111']);
+
+  // Dasselbe Praedikat, direkt: es entscheidet an beiden Stellen (Datei und
+  // Prozess-Map), damit die beiden nicht auseinanderlaufen koennen.
+  assert.strictEqual(P.failureEintragFrisch({ geholtAm: vor(1000) }), true);
+  assert.strictEqual(P.failureEintragFrisch({ geholtAm: vor(P.FAILURE_CACHE_MAX_ALTER_MS) }), false);
+  assert.strictEqual(P.failureEintragFrisch(null), false);
+});
+
+test('Cache-Datei: geschrieben wird atomar - keine verwaiste .tmp', async () => {
+  // Temp-Datei + rename im selben Verzeichnis, dasselbe Muster wie
+  // ladeUndSchreibeUpdate. Ohne das konnte ein Neustart mitten im Schreiben
+  // eine abgeschnittene Datei hinterlassen.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallee-fc-'));
+  const pfad = path.join(dir, 'c.json');
+  assert.strictEqual(
+    await P.speichereFailureCache(new Map([['111', frischerEintrag('Gut')]]), pfad), true);
+  assert.deepStrictEqual(fs.readdirSync(dir), ['c.json'],
+    'nach dem Schreiben liegt nur die Zieldatei da');
+
+  // Ein nicht schreibbarer Pfad: false statt Wurf, und wieder nichts, was
+  // liegen bleibt (das Verzeichnis existiert gar nicht).
+  const nichtSchreibbar = path.join(dir, 'gibt-es-nicht', 'c.json');
+  assert.strictEqual(
+    await P.speichereFailureCache(new Map([['111', frischerEintrag('Gut')]]), nichtSchreibbar),
+    false);
+  assert.deepStrictEqual(fs.readdirSync(dir), ['c.json']);
 });
 
 // --- Die Route am Dispatcher ----------------------------------------------

@@ -39,9 +39,17 @@ const ENDE = '/* FAILURE_REASONS:END */';
 
 // Kategorie-Kuerzel statt des ausgeschriebenen Namens: 2'254 mal
 // 'Configuration' waeren allein rund 30 KB, die kein Mensch je liest. Die
-// Aufloesung steht in der App (FAILURE_KATEGORIE_KUERZEL). Eine Kategorie, die
-// der Katalog nicht kennt, wird zu '' - die App liest das als UNKNOWN, und das
-// ist ehrlicher als sie in einen der fuenf Eimer zu raten.
+// Aufloesung steht in der App (FAILURE_KATEGORIE_KUERZEL).
+//
+// Eine Kategorie ausserhalb dieser Tabelle laesst den Build ABBRECHEN. Zuerst
+// stand hier ein stilles '' (die App liest das als UNKNOWN) - das ist der
+// richtige Rueckfall zur LAUFZEIT fuer eine einzelne unbekannte ID, aber der
+// falsche beim Erzeugen der Tabelle: ergaenzt wallee den Katalog um eine
+// sechste Kategorie, liefen nach dem naechsten Scrape ALLE Gruende dieser
+// Kategorie als "Unbekannt" durch den Block «Ablehngruende nach Kategorie» -
+// bei Gruenden, deren Kategorie sehr wohl belegt ist. Lieber ein Abbruch mit
+// Namen der neuen Kategorie: sie hier und in FAILURE_KATEGORIE_KUERZEL
+// nachzutragen ist die Arbeit von zwei Zeilen.
 const KUERZEL = {
   'End User': 'E',
   Configuration: 'C',
@@ -71,8 +79,13 @@ if (!ids.length) fehler(`Katalog ${KATALOG} ist leer.`);
 const eintraege = ids.map(id => {
   const e = katalog[id] || {};
   const name = String(e.name == null ? '' : e.name);
-  const kat = Object.prototype.hasOwnProperty.call(KUERZEL, e.category) ? KUERZEL[e.category] : '';
-  return `${JSON.stringify(id)}:[${JSON.stringify(name)},${JSON.stringify(kat)}]`;
+  if (!Object.prototype.hasOwnProperty.call(KUERZEL, e.category)) {
+    const gezeigt = e.category == null || e.category === '' ? '(fehlt)' : String(e.category);
+    fehler(`Unbekannte Kategorie "${gezeigt}" (zuerst bei ID ${id}). `
+      + `Bekannt sind: ${Object.keys(KUERZEL).join(', ')}. `
+      + 'Neue Kategorie in KUERZEL hier und in FAILURE_KATEGORIE_KUERZEL der App nachtragen.');
+  }
+  return `${JSON.stringify(id)}:[${JSON.stringify(name)},${JSON.stringify(KUERZEL[e.category])}]`;
 });
 
 const zeile = `  const FAILURE_REASONS = {${eintraege.join(',')}};`;

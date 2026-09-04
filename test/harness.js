@@ -151,6 +151,12 @@ const EXPORTED = [
   'reportingExportBloecke',
   'reportingZellFormat',
   'reportingUebrige',
+  // Die deutsche Beschriftung der Modell-Schluessel. reportingLabel() gibt
+  // Unbekanntes unveraendert zurueck - ein fehlender Eintrag faellt deshalb
+  // nirgends auf, er landet als roher Schluessel im fertigen Report. Beides
+  // gehoert hierher, damit ein Test die Tabelle direkt festnageln kann.
+  'REPORTING_LABEL',
+  'reportingLabel',
   'REPORTING_GRUENDE_MAX',
   'REPORTING_CODES_MIN_BEKANNT',
   // Reporting-Verdrahtung (Task 5): zwei reine Regeln plus der Ingest-Pfad.

@@ -206,9 +206,9 @@ export function sanityProxy(text) {
 export const FAILURE_DOC_BASE = 'https://app-wallee.com/en-us/doc/api/failure-reason/view/';
 
 // Hoechstens so viele IDs pro Aufruf, und dazwischen dieser Abstand: das ist
-// ein Doku-Server, kein API-Vertrag mit uns. 50 x 200 ms sind rund 10 Sekunden
-// im schlimmsten Fall - langsam genug, um niemanden zu stoeren, schnell genug
-// fuer den einen Nachschlag nach einem Report.
+// ein Doku-Server, kein API-Vertrag mit uns. Die Pausen allein sind harmlos
+// (50 x 200 ms = 10 Sekunden) - die Abrufe selbst sind es nicht, siehe das
+// Gesamtbudget unten.
 export const FAILURE_MAX_IDS = 50;
 export const FAILURE_ABSTAND_MS = 200;
 
@@ -218,12 +218,45 @@ export const FAILURE_ABSTAND_MS = 200;
 // zeigt weiter '#<id>'.
 export const FAILURE_TIMEOUT_MS = 8000;
 
+// Der Timeout gilt PRO Abruf. Blieben 50 IDs je einzeln bis zum Anschlag
+// haengen, waere der Lauf bei 50 x (8000 + 200) ms = rund 6 Minuten 50
+// Sekunden - und so lange stuende die App still, denn sie wartet auf diese
+// eine Antwort. Deshalb ein Budget fuer den GANZEN Lauf: ist es aufgebraucht,
+// bricht er ab und gibt zurueck, was er bis dahin gefunden hat; die
+// verbliebenen IDs kommen als name: null zurueck und bleiben im Report
+// '#<id>'. Rueckfall statt Blockade - dieselbe Haltung wie beim einzelnen
+// Timeout darueber.
+//
+// 30 Sekunden, weil der Nachschlag direkt nach einem Report laeuft und der
+// Nutzer dabei zusieht: laenger zu warten bringt ihm hoechstens ein paar Namen
+// mehr, kostet ihn aber den Eindruck, die App haenge. Im Normalfall (Doku-
+// Server antwortet in Millisekunden) wird das Budget nie beruehrt - 50 Abrufe
+// brauchen dann die 10 Sekunden Pausen und wenig mehr.
+export const FAILURE_GESAMT_BUDGET_MS = 30000;
+
 // Das Verzeichnis dieses Scripts - dort liegt auch der Cache, damit er beim
 // Kopieren des Ordners mitwandert (anders als die Zugangsdaten, die bewusst im
 // Home des Nutzers bleiben: der Cache ist oeffentliche Doku, kein Geheimnis).
 export const SKRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const FAILURE_CACHE_PATH = process.env.WALLEE_FAILURE_CACHE
   || path.join(SKRIPT_DIR, 'failure-reasons.cache.json');
+
+// Schema-Version der Cache-Datei. Passt sie nicht, wird die Datei verworfen
+// statt gelesen - und zwar vollstaendig. Das ist der Selbstheilungspfad fuer
+// eine schlechte Charge: hat eine fehlerhafte Fassung des Parsers falsche
+// Namen eingefroren, genuegt es, diese Zahl zu erhoehen, statt jeden Nutzer
+// die Datei von Hand loeschen zu lassen. Version 1 war das erste, noch
+// versionslose Format (flaches { "<id>": {...} }) - es hat kein version-Feld
+// und faellt deshalb von selbst durch.
+export const FAILURE_CACHE_VERSION = 2;
+
+// Hoechstalter je Eintrag. wallee kann einen Ablehngrund umbenennen oder ihm
+// eine andere Kategorie geben; ohne Verfallsdatum stuende der alte Name bis in
+// alle Ewigkeit im Report, ohne dass irgendwo etwas rot wird. 30 Tage sind der
+// Kompromiss: der Katalog aendert sich selten (deshalb nicht taeglich), und
+// eine abgelaufene ID kostet genau EINEN Abruf einer oeffentlichen Doku-Seite
+// (deshalb nicht jaehrlich).
+export const FAILURE_CACHE_MAX_ALTER_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Die URL wird ausschliesslich aus Ziffern zusammengesetzt - deshalb die
 // Pruefung HIER und nicht erst beim Aufrufer. Alles andere waere ein Weg,
@@ -281,19 +314,40 @@ export function dekodiereEntities(text) {
 // formatiert mit Tabs und Zeilenumbruechen (der Name steht eingerueckt in
 // mehreren Zeilen) - ohne die Normalisierung stuende im Report ein Name mit
 // eingebauten Tabulatoren.
-function htmlText(roh) {
+//
+// Der Name ist bewusst nicht 'htmlText': so hiess die Funktion einmal, und
+// ladeUndSchreibeUpdate() fuehrt weiter unten ein lokales `const htmlText`.
+// Ein Aufruf der Funktion von dort haette nicht die Funktion getroffen,
+// sondern die noch nicht initialisierte Konstante - ein TDZ-ReferenceError,
+// ausgerechnet im Selbst-Update-Pfad.
+function nurText(roh) {
   return dekodiereEntities(String(roh == null ? '' : roh).replace(/<[^>]*>/g, ' '))
     .replace(/\s+/g, ' ').trim();
 }
 
-// Bewusst eine Regex und kein Parser: der Proxy hat keine Dependencies, und
-// die drei gesuchten Bloecke der Doku-Seite enthalten keine verschachtelten
-// <div>. Kaeme spaeter eines dazu, endete der Treffer an dessen </div> - die
+// Bewusst kein Parser: der Proxy hat keine Dependencies, und die drei
+// gesuchten Bloecke der Doku-Seite enthalten keine verschachtelten <div>.
+// Kaeme spaeter eines dazu, endete der Treffer an dessen </div> - die
 // Fixtures halten den heutigen Aufbau fest, damit das auffiele.
+//
+// Verglichen wird ueber die ZERLEGTE Klassenliste, nicht ueber \b in der
+// Regex: \b sieht den Bindestrich als Wortgrenze, deshalb passte 'maintitle'
+// auch auf 'main-maintitle', 'maintitle-lead' oder
+// 'documentation-panel-description-header'. Und weil der erste Treffer im
+// Dokument gewinnt, haette ein solcher Nachbar den falschen Namen geliefert -
+// zusammen mit der Cache-Datei dauerhaft eingefroren.
 function ersterBlock(html, klasse) {
-  const re = new RegExp(`<div[^>]*class="[^"]*\\b${klasse}\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>`);
-  const treffer = re.exec(String(html == null ? '' : html));
-  return treffer ? treffer[1] : null;
+  const text = String(html == null ? '' : html);
+  const re = /<div([^>]*)>/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const attr = /\bclass\s*=\s*"([^"]*)"/.exec(m[1]);
+    if (!attr) continue;
+    if (attr[1].trim().split(/\s+/).indexOf(klasse) === -1) continue;
+    const ende = text.indexOf('</div>', re.lastIndex);
+    return ende === -1 ? null : text.slice(re.lastIndex, ende);
+  }
+  return null;
 }
 
 // Der Separator trennt in der subtitle-Zeile die ID von der Kategorie:
@@ -311,21 +365,21 @@ const SEPARATOR_RE = /<span[^>]*class="[^"]*\bseparator\b[^"]*"[^>]*>\s*<\/span>
 export function parseFailureReasonSeite(html, id) {
   const key = String(id == null ? '' : id);
   const titel = ersterBlock(html, 'maintitle');
-  const name = titel === null ? '' : htmlText(titel);
+  const name = titel === null ? '' : nurText(titel);
   if (!name) return { id: key, name: null };
 
   let category = '';
   const untertitel = ersterBlock(html, 'subtitle');
   if (untertitel !== null) {
     const teile = untertitel.split(SEPARATOR_RE);
-    if (teile.length > 1) category = htmlText(teile.slice(1).join(' '));
+    if (teile.length > 1) category = nurText(teile.slice(1).join(' '));
   }
   const beschreibung = ersterBlock(html, 'documentation-panel-description');
   return {
     id: key,
     name,
     category,
-    description: beschreibung === null ? '' : htmlText(beschreibung),
+    description: beschreibung === null ? '' : nurText(beschreibung),
   };
 }
 
@@ -334,21 +388,47 @@ export function parseFailureReasonSeite(html, id) {
 // Starten hindern (Muster ladeZugangsdaten).
 let failureCache = null;
 
-export function ladeFailureCache(pfad = FAILURE_CACHE_PATH) {
+// EIN Praedikat fuer "noch brauchbar", zwei Aufrufer: das Laden der Datei und
+// der Treffer in der Prozess-Map. Getrennte Pruefungen liefen mit der Zeit
+// auseinander, und der Proxy laeuft tagelang - ein Eintrag kann also auch im
+// Arbeitsspeicher veralten, ohne dass die Datei je wieder gelesen wird.
+// Ein Eintrag ohne (oder mit unlesbarem) Zeitstempel gilt als abgelaufen: er
+// stammt aus einem aelteren Format, und "Alter unbekannt" darf nicht als
+// "frisch" durchgehen.
+export function failureEintragFrisch(eintrag, jetzt = Date.now()) {
+  if (!eintrag || typeof eintrag !== 'object') return false;
+  const geholt = Date.parse(eintrag.geholtAm);
+  if (!Number.isFinite(geholt)) return false;
+  // Ein Zeitstempel aus der Zukunft (verstellte Uhr, kopierte Datei) ist
+  // ebenfalls kein Beleg fuer Frische.
+  return geholt <= jetzt && jetzt - geholt < FAILURE_CACHE_MAX_ALTER_MS;
+}
+
+export function ladeFailureCache(pfad = FAILURE_CACHE_PATH, jetzt = Date.now()) {
   const map = new Map();
   try {
     const daten = JSON.parse(fs.readFileSync(pfad, 'utf8'));
     if (!daten || typeof daten !== 'object' || Array.isArray(daten)) return map;
-    Object.keys(daten).forEach(id => {
-      const e = daten[id];
+    // Schema-Version zuerst: passt sie nicht, wird die Datei GANZ verworfen.
+    // Eine Datei aus dem versionslosen ersten Format faellt hier ebenso durch
+    // wie eine, deren Eintraege eine fehlerhafte Fassung des Parsers erzeugt
+    // hat - das ist der Selbstheilungspfad, ohne dass jemand die Datei von
+    // Hand loeschen muss.
+    if (daten.version !== FAILURE_CACHE_VERSION) return map;
+    const eintraege = daten.eintraege;
+    if (!eintraege || typeof eintraege !== 'object' || Array.isArray(eintraege)) return map;
+    Object.keys(eintraege).forEach(id => {
+      const e = eintraege[id];
       // Nur was wie ein Treffer aussieht. Ein Eintrag ohne Namen waere ein
       // eingefrorenes "unbekannt" - und genau das soll nie dauerhaft werden.
       if (!/^\d+$/.test(id) || !e || typeof e !== 'object') return;
       if (typeof e.name !== 'string' || !e.name.trim()) return;
+      if (!failureEintragFrisch(e, jetzt)) return;
       map.set(id, {
         name: e.name,
         category: String(e.category == null ? '' : e.category),
         description: String(e.description == null ? '' : e.description),
+        geholtAm: e.geholtAm,
       });
     });
   } catch (e) {
@@ -359,9 +439,25 @@ export function ladeFailureCache(pfad = FAILURE_CACHE_PATH) {
 
 export async function speichereFailureCache(cache, pfad = FAILURE_CACHE_PATH) {
   try {
-    const objekt = {};
-    for (const [id, eintrag] of cache) objekt[id] = eintrag;
-    await fsp.writeFile(pfad, JSON.stringify(objekt, null, 2));
+    const eintraege = {};
+    for (const [id, eintrag] of cache) eintraege[id] = eintrag;
+    // Temp-Datei und rename im SELBEN Verzeichnis - dasselbe Muster, das
+    // ladeUndSchreibeUpdate() fuer die Laufzeit-Dateien benutzt. Ohne das
+    // konnte ein Neustart mitten im Schreiben eine abgeschnittene Datei
+    // hinterlassen; die faengt ladeFailureCache() zwar ab, aber der ganze
+    // Cache waere weg statt nur der letzte Eintrag.
+    const tmp = pfad + '.tmp';
+    try {
+      await fsp.writeFile(tmp, JSON.stringify(
+        { version: FAILURE_CACHE_VERSION, eintraege }, null, 2));
+      await fsp.rename(tmp, pfad);
+    } catch (e) {
+      // Scheitert das rename, bleibt sonst eine verwaiste .tmp liegen und
+      // wuechse bei jedem Versuch neu auf - aufraeumen und den Fehler weiter
+      // nach aussen reichen.
+      try { await fsp.unlink(tmp); } catch (e2) { /* war nie da */ }
+      throw e;
+    }
     return true;
   } catch (e) {
     console.error('[failure-reasons] Cache nicht schreibbar:',
@@ -389,13 +485,34 @@ export async function holeFailureReasons(ids, optionen = {}) {
   if (!failureCache) failureCache = ladeFailureCache();
   const cache = optionen.cache || failureCache;
   const abstand = optionen.abstandMs === undefined ? FAILURE_ABSTAND_MS : optionen.abstandMs;
+  const budget = optionen.budgetMs === undefined ? FAILURE_GESAMT_BUDGET_MS : optionen.budgetMs;
+  const beginn = Date.now();
   const reasons = [];
   let neu = 0;
   let geholt = 0;
 
   for (const id of ids) {
     const treffer = cache.get(id);
-    if (treffer) { reasons.push({ id, ...treffer }); continue; }
+    // Ein abgelaufener Eintrag zaehlt wie keiner: er wird neu geholt und
+    // ueberschrieben. Cache-Treffer geben nur Name, Kategorie und Beschreibung
+    // nach aussen - geholtAm ist Buchhaltung des Caches und gehoert nicht in
+    // die Antwort an die App.
+    if (treffer && failureEintragFrisch(treffer)) {
+      reasons.push({
+        id, name: treffer.name, category: treffer.category, description: treffer.description,
+      });
+      continue;
+    }
+
+    // Gesamtbudget: ist es aufgebraucht, wird kein weiterer Abruf gestartet.
+    // Die verbleibenden IDs kommen als name: null zurueck - die App laesst sie
+    // dann als '#<id>' stehen, genau wie eine ID, die auch die Doku nicht
+    // kennt. Geprueft wird VOR dem Abruf, weil ein bereits laufender nicht
+    // mehr abzubrechen ist, ohne den Timeout zu unterlaufen.
+    if (geholt > 0 && Date.now() - beginn >= budget) {
+      reasons.push({ id, name: null });
+      continue;
+    }
 
     // Der Abstand gilt ZWISCHEN zwei Abrufen, nicht vor dem ersten und nicht
     // nach dem letzten - sonst wartete auch ein Aufruf mit einer einzigen ID.
@@ -419,6 +536,9 @@ export async function holeFailureReasons(ids, optionen = {}) {
     if (eintrag.name) {
       cache.set(id, {
         name: eintrag.name, category: eintrag.category, description: eintrag.description,
+        // Zeitstempel des Abrufs, nicht des Schreibens: daran haengt das
+        // Hoechstalter (failureEintragFrisch).
+        geholtAm: new Date().toISOString(),
       });
       neu++;
     }

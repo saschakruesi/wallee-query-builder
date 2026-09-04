@@ -29,7 +29,13 @@
        (Tuerkis 55 %, Orange 55 %, Tuerkis 25 %) stehen als DECKENDE
        Mischwerte gegen Weiss - jsPDF kennt keine Transparenz, und beide
        Renderer sollen dieselbe Farbe zeigen. --kuchen-text-hell ist die
-       Prozentzahl auf den dunklen Segmenten. */
+       Prozentzahl auf den dunklen Segmenten.
+       --kuchen-text-dunkel gilt allein fuer das ORANGE Segment und ist ein
+       eigener, dunklerer Wert als --text (#414141). Gemessen (WCAG-Kontrast
+       gegen #ff4d00): Weiss 3.33:1, --text 3.07:1 - also SCHLECHTER als
+       Weiss -, #111111 dagegen 5.68:1. Auf allen uebrigen Segmenten reicht
+       --text (Tuerkis 5.75:1, Tuerkis hell 7.16:1, Orange hell 5.02:1,
+       Tuerkis blass 8.66:1, Grau 3.98:1), deshalb aendert sich dort nichts. */
     --kuchen-1: #11d9cc;
     --kuchen-2: #ff4d00;
     --kuchen-3: #111111;
@@ -38,6 +44,7 @@
     --kuchen-6: #c4f6f2;
     --kuchen-grau: #9aa3a8;
     --kuchen-text-hell: #ffffff;
+    --kuchen-text-dunkel: #111111;
   }
   * { box-sizing: border-box; }
   body {
@@ -5945,7 +5952,12 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // Ueberlegung wie bei SVG_BALKEN_FARBEN.
   const SVG_KUCHEN_FARBEN = {
     tuerkis: { css: 'var(--kuchen-1)', hex: '#11d9cc', text: 'var(--text)' },
-    orange: { css: 'var(--kuchen-2)', hex: '#ff4d00', text: 'var(--kuchen-text-hell)' },
+    // Orange traegt als einziges Segment DUNKLE Beschriftung, obwohl es zu
+    // den kraeftigen Farben gehoert: Weiss auf #ff4d00 kommt nur auf 3.33:1,
+    // und --text (#414141) waere mit 3.07:1 sogar noch schwaecher. Erst
+    // --kuchen-text-dunkel (#111111) erreicht 5.68:1. Die uebrigen Segmente
+    // bleiben unveraendert - dort reicht --text.
+    orange: { css: 'var(--kuchen-2)', hex: '#ff4d00', text: 'var(--kuchen-text-dunkel)' },
     schwarz: { css: 'var(--kuchen-3)', hex: '#111111', text: 'var(--kuchen-text-hell)' },
     tuerkisHell: { css: 'var(--kuchen-4)', hex: '#7ceae3', text: 'var(--text)' },
     orangeHell: { css: 'var(--kuchen-5)', hex: '#ff9d73', text: 'var(--text)' },
@@ -6256,6 +6268,14 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       [REPORTING_TOTAL_ZEILE, k.attempts, k.attempts > 0 ? 100 : null, k.successRate, k.failureRate],
       kanalModell.waehrungen, w => [w.waehrung, w.betrag, w.betrag ? 100 : null, w.schnitt],
       zmLeer).forEach(z => zmZeilen.push(z));
+    // Der einzige Block mit ZWEI Kuchen (§2.1): Attempts je Brand und Betrag
+    // je Brand. Der Betrags-Kuchen braucht EINE Waehrung - ueber Waehrungen
+    // hinweg zu addieren ist in diesem Modus verboten (SPEC 2.7) -, deshalb
+    // die mit dem groessten Umsatz, und sie steht im Titel: eine Betragszahl
+    // ohne ihre Einheit ist keine Aussage.
+    const leitWaehrung = kanalModell.waehrungen.reduce(
+      (beste, w) => (beste && beste.betrag >= w.betrag ? beste : w), null);
+    const mitBetragsKuchen = !!(leitWaehrung && leitWaehrung.betrag > 0);
     const zmBlock = reportingBlock(kanal, t('Zahlungsmittel'), [
       reportingSpalte('Brand'), reportingSpalte('Attempts', 'zahl'),
       reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
@@ -6264,20 +6284,21 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       reportingSpalte('Ø-Betrag', 'betrag'),
     ], zmZeilen, 'tabelle',
     'Attempts, Anteil und Quoten gelten währungsübergreifend und stehen deshalb nur in '
-    + 'der ersten Währungszeile eines Zahlungsmittels; die Beträge stehen je Währung.');
-    // Der einzige Block mit ZWEI Kuchen (§2.1): Attempts je Brand und Betrag
-    // je Brand. Der Betrags-Kuchen braucht EINE Waehrung - ueber Waehrungen
-    // hinweg zu addieren ist in diesem Modus verboten (SPEC 2.7) -, deshalb
-    // die mit dem groessten Umsatz, und sie steht im Titel: eine Betragszahl
-    // ohne ihre Einheit ist keine Aussage.
-    const leitWaehrung = kanalModell.waehrungen.reduce(
-      (beste, w) => (beste && beste.betrag >= w.betrag ? beste : w), null);
+    + 'der ersten Währungszeile eines Zahlungsmittels; die Beträge stehen je Währung.'
+    // Was der Umsatz-Ring NICHT zeigt, gehoert neben ihn: er zeichnet eine
+    // einzige Waehrung, und ein Zahlungsmittel, das nur in einer Nebenwaehrung
+    // (oder gar nicht) Umsatz hat, fehlt darin. Ohne diesen Halbsatz haelt der
+    // Leser es fuer nicht vorhanden, obwohl es in der Tabelle daneben steht.
+    + (mitBetragsKuchen
+      ? ` Der Umsatz-Kuchen zeigt allein ${leitWaehrung.waehrung}; Zahlungsmittel ohne `
+        + 'Umsatz in dieser Währung stehen in der Tabelle, aber nicht im Ring.'
+      : ''));
     bloecke.push(reportingKuchenAnhaengen(zmBlock, [
       reportingKuchen(zmBlock, {
         titel: 'Zahlungsversuche je Zahlungsmittel',
         wertSpalte: 1, anteilSpalte: 2, format: 'zahl',
       }),
-      leitWaehrung && leitWaehrung.betrag > 0 ? reportingKuchen(zmBlock, {
+      mitBetragsKuchen ? reportingKuchen(zmBlock, {
         titel: `Umsatz je Zahlungsmittel (${leitWaehrung.waehrung})`,
         wertSpalte: 6, anteilSpalte: 7, format: 'betrag',
         waehrungSpalte: 5, waehrung: leitWaehrung.waehrung,
@@ -6400,7 +6421,13 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       `Anteil an allen ${formatIntCH(k.fehlgeschlagen)} gescheiterten Zahlungsversuchen `
       + 'des Kanals; die Anteile summieren auf 100 %. Bedeutung und Empfehlung stehen für '
       + 'die häufigen Gründe aus dem wallee-Katalog — wo sie fehlen, ist nichts belegt und '
-      + 'bewusst nichts geraten.');
+      + 'bewusst nichts geraten. '
+      // Die 2-%-Regel des Kuchens fasst zusammen, was in der Tabelle einzeln
+      // steht; sein Segment „Übrige“ kann deshalb mehr Gruende enthalten als
+      // die gleichnamige Zeile darunter. Beide Zahlen sind richtig - ohne
+      // diesen Halbsatz sieht es aus, als widerspraechen sie sich.
+      + 'Der Kuchen fasst Segmente unter 2 % zu „Übrige“ zusammen; dieses Segment kann '
+      + 'deshalb mehr Gründe umfassen als die gleichnamige Zeile der Tabelle.');
       // Bewusste Abweichung von SPEC-ITERATION-2 §2.1, dort steht "Top 6 +
       // Uebrige": §2.2 verlangt im selben Abschnitt, dass Tabelle und Kuchen
       // dieselben Zahlen zeigen, und die beiden Vorgaben schliessen sich aus.

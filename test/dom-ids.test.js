@@ -91,3 +91,69 @@ test('Settlement-Modus: neue IDs vorhanden, settlementByTerminal entfernt', () =
   assert.ok(!vorhanden.has('settlementByTerminal'),
     'settlementByTerminal ist ersatzlos entfallen');
 });
+
+// --- Kuchenfarben: :root im CSS gegen SVG_KUCHEN_FARBEN im App-Code --------
+//
+// Jede Farbe der Kuchen steht doppelt: als CSS-Variable im :root (Bildschirm,
+// Hausregel "Farben nur ueber :root") und als Hexwert in SVG_KUCHEN_FARBEN
+// (jsPDF kennt keine CSS-Variablen). Der Kommentar an beiden Stellen verspricht
+// ausdruecklich, dass Bildschirm und PDF DIESELBE Farbe zeigen - genau das
+// laesst sich zur Laufzeit nirgends pruefen: das SVG traegt nur var(--kuchen-2),
+// und ob diese Variable ueberhaupt existiert und was in ihr steht, entscheidet
+// erst der Browser. Ein Tippfehler faellt so weder den Builder- noch den
+// Render-Tests auf. Dieser Waechter schliesst die Luecke statisch, im selben
+// Sinn wie der ID-Abgleich oben.
+
+function rootVariablen() {
+  const block = /:root\s*\{([\s\S]*?)\}/.exec(markup);
+  assert.ok(block, ':root-Block nicht gefunden');
+  const vars = new Map();
+  const re = /(--[\w-]+)\s*:\s*([^;]+);/g;
+  let m;
+  while ((m = re.exec(block[1])) !== null) vars.set(m[1], m[2].trim().toLowerCase());
+  return vars;
+}
+
+// Statisch aus dem Quelltext gelesen, nicht ausgefuehrt: der Waechter soll
+// genau das pruefen, was in der Datei steht.
+function kuchenFarbTabelle() {
+  const block = /const SVG_KUCHEN_FARBEN = \{([\s\S]*?)\n  \};/.exec(appCode);
+  assert.ok(block, 'SVG_KUCHEN_FARBEN nicht gefunden - Form geaendert?');
+  const eintraege = [];
+  const re = /(\w+):\s*\{\s*css:\s*'([^']+)',\s*hex:\s*'([^']+)',\s*text:\s*'([^']+)'\s*\}/g;
+  let m;
+  while ((m = re.exec(block[1])) !== null) {
+    eintraege.push({ schluessel: m[1], css: m[2], hex: m[3], text: m[4] });
+  }
+  return eintraege;
+}
+
+test('Kuchenfarben: jede CSS-Variable existiert und traegt genau den Hexwert daneben', () => {
+  const vars = rootVariablen();
+  const tabelle = kuchenFarbTabelle();
+  // Sechs Farben plus Grau (§2.2). Faengt ab, dass die Regex oben klaglos
+  // nichts findet und der Test damit gar nichts mehr pruefte.
+  assert.strictEqual(tabelle.length, 7, 'nicht alle Eintraege erkannt');
+
+  tabelle.forEach(e => {
+    const name = /^var\((--[\w-]+)\)$/.exec(e.css);
+    assert.ok(name, `${e.schluessel}: css ist keine reine CSS-Variable (${e.css})`);
+    assert.ok(vars.has(name[1]), `${e.schluessel}: ${name[1]} fehlt im :root`);
+    // Der Kern: Bildschirm und PDF zeigen dieselbe Farbe.
+    assert.strictEqual(vars.get(name[1]), e.hex.toLowerCase(),
+      `${e.schluessel}: ${name[1]} ist ${vars.get(name[1])}, jsPDF bekaeme ${e.hex}`);
+  });
+});
+
+test('Kuchenfarben: auch die Textfarben zeigen auf definierte CSS-Variablen', () => {
+  // Fuer die Beschriftung IM Segment gibt es kein Hex-Gegenstueck (das PDF
+  // schreibt keine Zahl ins Segment). Existieren muss die Variable trotzdem -
+  // sonst faerbt der Browser den Text schlicht gar nicht ein, und niemand
+  // merkt es.
+  const vars = rootVariablen();
+  kuchenFarbTabelle().forEach(e => {
+    const name = /^var\((--[\w-]+)\)$/.exec(e.text);
+    assert.ok(name, `${e.schluessel}: text ist keine reine CSS-Variable (${e.text})`);
+    assert.ok(vars.has(name[1]), `${e.schluessel}: ${name[1]} fehlt im :root`);
+  });
+});

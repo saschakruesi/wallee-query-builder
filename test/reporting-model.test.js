@@ -923,6 +923,34 @@ test('Bedeutung und Empfehlung stehen nur fuer belegte IDs, nie geraten', () => 
   assert.strictEqual(advice['1675956162243'], undefined);       // Checkout Id Expired
 });
 
+test('Jeder Empfehlungs-Code hat eine deutsche Beschriftung', () => {
+  // reportingLabel() gibt Unbekanntes UNVERAENDERT zurueck. Faellt einer der
+  // vier Codes aus REPORTING_LABEL, druckt die Spalte «Empfehlung» dem
+  // Haendler also 'CONTACT_WALLEE' statt 'wallee kontaktieren' - kein Fehler,
+  // kein leeres Feld, nur ein roher Schluessel im fertigen Report. Durch den
+  // Render- und Exportpfad laeuft an der Fixture nur RETRY_NO; die uebrigen
+  // drei haetten das nirgends gemerkt.
+  const { FAILURE_ADVICE, REPORTING_LABEL, reportingLabel } = loadBuilders();
+  const codes = ['RETRY_OK', 'RETRY_NO', 'OTHER_METHOD', 'CONTACT_WALLEE'];
+  codes.forEach(code => {
+    assert.ok(Object.prototype.hasOwnProperty.call(plain(REPORTING_LABEL), code),
+      `${code} fehlt in REPORTING_LABEL`);
+    const text = reportingLabel(code);
+    assert.notStrictEqual(text, code, `${code} kaeme roh in die Spalte «Empfehlung»`);
+    // Kein Schluessel-Aussehen: GROSSBUCHSTABEN_MIT_UNTERSTRICH ist die
+    // Schreibweise der Modellwerte, nie die einer Beschriftung. ("wallee
+    // kontaktieren" faengt klein an - die Marke wird in dieser App
+    // durchgehend klein geschrieben, das ist kein Tippfehler.)
+    assert.doesNotMatch(text, /^[A-Z_]+$/, `${code}: "${text}" sieht aus wie ein Schluessel`);
+    assert.ok(text.trim().length > 3, `${code}: "${text}" ist keine Beschriftung`);
+  });
+  // Und umgekehrt: die Tabelle vergibt keinen Code, den diese Liste nicht
+  // kennt - sonst waere die Aufzaehlung oben unvollstaendig, ohne dass es
+  // auffiele.
+  Object.values(plain(FAILURE_ADVICE)).forEach(code =>
+    assert.ok(codes.indexOf(code) !== -1, `FAILURE_ADVICE vergibt unbekanntes ${code}`));
+});
+
 test('failureReasons-Override nimmt einen String ebenso wie ein [name, kategorie]-Paar', () => {
   const { reportingFailureEintrag } = loadBuilders();
   // Blosser String: ersetzt nur den Namen, die Katalog-Kategorie bleibt.

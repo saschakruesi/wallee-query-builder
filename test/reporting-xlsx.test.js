@@ -66,11 +66,13 @@ vm.runInContext(blockInhalt('vendor-xlsx'), sandbox, { filename: 'vendor-xlsx.js
 vm.runInContext(
   blockInhalt('app-logic') +
   '\n;globalThis.__x.ingestReportingCsv = ingestReportingCsv;' +
-  '\n;globalThis.__x.exportReportingXlsx = exportReportingXlsx;',
+  '\n;globalThis.__x.exportReportingXlsx = exportReportingXlsx;' +
+  '\n;globalThis.__x.reportingBloecke = () =>' +
+  ' reportingExportBloecke(reportingModell, reportingExportOptionen());',
   sandbox, { filename: 'app-logic.js' },
 );
 
-const { ingestReportingCsv, exportReportingXlsx } = sandbox.__x;
+const { ingestReportingCsv, exportReportingXlsx, reportingBloecke } = sandbox.__x;
 const XLSX = sandbox.XLSX;
 const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'reporting-beispiel.csv'), 'utf8');
 
@@ -178,4 +180,39 @@ test('XLSX: der Hinweis eines Blocks geht nicht verloren', async () => {
   const zeilen = blattZeilen(wb, 'POS');
   const flach = zeilen.map(z => String(z[0] || '')).join('\n');
   assert.match(flach, /Quoten zählen nur Versuche mit Endzustand/);
+});
+
+test('XLSX: kein Blatt traegt eine Zeile aus block.kuchen', async () => {
+  // §2.2: "Excel: kein Kuchen (SheetJS-Community kann keine Charts); die
+  // Tabelle traegt die Prozente." Bis hierher stand diese Zusicherung nur im
+  // CSV-Test - der laedt aber gar nicht den Excel-Pfad. Geprueft wird deshalb
+  // dort, wo die Mappe wirklich entsteht: kein Kuchen-Titel, keine
+  // Legendenzeile, in KEINEM Blatt.
+  const { wb } = await exportiereUndLies();
+  const bloecke = plain(reportingBloecke());
+  const mitKuchen = bloecke.filter(b => b.kuchen && b.kuchen.length);
+  // Sonst prueft der Test nichts: gaebe die Fixture gar keinen Kuchen her,
+  // waere er auch dann gruen, wenn Excel sie voller Kuchen schriebe.
+  assert.ok(mitKuchen.length >= 3, `nur ${mitKuchen.length} Bloecke mit Kuchen in der Fixture`);
+
+  // Alle Zellen aller Blaetter, flach.
+  const zellen = [];
+  wb.SheetNames.forEach(name => {
+    blattZeilen(wb, name).forEach(z => z.forEach(w => zellen.push(String(w == null ? '' : w))));
+  });
+
+  mitKuchen.forEach(b => b.kuchen.forEach(k => {
+    assert.ok(!zellen.includes(k.titel),
+      `Kuchen-Titel "${k.titel}" steht in der Mappe`);
+    // Und keine Legendenzeile: die Segmentbeschriftungen selbst stehen sehr
+    // wohl in der Tabelle (sie SIND deren Zeilen) - was nicht vorkommen darf,
+    // ist die Sammelzeile, die erst der Kuchen erzeugt. "Übrige" ohne die
+    // Klammer mit der Zahl gibt es nur dort (die Tabelle schreibt
+    // "Übrige (n Gründe)").
+    k.segmente.forEach(s => {
+      if (s.label !== 'Übrige') return;
+      assert.ok(!zellen.includes('Übrige'),
+        'die Sammelzeile der 2-%-Regel gehoert nur in den Kuchen, nicht ins Blatt');
+    });
+  }));
 });

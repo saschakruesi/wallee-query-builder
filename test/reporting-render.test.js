@@ -783,6 +783,34 @@ test('„Übrige“ entsteht erst ab zwei kleinen Segmenten und traegt deren Sum
   assert.strictEqual(zwei[1].farbe, 'grau', '„Übrige“ ist immer Grau');
 });
 
+test('Die 2-%-Regel ist nach OBEN festgenagelt: knapp drueber bleibt eigenes Segment', () => {
+  // Die drei Tests daneben arbeiten mit 1.5 % und 1 %; eine Anhebung der
+  // Schwelle auf 5 liesse sie alle gruen - und klappte in JEDEM Report still
+  // Marken und Gruende in den grauen Wedge, ohne dass irgendwo etwas rot wird.
+  // Deshalb hier die Gegenrichtung: knapp UEBER der Schwelle bleibt ein
+  // Segment eigenstaendig.
+  const { app } = starte();
+  assert.strictEqual(app.REPORTING_KUCHEN_MIN_ANTEIL, 2);
+  const e = (label, wert, anteil) => ({ label, wert, anteil });
+  // 2.1 % und 2.0 % liegen drueber bzw. genau auf der Schwelle (der Vergleich
+  // ist `< MIN`, die Schwelle selbst zaehlt also noch als eigenes Segment);
+  // 1.9 % liegt darunter. Waere MIN groesser als 2, verschwaenden die ersten
+  // beiden hier in „Übrige“ - und der Test faellt.
+  const seg = plain(app.reportingKuchenSegmente([
+    e('Visa', 940, 94), e('Reka', 21, 2.1), e('Boncard', 20, 2), e('TWINT', 19, 1.9),
+  ]));
+  assert.deepStrictEqual(seg.map(s => s.label), ['Visa', 'Reka', 'Boncard', 'TWINT'],
+    'ein einzelnes kleines Segment wird ohnehin nicht eingeklappt');
+  // Zweiter kleiner Eintrag: jetzt greift die Regel - aber nur fuer die beiden
+  // unter der Schwelle, nicht fuer die knapp darueber.
+  const seg2 = plain(app.reportingKuchenSegmente([
+    e('Visa', 938, 93.8), e('Reka', 21, 2.1), e('Boncard', 20, 2),
+    e('TWINT', 19, 1.9), e('Lunch Check', 2, 0.2),
+  ]));
+  assert.deepStrictEqual(seg2.map(s => s.label), ['Visa', 'Reka', 'Boncard', 'Übrige']);
+  assert.strictEqual(seg2[3].wert, 21, 'nur TWINT und Lunch Check');
+});
+
 test('Die 2-%-Regel stellt keine zweite „Übrige“ neben eine vorhandene', () => {
   const { app } = starte();
   const e = (label, wert, anteil) => ({ label, wert, anteil });

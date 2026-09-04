@@ -180,7 +180,7 @@ test('Build-Schritt erzeugt den Block, sortiert und als [name, kategorie]-Paar',
     2: { name: 'Zweiter', category: 'Internal' },
     10: { name: 'Zehnter', category: 'Temporary Issue' },
     1: { name: 'Erster', category: 'End User' },
-    3: { name: 'Ohne Kategorie', category: 'Was Neues' },
+    3: { name: 'Dritter', category: 'Developer' },
   }));
   run(process.execPath, [TOOL, ziel, katalog]);
   const zeile = generierteZeile(fs.readFileSync(ziel, 'utf8'));
@@ -188,7 +188,7 @@ test('Build-Schritt erzeugt den Block, sortiert und als [name, kategorie]-Paar',
   // eines erneuten Laufs stabil, sie ist keine Zahlensortierung.
   assert.strictEqual(zeile,
     '  const FAILURE_REASONS = {"1":["Erster","E"],"10":["Zehnter","T"],'
-    + '"2":["Zweiter","I"],"3":["Ohne Kategorie",""]};');
+    + '"2":["Zweiter","I"],"3":["Dritter","D"]};');
   // Umgebender Text bleibt unangetastet.
   const html = fs.readFileSync(ziel, 'utf8');
   assert.ok(html.startsWith('davor\n'));
@@ -234,6 +234,34 @@ test('Build-Schritt bricht ab, wenn die Marker fehlen oder doppelt sind', () => 
   scheitert('/* FAILURE_REASONS:BEGIN */\nohne Ende\n');
   scheitert('/* FAILURE_REASONS:BEGIN */\nx\n/* FAILURE_REASONS:END */\n'
     + '/* FAILURE_REASONS:BEGIN */\ny\n/* FAILURE_REASONS:END */\n');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Build-Schritt bricht bei einer unbekannten Kategorie ab, statt "" zu schreiben', () => {
+  // Frueher schrieb der Schritt fuer eine Kategorie ausserhalb von KUERZEL
+  // stillschweigend '' - die App liest das als UNKNOWN. Zur Laufzeit ist das
+  // der richtige Rueckfall fuer eine einzelne unbekannte ID; hier waere es
+  // der falsche: ergaenzt wallee den Katalog um eine sechste Kategorie, liefen
+  // nach dem naechsten Scrape ALLE ihre Gruende als "Unbekannt" durch den
+  // Block «Ablehngruende nach Kategorie» - bei belegter Kategorie.
+  const dir = tempDir();
+  const ziel = zielDatei(dir);
+  const vorher = fs.readFileSync(ziel, 'utf8');
+  const katalog = path.join(dir, 'katalog.json');
+  const scheitert = (eintrag, erwartet) => {
+    fs.writeFileSync(katalog, JSON.stringify({ 1: { name: 'X', category: 'End User' }, 2: eintrag }));
+    let ausgabe = '';
+    assert.throws(() => run(process.execPath, [TOOL, ziel, katalog], { stdio: 'pipe' }),
+      err => { ausgabe = String(err.stderr || ''); return true; });
+    assert.match(ausgabe, erwartet);
+    assert.match(ausgabe, /ID 2/, 'die betroffene ID gehoert in die Meldung');
+    // Und die Zieldatei bleibt unberuehrt - lieber gar nichts als eine
+    // Tabelle, in der eine ganze Kategorie fehlt.
+    assert.strictEqual(fs.readFileSync(ziel, 'utf8'), vorher);
+  };
+  scheitert({ name: 'Neu', category: 'Was Neues' }, /Unbekannte Kategorie "Was Neues"/);
+  scheitert({ name: 'Neu' }, /Unbekannte Kategorie "\(fehlt\)"/);
+  scheitert({ name: 'Neu', category: '' }, /Unbekannte Kategorie "\(fehlt\)"/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

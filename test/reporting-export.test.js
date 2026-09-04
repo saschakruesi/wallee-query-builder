@@ -842,6 +842,39 @@ test('Der Betrags-Kuchen nimmt EINE Waehrung und nennt sie im Titel', () => {
   assert.deepStrictEqual(betrag.segmente.map(s => ({ label: s.label, wert: s.wert })), chf);
 });
 
+test('Die Blockhinweise sagen, was die Kuchen NICHT zeigen', () => {
+  // Beide Aussagen fehlten, und beide bekaeme der Leser sonst nirgends:
+  //  (a) Der Umsatz-Ring zeichnet EINE Waehrung, und Werte <= 0 fallen heraus.
+  //      Ein Zahlungsmittel, das nur in einer Nebenwaehrung Umsatz hat, steht
+  //      in der Tabelle, fehlt aber im Ring - ohne Hinweis haelt man es fuer
+  //      nicht vorhanden.
+  //  (b) Die 2-%-Regel des Kuchens fasst zusammen, was die Tabelle einzeln
+  //      fuehrt. Das Segment „Übrige“ kann deshalb einen anderen Prozentwert
+  //      tragen als die gleichnamige Zeile darunter - beide Zahlen sind
+  //      richtig, es sieht nur nach Widerspruch aus.
+  const bloecke = plain(reportingExportBloeckeFixtur());
+  const zm = bloecke.find(b => b.titel === 'POS · Zahlungsmittel');
+  assert.match(zm.hinweis, /Umsatz-Kuchen zeigt allein CHF/,
+    'die Leitwaehrung wird beim Namen genannt, nicht nur im Kuchen-Titel');
+  assert.match(zm.hinweis, /stehen in der Tabelle, aber nicht im Ring/);
+
+  const k8 = bloecke.find(b => b.titel === 'E-Com · Ablehngründe');
+  assert.match(k8.hinweis, /unter 2 %/);
+  assert.match(k8.hinweis, /mehr Gründe umfassen als die gleichnamige Zeile der Tabelle/);
+});
+
+test('Der Umsatz-Hinweis steht nur da, wo es einen Betrags-Kuchen gibt', () => {
+  // Ohne Umsatz gibt es keinen zweiten Kuchen - dann waere der Halbsatz eine
+  // Erklaerung fuer etwas, das gar nicht abgebildet ist.
+  const zm = plain(bloeckeAus([Object.assign({}, DIM_POS, {
+    attempt_state: 'FAILED', anzahl_attempts: '4',
+    summe_betrag: '0.00000000', summe_betrag_failed: '9.00000000',
+  })])).find(b => b.titel === 'POS · Zahlungsmittel');
+  assert.ok(zm, 'Zahlungsmittel-Block fehlt');
+  assert.strictEqual((zm.kuchen || []).length, 1, 'nur der Attempts-Kuchen');
+  assert.doesNotMatch(zm.hinweis, /Umsatz-Kuchen/);
+});
+
 test('Fortsetzungszeilen einer Waehrungsgruppe stehen nicht im Kuchen', () => {
   const bloecke = plain(reportingExportBloeckeFixtur());
   const block = bloecke.find(b => b.titel === 'E-Com · Kartenherkunft');
@@ -909,11 +942,13 @@ test('Ein Hinweisblock bekommt keinen Kuchen', () => {
   assert.strictEqual('kuchen' in block, false);
 });
 
-test('CSV bleibt ohne Kuchen - Excel ebenso, dort kann der Vendor keine Charts', () => {
+test('CSV bleibt ohne Kuchen - die Prozentspalten tragen dieselben Zahlen', () => {
   const { buildReportingReportCsv } = loadBuilders();
   const csvText = buildReportingReportCsv(fixturModell(), {});
   // Die Kuchen-Titel tauchen in der maschinenlesbaren Ausgabe nirgends auf;
-  // die Prozentspalten der Tabelle tragen dieselben Zahlen.
+  // die Prozentspalten der Tabelle tragen dieselben Zahlen. Fuer Excel steht
+  // dieselbe Zusicherung in test/reporting-xlsx.test.js - dort wird die Mappe
+  // wirklich gebaut und wieder eingelesen; hier laeuft nur der CSV-Pfad.
   assert.ok(!/Anteil je Kartentyp/.test(csvText));
   assert.ok(!/Umsatz je Zahlungsmittel/.test(csvText));
   assert.ok(/Kartentyp/.test(csvText), 'die Tabelle selbst steht sehr wohl drin');
