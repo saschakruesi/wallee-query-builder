@@ -29,7 +29,7 @@ Bildschirm und im PDF.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.11.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.12.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse ~1.41 MB. Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, `/failure-reasons` (öffentliche Doku, **keine** API-Route), **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
