@@ -586,7 +586,11 @@ Alles clientseitig im Modell, aus den Rohwerten der Query:
 - **`klassifiziereTds`** — `AUTHENTICATED` (Start ∧ CAVV) / `FAILED_OR_ABANDONED`
   (Start ohne CAVV) / `WALLET_CRYPTOGRAM` (kein Start, aber ECI — Apple/Google Pay bringen
   ihr eigenes Kryptogramm) / `NOT_REQUESTED`. Ein **Liability Shift wird nicht ausgewiesen**:
-  der Connector schreibt kein solches Label (Task 0).
+  ~~der Connector schreibt kein solches Label (Task 0)~~ — **korrigiert 2026-09-04:** *jener*
+  Connector schrieb keines. Die Discovery zum zweiten Händler-Space (SPEC-ITERATION-2 §4.3)
+  fand dort `1634723429059` **Liability Shift** (Wert `ON`). Der Report weist ihn weiterhin
+  nicht aus, aber nicht mehr, weil es das Label nicht gäbe, sondern weil es
+  connectorabhängig ist und in keinem der Konstanten-Sätze steht.
 
 #### Quoten, Anteile und die drei Zähler-Eimer
 
@@ -1127,8 +1131,10 @@ Wie bei `dashboard/SPEC.md`: jede offengelegt, keine übersehen. Es sind drei.
   Kennzahlen `UNKNOWN` — er wird nicht falsch, aber blind. Dann ist
   `dashboard/sql/00_label_discovery.sql` erneut zu fahren und die Konstanten sind
   nachzuziehen.
-- **Kein Liability-Shift-Ausweis** — es existiert kein solches Label (Task 0); der
-  3DS-Abschnitt endet bei Authentifizierung/Abbruch.
+- **Kein Liability-Shift-Ausweis** — ~~es existiert kein solches Label (Task 0)~~;
+  **korrigiert 2026-09-04:** es existiert, nur nicht überall (`1634723429059`, im zweiten
+  Händler-Space gemessen). Der 3DS-Abschnitt endet weiterhin bei Authentifizierung/Abbruch,
+  weil das Label connectorabhängig ist und in den Referenz-Spaces der Konstanten fehlt.
 - **Die Withdrawal-/`payoutref`-Heuristik ist unverändert** und betrifft diesen Modus nicht:
   der Reporting-Modus fasst `currentaccountwithdrawal` nicht an.
 - **`summe_refund` und `summe_betrag_failed` sind Obergrenzen** (Mehrfachzählung über
@@ -1692,6 +1698,11 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     und Cryptogram ECI (`1634723429552`, 113, Wallet-/Token-Attempts). Daraus die vier
     `tds_status`-Werte; 3DS-Akzeptanz im Referenzmonat 281/310 = 90.6 %, was sich mit den
     29 Attempts der Failure Reason „3-D Secure Failure" deckt.
+    **Nachtrag 2026-09-04, an einem zweiten Händler-Space gemessen:** die Aussage „es gibt
+    keine Liability-Shift-Labels" gilt **nur für diesen Connector**. Der andere schreibt
+    `1634723429059` Liability Shift (`ON`), dafür **keines** der dreizehn EMVCo-Felder aus
+    der Gruppe «3-D Secure Details» — siehe „Charge-Attempt-Befunde am zweiten
+    Händler-Space" unten.
   - **`wallet` ist am POS immer leer, im E-Com gefüllt** (Apple Pay, Google Pay, Click To
     Pay; 195 von 424 Karten-Attempts = 46 %) — Namen über `wallettype.name['en-US']`.
   - **`failurereason` ist am POS grob** (nur 2 Werte: „Transaction declined" 158,
@@ -1705,6 +1716,50 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     `t.completedamount` bei `FAILED` 0; bei `SUCCESSFUL` sind beide identisch (Ø 20.98).
     Daher `completedamount` für den Umsatz und `authorizationamount` für den
     „Ø abgelehnten Betrag".
+- **Charge-Attempt-Befunde am zweiten Händler-Space (Discovery Q2, 2026-09-04).** Grundlage
+  ist ein **dritter** Space mit einem **anderen Acquirer-Setup**, Juni–August 2026, nur
+  `FAILED`: 15'198 Karten-Attempts mit Labels, 18'177 Fehlschläge insgesamt. Space-ID,
+  Händler und Zahlen im Einzelnen stehen in
+  `dashboard/discovery-results/DESCRIPTORS.md` und `FALL-B.md` (beide gitignored — das Repo
+  ist öffentlich); hier nur, was dauerhaft gilt. **Dies ist der erste Lauf, der „Labels sind
+  connectorabhängig" nicht bloss behauptet, sondern misst — und zwar in beide Richtungen.**
+  - **Keines der dreizehn EMVCo-3DS-Felder kommt im Analytics-`labels`-Array an**:
+    Transaction Status (`1611157230835`), Transaction Status Reason (`1611160961002`),
+    Challenge Cancel (`1611161612971`), Authentication Type, ACS Transaction ID, ACS
+    Protocol Version, DS Transaction Id, die zweite ECI-Variante, 3-D Secure Status, sowie
+    ACS Reference Number in **beiden** Ausprägungen (Endeavour `1552301704857`, Netcetera
+    `1698042396612`) und Challenge Mandate/Active. Der Händler **sieht** diese Felder im
+    Backend — sie entstehen also im 3DS-Server, landen aber nicht in der Analytics-Tabelle.
+    **Folge:** die Achsen «Challenge-Status-Grund» und «ACS» sind aus dem Analytics-Export
+    nicht baubar, weder hier noch anderswo, solange kein Connector sie schreibt. Wer sie
+    braucht, geht über die API je Attempt (SPEC-ITERATION-2 §4.4). Der Rückfall ist die
+    Dauer zwischen `3-D Secure Process Started` und `Process Finished`.
+  - **Dafür sechs Labels, die in Task 0 nie sichtbar waren** — Namen aus
+    `dashboard/catalog/label-descriptors.json`, Häufigkeit gemessen:
+    `1458749261553` **Card Issuer Number (BIN)**, `integerContent`, 15'197 von 15'198 —
+    das ist die Issuer-Achse aus SPEC-ITERATION-2 §5.1, gruppierbar auch ohne BIN-Tabelle;
+    `1620379912010` **3-D Secure Version** (`staticValueContent`, 2'330);
+    `1634723431551` **Attempt Retry** (`No Retry` / `Retry Later`, 836) — eine **gemessene**
+    Wiederholungs-Empfehlung des Schemes, fachlich stärker als die kuratierte
+    `FAILURE_ADVICE`; `1634723429059` **Liability Shift** (`ON`, 169);
+    `1634723429554` **Cryptogram Present** (`booleanContent`, 2'646) — ein sauberes Ja/Nein
+    statt der Existenzprüfung auf CAVV; `1785220291000` **Processor Error Code** (16 Werte,
+    944).
+  - **Card Holder Name im Klartext ist hier die Regel, nicht die Ausnahme**: 11'903 von
+    15'198 Attempts, 9'417 verschiedene Werte (POS-Referenzspace: 245). Die PII-Sperrliste
+    (SPEC §9) ist damit keine Vorsichtsmassnahme, sondern trägt.
+  - **Alle 34 vorkommenden `failurereason`-IDs lösen gegen den eingebetteten Katalog auf** —
+    kein `#<id>`. Die handgepflegte Tabelle vor v5.12 hätte davon fünf benannt; die übrigen
+    29 Gründe machen rund 12 % der Fehlschläge aus. Das ist der Abnahmenachweis der
+    Definition of Done aus SPEC-ITERATION-2 §6, an echten Daten.
+  - **Die Override-Tabelle trägt messbar.** Mit ihr fallen 98.7 % der Fehlschläge in die
+    Kategorie *End User* und 0.7 % in *Configuration*; ohne sie stünde *Configuration* bei
+    10.6 % — allein wegen der beiden PostFinance-Timeouts, die der Katalog falsch einordnet.
+    Der Unterschied ist die Aussage „das Problem liegt beim Checkout-Verhalten der Kunden"
+    gegen „zehn Prozent sind ein wallee-/Acquirer-Thema".
+  - **Was der Lauf NICHT klären konnte:** er filtert auf `FAILED`, der Widerspruch aus
+    SPEC-ITERATION-2 §3.6 (erfolgreiche Attempts im Eimer «Fehlgeschlagen / abgebrochen»)
+    braucht dieselbe Frage für `SUCCESSFUL`. Query liegt als Q2e bereit.
 - **Es gibt keinen Failure-Reason-Dienst in der wallee-Web-Service-API.** 98 Services in
   Doku und Java-SDK, keiner davon; beide Kandidatenpfade antworten mit einer HTML-404;
   `static-values` kennt die IDs nicht; das Analytics-Schema hat keine Nachschlagetabelle.
@@ -1928,12 +1983,16 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     Fehlschläge** der grösste Ablehngrund, und der Händler kann die betroffenen Versuche
     heute weder sehen noch exportieren. v5.12 macht den Grund **sichtbar und benannt** — es
     beantwortet aber nicht, *welche* Versuche es waren.
-  - **§4.3 — Discovery Q2 für den zweiten Händler-Space** (Challenge Status, Status Reason,
-    Challenge Cancel, ACS Reference). Ohne diesen Lauf ist unbelegt, ob das Analytics-Schema
-    diese Labels überhaupt führt; §3 kann seine Kernachse deshalb noch nicht bauen, sondern
-    nur die Näherung über Dauer-Eimer. **Dieser Schritt braucht Portal-Zugang und steht noch
-    aus** — dasselbe Muster wie der Referenzlauf zu v5.11: erst messen, dann Konstanten
-    setzen. Eine geratene Descriptor-ID wirft nicht, sie liefert dauerhaft `NULL`.
+  - ~~**§4.3 — Discovery Q2 für den zweiten Händler-Space** … steht noch aus.~~
+    **Erledigt am 2026-09-04** (Ergebnis unter „Charge-Attempt-Befunde am zweiten
+    Händler-Space" oben, Rohdaten in `dashboard/discovery-results/`). Der Ausgang ist der
+    zweite von zwei möglichen: **die EMVCo-Labels fehlen im Analytics-Export.** §3 baut seine
+    Kernachse deshalb **nicht** aus Challenge-Status und ACS, sondern aus den Dauer-Eimern —
+    das ist jetzt eine gemessene Einschränkung, keine offene Frage. Neu **hinzugekommen**
+    sind dafür sechs Achsen, mit denen §3 vorher nicht rechnete (BIN als Issuer-Achse,
+    3-D Secure Version, Attempt Retry, Liability Shift, Cryptogram Present, Processor Error
+    Code) — deren Konstanten sind vor §3 anzulegen, denn zwei davon (BIN, Version) tragen
+    einen **anderen Map-Key** als den Default.
   - **§4.4 — die Proxy-Route `GET /charge-attempts`** (Anreicherung je 20 Attempts über die
     echte API, mit PII-Filter im Proxy). Vor dem Bau ist die Filter-/`expand`-Syntax zu
     verifizieren; die Doku-Seite ist abgeschnitten. Als Batch-Werkzeug für den
