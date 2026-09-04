@@ -20,14 +20,17 @@ selbst auf neuere Releases und kann sich im API-Modus per Klick selbst aktualisi
 und hat mit dem Settlement-Report (Bildschirm, CSV, Excel, PDF) eine eigene Ausgabe erhalten,
 analog zum Terminal-Report. Seit v5.11 gibt es als sechsten Modus `reporting` (Händler-KPIs
 über **Zahlungsversuche** statt Transaktionen, POS und E-Commerce getrennt) mit dem
-Reporting-Report als vierter gebrandeter Ausgabe.
+Reporting-Report als vierter gebrandeter Ausgabe. Seit v5.12 stehen dessen Ablehngründe im
+Klartext (eingebetteter wallee-Katalog, 2'254 Einträge, plus eine Proxy-Route für IDs, die
+danach neu vergeben wurden) und seine Verteilungen zusätzlich als Kuchendiagramme — auf dem
+Bildschirm und im PDF.
 
 ## Dateien
 
 | Datei | Zweck |
 |---|---|
 | `wallee_query_builder.html` | **Aktuelle Version (v5.11.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Hier weiterentwickeln. |
-| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
+| `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, `/failure-reasons` (öffentliche Doku, **keine** API-Route), **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
 | `sql/settlement_diagnose.sql` | Diagnose-Queries (einzeln ausführen!) um zu prüfen, ob/wie Settlement-Daten befüllt sind. |
@@ -35,6 +38,9 @@ Reporting-Report als vierter gebrandeter Ausgabe.
 | `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `settlement-report-spec/` | **Nur lokal, bewusst nicht im Git** (siehe `.gitignore`): fachliche Vorgabe des Settlement-Reports (seit v5.10 umgesetzt) — `SPEC.md` (Datenmodell, Aggregation, Aufbau, Edge Cases, Validierungen §7), `GAP-ANALYSIS.md` (was der Report vor v5.10 anders machte), `generate_report.py` (Referenz-Implementierung in Python) sowie die Referenz-Ausgaben `Settlement_Report_Juni-Juli_2026.pdf` / `Settlement_Detail_Juni-Juli_2026.xlsx`. Die Referenzdateien enthalten **echte Produktivdaten** (~69'000 Transaktionen mit Bankreferenzen, namentlich genannter Händler) — dieses Repo ist **öffentlich**, weil das Self-Update ohne Auth von `raw.githubusercontent.com` lädt, deshalb dürfen sie nicht eingecheckt werden. **Bei Änderungen am Settlement-Report zuerst hier nachlesen** — die Referenzdaten sind der Prüfstein (siehe „Gegen die Referenzdaten prüfen" unten). |
 | `dashboard/` | Fachliche Vorgabe des **Reporting-Modus** (v5.11): `SPEC.md` (Grundsatzentscheide, Datenmodell der Query, KPI-Katalog K1–K10 / P1–P7 / E1–E6, UI, Edge Cases, Validierung §8), `PLAN.md`/`README.md` sowie unter `sql/` die Discovery-Queries (`00_label_discovery.sql`, `00b_ecom_discovery_12622.sql`) und die **aus dem Builder generierten** Referenz-Queries (`01_reporting_reference.sql`, `01b_reporting_reference_terminal.sql` mit Terminal-Join). Diese Dateien sind im Git. **Nicht** im Git ist `dashboard/discovery-results/` (siehe `.gitignore`): dort liegen die Task-0-CSVs mit Produktivdaten sowie die Referenzausgaben des Reports. `DESCRIPTORS.md` darin ist die **Fundstelle aller Descriptor-IDs**, `ABNAHME.md` der **Abnahme-Nachweis nach SPEC §8** (inkl. der §8.3-Gegenrechnung gegen den `brand`-Modus, Belege `brand_ref_2026-07.csv` / `reporting_ref.csv` / `spec-8-3-vergleich.txt`) — bei Änderungen am Reporting-Modus zuerst dort und in `SPEC.md` nachlesen. |
+| `dashboard/SPEC-ITERATION-2.md` | Fachliche Vorgabe der **Iteration 2** (v5.12), datiert 2026-09-03: §1 Ablehngründe im Klartext, §2 Kuchendiagramme, §3 Seite «3DS-Failures», §4/§5 Discovery und die Antworten auf die Support-Anfrage aus Referenzfall B. **Umgesetzt sind §1 und §2**; was offen blieb und warum, steht unter „Offene Punkte". Der Fall selbst (Space-ID, Händler, Volumen, E-Mail-Wortlaut) steht **nicht** hier, sondern in `dashboard/discovery-results/FALL-B.md` (gitignored — das Repo ist öffentlich). |
+| `dashboard/catalog/` | Die beiden **gescrapten wallee-Kataloge** als JSON, im Git: `failure-reasons.json` (2'254 Einträge mit Name, Kategorie und Beschreibung, je englisch und deutsch) und `label-descriptors.json` (755 Einträge). Quelle ist die öffentliche Doku-Liste, **kein API-Dienst** (siehe „Ablehngründe"). Aktualisiert mit `dashboard/tools/scrape_wallee_catalogs.py` (Python 3, nur Standardbibliothek) — danach den Build-Schritt erneut laufen lassen. |
+| `tools/build-failure-reasons.mjs` | Erzeugt aus `dashboard/catalog/failure-reasons.json` die Konstante `FAILURE_REASONS` zwischen den Markerkommentaren in `wallee_query_builder.html`. **Der einzige Generator im Repo** — er läuft nie zur Laufzeit, die App bleibt eine Single-File-App ohne Build. Idempotent; bricht ab bei fehlenden oder doppelten Markern und bei einer Kategorie, die er nicht kennt. Details unter „Ablehngründe im Klartext (v5.12)". |
 | `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
 
@@ -95,7 +101,10 @@ Seit v4 enthält die HTML-Datei mehrere `<script>`-Blöcke: den eingebetteten XL
 (`<script id="vendor-xlsx">`, nur für den XLSX-Export), seit v5.8 zusätzlich den eingebetteten
 PDF-Vendor (`<script id="vendor-jspdf">`, jsPDF 2.5.2 + jspdf-autotable 3.8.4, UMD, nur für den
 Settlement-Report-PDF-Export) und den App-Code (`<script id="app-logic">`) — **drei** Blöcke
-insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch ~1.06 MB gross. Der Vendor
+insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch **~1.41 MB** gross
+(1'412'059 Bytes, gemessen 2026-09-04 an v5.12.0 — die Angabe stand über mehrere Versionen
+auf „~1.06 MB" und war schon vor v5.12 überholt; seit v5.12 kommen die ~110 KB des
+eingebetteten Ablehngrund-Katalogs dazu, siehe „Reporting-Report"). Der Vendor
 `vendor-xlsx` ist seit v5.1 **`xlsx-js-style` 1.2.0** (~425 KB minified, MIT-Fork von SheetJS
 0.18.5) statt der reinen SheetJS Community Edition: nur dieser Fork kann beim Schreiben
 **Zellstile** (Fill/Font/Border) setzen, was der XLSX-Export für die wallee-Optik braucht. Die
@@ -660,8 +669,7 @@ den Satz läse sich eine Spalte neben „Umsatz" wie ein Aufschlag.
 
 **Es gibt in der wallee-Web-Service-API keinen Failure-Reason-Dienst.** Das war 2026-08-28
 Gegenstand einer eigenen Untersuchung (Task 6, Bericht
-`.superpowers/sdd/PLAN/task-6-report.md`) und ist der Grund, warum die in SPEC 6.4
-vorgesehene Proxy-Route `GET /failure-reasons` **nicht existiert und nicht gebaut wurde**:
+`.superpowers/sdd/PLAN/task-6-report.md`) und gilt unverändert:
 
 - Die Web-Service-Doku enthält **98 Service-Abschnitte**, keiner davon betrifft Failure
   Reasons; das offizielle Java-SDK hat **ebenfalls 98** Service-Klassen und keine dafür.
@@ -679,17 +687,230 @@ vorgesehene Proxy-Route `GET /failure-reasons` **nicht existiert und nicht gebau
   `Account`, liefert nur die zufällig vorkommenden Gründe statt des Katalogs, und
   `limit=100` läuft in ein **504 (Cloudflare)**; nutzbar war nur `limit=20`.
 
-**Bitte den Endpunkt nicht erneut suchen** — derselbe Hinweis steht als Kommentar im Code.
-Stattdessen: `FAILURE_REASONS` als statische Tabelle mit **nur den sieben IDs, deren Name an
-echten Daten belegt ist** (2 POS, 5 E-Commerce). Eine erratene Bezeichnung wäre schlimmer als
-die rohe ID; unbekannte IDs erscheinen als `#<id>` und lassen sich unter
-`https://app-wallee.com/en-us/doc/api/failure-reason/list` nachschlagen (>2000 Einträge, ohne
-IDs in der Tabelle — als Datenquelle unbrauchbar). Die Option `failureReasons` von
+**Bitte den API-Endpunkt nicht erneut suchen** — derselbe Hinweis steht als Kommentar im
+Code.
+
+**Korrektur 2026-09-04 (v5.12.0): der aus diesem Befund gezogene Schluss war zu weit.**
+Zwei Sätze standen hier und sind widerlegt, der dritte bleibt richtig:
+
+- ~~„`FAILURE_REASONS` als statische Tabelle mit **nur den sieben IDs, deren Name an echten
+  Daten belegt ist** (2 POS, 5 E-Commerce)"~~ — die Tabelle wird seit v5.12 **generiert** und
+  führt alle **2'254** Einträge des Katalogs (siehe „Ablehngründe im Klartext (v5.12)" unten).
+- ~~„`…/failure-reason/list` … (>2000 Einträge, **ohne IDs in der Tabelle — als Datenquelle
+  unbrauchbar**)"~~ — falsch abgelesen. `…/failure-reason/list?page=<n>` liefert 20 Einträge
+  je Seite, und **jede Zeile trägt ihre ID**: `<tr data-grid-action="view/<id>"
+  data-entity-name="<Name>">`. 113 Seiten ergeben 2'254 Einträge, also den vollständigen
+  Katalog; er liegt gescrapt in `dashboard/catalog/failure-reasons.json`.
+- ~~„die in SPEC 6.4 vorgesehene Proxy-Route `GET /failure-reasons` existiert nicht und wird
+  nicht gebaut"~~ — sie **existiert seit v5.12**. Sie ist allerdings **keine API-Route**: sie
+  liest dieselbe öffentliche Doku-Seite, nur je Eintrag (siehe „Proxy-Route
+  `/failure-reasons`" unten).
+
+Was **nicht** widerlegt ist und der Grund für den ganzen Aufwand bleibt: es gibt keinen
+Failure-Reason-**Dienst**. Die Quelle ist die öffentliche **Doku-Seite**, kein API-Vertrag —
+sie kann ihr HTML jederzeit ändern, ohne dass jemand von einer Breaking Change spräche.
+Deshalb liegt der Katalog gescrapt im Repo, statt zur Laufzeit geholt zu werden.
+
+Eine erratene Bezeichnung wäre weiterhin schlimmer als die rohe ID; eine ID, die auch der
+Katalog nicht kennt, erscheint als `#<id>`. Die Option `failureReasons` von
 `buildReportingModel` überschreibt und ergänzt die Tabelle. Daneben steht
 `ISO_RESPONSE_CODES` (36 Einträge, deutsche Bezeichnungen, `51` = „Ungenügende Deckung") für
 den Ablehncode — ein genormter, seit Jahrzehnten stabiler Katalog, kein Datenbestand eines
 Händlers. Am POS ist der Ablehncode ohnehin die aussagekräftigere Achse; ohne Klartext-Namen
 verliert vor allem der E-Commerce an Lesbarkeit, nicht der POS.
+
+#### Ablehngründe im Klartext (v5.12) — generierte Tabelle, Kategorie, Empfehlung
+
+`FAILURE_REASONS` wird seit v5.12 **erzeugt, nicht gepflegt**: `node tools/build-failure-reasons.mjs`
+liest `dashboard/catalog/failure-reasons.json` und schreibt die Konstante zwischen die
+Markerkommentare `/* FAILURE_REASONS:BEGIN */` … `/* FAILURE_REASONS:END */` in die
+HTML-Datei. Wert je Eintrag ist ein Paar `["<name>", "<kategorie-kürzel>"]`; 2'254 Einträge
+ergeben **~107 KB** im `app-logic`-Block. **Von Hand gepflegt blieb die Tabelle bei den
+sieben IDs stehen, die in den Referenzläufen zufällig vorkamen** — jeder andere Grund stand
+im Report als `#<id>`, und genau das war der Auslöser dieser Iteration (SPEC-ITERATION-2 §0).
+
+Zum Werkzeug drei Dinge, die es zu wissen lohnt:
+
+- **Es schreibt in die eingecheckte Datei und läuft nie zur Laufzeit.** Die App bleibt eine
+  Single-File-App ohne Build; dies ist ein Generator, den man nach einem neuen Scrape
+  (`python3 dashboard/tools/scrape_wallee_catalogs.py failure-reason en-us`) einmal anwirft.
+  Er ist idempotent — ein zweiter Lauf meldet „unveraendert" und fasst die Datei nicht an.
+  `test/embedding.test.js` hält als Wächter fest, dass der eingecheckte Block dem Katalog
+  entspricht: wer neu scrapt und den Build vergisst, fällt dort auf und nicht erst beim
+  Händler.
+- **Ersetzt wird über eine Replacer-Funktion, nie über einen Ersatz-String** — dieselbe
+  `$&`-Falle wie beim eingebetteten Vendor-Code (siehe „Architektur"). Ein Katalog-Name
+  `Payment $& declined` würde sonst still den ganzen gefundenen Block an seiner Stelle
+  einsetzen. Ebenso bricht der Lauf ab, wenn ein Name `</script` enthielte.
+- **Eine Kategorie ausserhalb von `KUERZEL` lässt den Lauf abbrechen** (seit der
+  Abschlussrunde zu v5.12). Zuerst schrieb er dafür still `''`, was die App als `UNKNOWN`
+  liest. Zur *Laufzeit* ist `UNKNOWN` der richtige Rückfall für eine einzelne unbekannte ID;
+  beim *Erzeugen* der Tabelle ist er der falsche: ergänzte wallee den Katalog um eine sechste
+  Kategorie, liefen nach dem nächsten Scrape **alle** ihre Gründe als „Unbekannt" durch den
+  Block «Ablehngründe nach Kategorie» — bei Gründen, deren Kategorie sehr wohl belegt ist.
+  Der Abbruch nennt die neue Kategorie; sie ist dann hier **und** in
+  `FAILURE_KATEGORIE_KUERZEL` nachzutragen.
+
+**Kategorie als eigene Dimension.** Die Kürzel `E`/`C`/`I`/`T`/`D` löst
+`FAILURE_KATEGORIE_KUERZEL` auf, die Reihenfolge in der Ausgabe steht in
+`REPORTING_FAILURE_KATEGORIEN` (`END_USER`, `TEMPORARY`, `CONFIGURATION`, `INTERNAL`,
+`DEVELOPER`, `UNKNOWN` — absteigend nach Nähe zum Kunden, damit die Zeile, die den Händler
+angeht, oben steht). Daraus der Block **«Ablehngründe nach Kategorie»** direkt hinter K8: er
+sagt in einer Zeile, ob das Problem beim Kunden, beim Netz oder bei wallee bzw. dem Acquirer
+liegt. Jeder gescheiterte Versuch zählt in genau einen Eimer, die Summe ist deshalb exakt die
+Zahl der Fehlschläge des Kanals (harness-getestet). Die Query bleibt unverändert — die
+Kategorie entsteht clientseitig aus der ID.
+
+**Warum es trotz Katalog eine Override-Tabelle braucht.** `FAILURE_CATEGORY_OVERRIDE`
+korrigiert vier IDs, bei denen der Katalog **belegt** falsch liegt, jede mit Begründung im
+Kommentar und keine ohne — eine Korrektur „aus dem Bauch" wäre schlimmer als die falsche
+Katalog-Kategorie, weil sie unprüfbar wäre:
+
+- `1531373451516` (Transaction Authorization Timed Out) und `1531373394895` (Transaction
+  Authentication Failed), beide PostFinance, Katalog **Configuration**. In Referenzfall B
+  sind das 77 % (E-Finance) bzw. 62 % (Card) aller Fehlschläge dieser Zahlungsmittel — der
+  Kunde schliesst den E-Finance-Login nicht ab. Das ist Kundenverhalten, keine
+  Fehlkonfiguration; als «Konfiguration» ausgewiesen schickte der Block den Händler zu wallee,
+  wo nichts zu holen ist.
+- `1579281555663` (Transaction declined, POS) und `1579281542342` (Automatically cancelled,
+  POS), Katalog ebenfalls **Configuration**. Der Beleg steht **im Katalog selbst**: die
+  wortgleiche E-Com-ID `1460695272599` („Transaction declined.") führt er als *End User*.
+
+**`FAILURE_BEDEUTUNG` (30 IDs) und `FAILURE_ADVICE` (17 IDs)** tragen die zwei zusätzlichen
+Spalten des K8-Blocks, «Bedeutung» und «Empfehlung», in **allen vier Ausgaben** — es ist der
+Block, den der Händler ausdruckt oder an seinen Shop-Betreiber weiterreicht. Jeder Text ist
+aus `description_de` (ersatzweise `description`) des Katalogs gekürzt, **nichts ist frei
+formuliert**; die Empfehlung gibt es nur, wo SPEC-ITERATION-2 §1.3 die Zuordnung ausdrücklich
+nennt (`RETRY_OK` / `RETRY_NO` / `OTHER_METHOD` / `CONTACT_WALLEE`). Alles andere bleibt leer,
+auch wo eine Empfehlung naheliegt („Checkout Id Expired" wäre wohl `RETRY_OK`): eine
+Empfehlung, die ein Shop in seine Retry-Logik übernimmt, darf nicht geraten sein. Die vier
+Codes bekommen ihre deutsche Beschriftung aus `REPORTING_LABEL` — `reportingLabel()` gibt
+Unbekanntes **unverändert** zurück, ein fehlender Eintrag stünde also als roher Schlüssel im
+Report; ein Test nagelt deshalb alle vier fest.
+
+**Die Beschreibungen der übrigen 2'224 Einträge sind bewusst nicht eingebettet** (~450 KB
+zusätzlich). Der *Name* allein beseitigt die `#<id>`-Zeilen — das war der Auftrag; die
+Bedeutung ist Zusatz für die Gründe, die tatsächlich vorkommen. Siehe „Bewusste Abweichungen
+von `dashboard/SPEC-ITERATION-2.md`" unten.
+
+**„Übrige" statt Top-N.** K8 und E5 zeigen seit v5.12 **alle** Gründe; was über
+`REPORTING_GRUENDE_MAX = 12` hinausgeht, fasst `reportingUebrige()` zu einer Zeile
+«Übrige (n Gründe)» zusammen. Dadurch summieren die Anteile auf 100 %, und die Fussnote „7
+weitere Einträge sind nicht dargestellt" entfällt. Eine Sammelzeile entsteht **nie für einen
+einzelnen** Grund — sie bräuchte dieselbe Zeile und sagte weniger. E5 fasst **je Brand**
+zusammen, nicht über die ganze Kreuztabelle: die Sammelzeile eines Brands gehört unter dessen
+Zeilen.
+
+**Schwelle am Ablehncodes-Block (P6).** Im E-Commerce erschien der Block zu 91.4 % als
+`UNKNOWN` — das ist keine Information, sondern eine Tabelle, die so tut. Er wird dort nur
+noch gezeigt, wenn der Anteil bekannter Codes mindestens `REPORTING_CODES_MIN_BEKANNT = 25` %
+beträgt; sonst steht ein Hinweisblock, der die Zahl nennt („der Processor liefert für diesen
+Space keinen Response Code, n von m Fehlschlägen ohne Code"). **Am POS bleibt der Block wie
+er ist** — dort ist der ISO-Code die feinste Achse, die es gibt (14 Werte im Referenzmonat,
+gegen zwei Failure Reasons).
+
+#### Proxy-Route `/failure-reasons` (v5.12) — die Lücke nach dem Scrape
+
+`GET /failure-reasons?ids=<id>,<id>,…` holt die Namen zu IDs nach, die wallee **seit dem
+Scrape** neu vergeben hat. Der eingebettete Katalog deckt den Kopiermodus offline ab; diese
+Route deckt ab, was danach kam. Im Kopieren-Modus gibt es sie nicht — dort bleibt es bei
+`#<id>`, und das ist seit v5.12 der einzige verbliebene Fall.
+
+- **Es ist keine API-Route.** Kein JWT, kein `Account`-Header, kein `rufeApi()` — bitte auch
+  später nicht „vereinheitlichen": sie ruft eine öffentliche Doku-Seite, und sie durch
+  `rufeApi()` zu schicken hiesse, einen Pfad unter `/api/v2.0` zu signieren, den es dort gar
+  nicht gibt, und Zugangsdaten für etwas zu verlangen, das jeder abrufen kann.
+- **Die Erkennung „kennt die Doku diese ID?" läuft über `maintitle`, nie über den
+  Statuscode.** Eine unbekannte ID antwortet **302 auf die Login-Seite**; Nodes `fetch` folgt
+  Weiterleitungen von selbst und liefert dann eine **200** mit `<title>Log in`. Ein
+  Statuscode-Check entschiede also genau falsch — er hielte die Login-Seite für einen Treffer.
+  Zwei eingefrorene HTML-Fixtures (Treffer und Login-Seite, Stand 2026-09-03) halten den
+  Aufbau fest.
+- **Verglichen wird die zerlegte Klassenliste, nicht `\b` in einer Regex.** `\b` sieht den
+  Bindestrich als Wortgrenze: `main-maintitle`, `maintitle-lead` und
+  `documentation-panel-description-header` passten alle auf die gesuchten Namen, und weil der
+  **erste** Treffer im Dokument gewinnt, hätte ein solcher Nachbar den falschen Namen
+  geliefert — zusammen mit der Cache-Datei dauerhaft eingefroren. (Korrigiert in der
+  Abschlussrunde zu v5.12.)
+- **Cache, zweistufig:** eine Map im Prozess, daneben `failure-reasons.cache.json` neben dem
+  Proxy-Script (der Cache ist öffentliche Doku, kein Geheimnis — er darf im Ordner
+  mitwandern, anders als die Zugangsdaten im Home). Die Datei trägt eine
+  **Schema-Version** (`FAILURE_CACHE_VERSION`): passt sie nicht, wird die Datei **ganz**
+  verworfen statt gelesen — der Selbstheilungspfad, falls eine fehlerhafte Fassung des
+  Parsers je falsche Namen eingefroren hat. Dazu ein **Höchstalter** je Eintrag
+  (`FAILURE_CACHE_MAX_ALTER_MS`, 30 Tage): wallee kann einen Grund umbenennen, und ohne
+  Verfallsdatum stünde der alte Name bis in alle Ewigkeit im Report. Über „noch brauchbar"
+  entscheidet **ein** Prädikat (`failureEintragFrisch`) an beiden Stellen — beim Laden der
+  Datei und beim Treffer in der Prozess-Map; der Proxy läuft tagelang, ein Eintrag veraltet
+  also auch im Arbeitsspeicher. Geschrieben wird **atomar** (Temp-Datei + `rename` im selben
+  Verzeichnis, Muster `ladeUndSchreibeUpdate`).
+- **Ein negativer Treffer wird nie gecacht** — weder in der Datei noch im Prozess. Eine ID
+  kann in der Doku später auftauchen; genau dafür gibt es die Route.
+- **Höchstens `FAILURE_MAX_IDS = 50` IDs pro Aufruf, sequentiell, `FAILURE_ABSTAND_MS = 200`
+  dazwischen** (der Abstand gilt *zwischen* zwei Abrufen, nicht vor dem ersten). Es ist ein
+  Doku-Server, kein API-Vertrag mit uns. Dazu ein Timeout je Abruf (`FAILURE_TIMEOUT_MS`,
+  8 s — `fetch` hat von sich aus keinen) **und ein Gesamtbudget**
+  (`FAILURE_GESAMT_BUDGET_MS`, 30 s): der Timeout gilt *pro* Abruf, 50 hängende IDs wären
+  sonst rund 6 Minuten 50 Sekunden, in denen die App auf diese eine Antwort wartet. Ist das
+  Budget aufgebraucht, bricht der Lauf ab und liefert, was er hat; der Rest bleibt `#<id>`.
+  **Rückfall statt Blockade**, wie überall in dieser Anwendung.
+- **Geprüft wird vor dem ersten Netzzugriff:** eine `ids`-Liste mit einem Nicht-Zahl-Eintrag
+  ergibt `400`, ohne einen einzigen Abruf. Die URL setzt `failureReasonUrl()` ausschliesslich
+  aus Ziffern zusammen — alles andere wäre ein Weg, einen fremden Pfad an `app-wallee.com`
+  anzuhängen.
+- **App-Seite:** `reportingUnbekannteGruende()` erkennt eine fehlende ID an genau dem, was
+  der Nutzer sieht — der Name ist `#<id>`; damit gibt es keine zweite Definition von
+  „unbekannt", die gegenüber der Ausgabe auseinanderlaufen könnte. Der Nachtrag geht als
+  Option `failureReasons` ins Modell, das **aus den bereits geparsten Zeilen** neu gebaut
+  wird — kein zweiter Ergebnis-Abruf, denn bei wallee zählt jeder Abruf als Download.
+
+#### Kuchendiagramme (v5.12) — eine Geometrie, zwei Renderer
+
+Donut-Diagramme über den Tabellen der Verteilungsblöcke (SPEC-ITERATION-2 §2.1):
+Zahlungsmittel (zwei Kuchen — Attempts und Betrag), Kartentyp, Kartenherkunft, 3DS-Status,
+Ablehngründe, Ablehngründe nach Kategorie, PAN-Quelle, Funding. Nicht als Kuchen: Verlauf,
+Stunden, Terminals, Länder, Conversion.
+
+- **`kuchenSegmente(segmente, r, rInnen)` ist die einzige Stelle, an der Winkel und Punkte
+  entstehen.** `svgKuchen()` baut daraus den SVG-Pfad (`A`-Befehle), `pdfKuchen()` zeichnet
+  dieselben Segmente mit jsPDF-Vektorprimitiven (Bogen als kubische Bezier-Näherung, ≤ 90°
+  je Teilbogen). Zwei Geometrien nebeneinander liefen mit der Zeit auseinander, und niemand
+  vergleicht Bildschirm und PDF Segment für Segment.
+- **Die Kuchen stehen im PDF** — anders als die Balken, die bewusst draussen bleiben. jsPDF
+  kann Vektoren selbst; ein Rasterbild bräuchte einen dritten Vendor, und autotable kann kein
+  SVG. Die Bezier-Näherung ist gegen die Kreisbahn getestet (Toleranz 0.03 % des Radius, der
+  bekannte Maximalfehler bei 90° liegt bei ~0.027 %).
+- **Farben: `SVG_KUCHEN_FARBEN`, Whitelist wie `SVG_BALKEN_FARBEN`.** Der Renderer nimmt nur
+  einen **Schlüssel** entgegen, nie eine freie Farbangabe — das ist der Weg, über den sonst
+  doch ein Inline-Hex ins Markup käme. Jeder Eintrag trägt **beide** Darstellungen an
+  **einer** Stelle: `css` (`var(--kuchen-…)`) für den Bildschirm, `hex` für jsPDF. Dass die
+  beiden dasselbe meinen, lässt sich zur Laufzeit nirgends prüfen (das SVG trägt nur den
+  Variablennamen, aufgelöst wird er erst im Browser) — deshalb ein **statischer Wächter**
+  in `test/dom-ids.test.js`, der `:root` gegen die Tabelle hält. Sechs Farben plus Grau; Grau
+  ist für „Unbekannt"/„Übrige" reserviert und verbraucht keine der sechs. Feste Kategorien
+  (Domestisch/Intra/Inter, Business/Privat, 3DS-Status, Ablehnkategorien) haben in **jedem**
+  Report dieselbe Farbe, offene Listen (Brands, Gründe) laufen nach Anteil durch die Reihe.
+  Die Prozentzahl im Segment steht dunkel oder hell je Fläche; **Orange trägt als einziges
+  kräftiges Segment dunkle Schrift** — gemessen gegen `#ff4d00`: Weiss 3.33:1, `--text`
+  3.07:1 (also schlechter), `--kuchen-text-dunkel` (`#111111`) 5.68:1.
+- **Die 2-%-Regel sitzt in der Blockschicht, nicht im Renderer** (`reportingKuchenSegmente`,
+  `REPORTING_KUCHEN_MIN_ANTEIL = 2`): Segmente unter 2 % werden zu «Übrige» zusammengefasst,
+  **bevor** gezeichnet wird, damit Tabelle und Kuchen dieselben Zahlen zeigen. Ein
+  **einzelnes** kleines Segment wird nicht eingeklappt — «Übrige» bräuchte dieselbe Zeile und
+  sagte weniger. Trägt die Tabelle bereits eine Sammelzeile («Übrige (11 Gründe)»), wird
+  **hinein** addiert statt danebengestellt: sonst stünden zwei graue Wedges im Ring, beide
+  „Übrige" beschriftet und nicht auseinanderzuhalten (die Lage in Referenzfall B). Die
+  Segmente eines Kuchens sind immer die **Zeilen seiner Tabelle** — nie eine zweite, eigene
+  Auswahl.
+- **In Excel gibt es keinen Kuchen** — der eingebettete Vendor kann keine Charts. Die Tabelle
+  trägt die Prozente; kein Workaround, und ein Test hält fest, dass kein Blatt eine Zeile aus
+  `block.kuchen` trägt.
+- **Was der Kuchen nicht zeigt, steht im Blockhinweis.** Der Umsatz-Ring zeichnet nur die
+  **Leitwährung** (über Währungen hinweg zu addieren ist in diesem Modus verboten, SPEC 2.7),
+  und Werte ≤ 0 fallen heraus — ein Zahlungsmittel, das nur in einer Nebenwährung Umsatz hat,
+  steht in der Tabelle, fehlt aber im Ring. Und das Kuchen-Segment «Übrige» kann mehr Gründe
+  umfassen als die gleichnamige Tabellenzeile. Beides je ein Halbsatz: beide Zahlen sind
+  richtig, ohne den Hinweis sähe es nach Widerspruch aus.
 
 #### Parser, Blöcke, vier Ausgaben
 
@@ -765,7 +986,9 @@ verliert vor allem der E-Commerce an Lesbarkeit, nicht der POS.
 - **Bildschirm:** Kanal-Abschnitte unter `<h2 class="report-kanal">`, Kacheln, Tabellen
   (ab `REPORTING_TABELLE_OFFEN = 20` Zeilen in `<details>` eingeklappt — die Schwelle liegt
   bewusst unter den 24 Stunden), und für `typ: 'balken'` ein **Inline-SVG** über der Tabelle
-  (`svgBalken`, kein Chart-Vendor — die Datei ist schon ~1.06 MB). Farben ausschliesslich
+  (`svgBalken`, kein Chart-Vendor — die Datei ist schon ~1.41 MB, und mit dem eingebetteten
+  Ablehngrund-Katalog aus v5.12 ist das Argument stärker geworden, nicht schwächer). Farben
+  ausschliesslich
   über die Whitelist `SVG_BALKEN_FARBEN` (genau die zwei Farben, die
   `reportingBalkenHtml` wählt — Einträge auf Vorrat sehen nur benutzt aus) → `var(--…)`;
   eine freie Farbangabe wäre der Weg,
@@ -846,9 +1069,12 @@ Jede offengelegt, keine übersehen:
    abgesetzter Reporting-Token lässt sich nicht mehr nachparsen. Unkritisch, solange der
    Modus frisch ist; hier festgehalten, damit die Meldung „Im Ergebnis fehlen
    Pflichtspalten" an einem alten Token nicht als Fehler untersucht wird.
-5. **Die Proxy-Route `GET /failure-reasons` aus SPEC 6.4 existiert nicht** und wird nicht
-   gebaut — siehe „Ablehngründe" oben. SPEC 6.4 ist insoweit überholt und trägt seit v5.11
-   einen entsprechenden Vermerk.
+5. ~~**Die Proxy-Route `GET /failure-reasons` aus SPEC 6.4 existiert nicht** und wird nicht
+   gebaut.~~ **Erledigt in v5.12.0 (2026-09-04):** die Route ist gebaut — aber anders, als
+   SPEC 6.4 es sich dachte. Sie ruft keinen API-Dienst (den gibt es weiterhin nicht),
+   sondern die öffentliche Doku-Seite. Damit ist dies **keine Abweichung mehr**; der Punkt
+   bleibt als datierte Korrektur stehen, damit die Kette „kein Dienst → trotzdem eine Route"
+   nachvollziehbar ist. Details unter „Proxy-Route `/failure-reasons`".
 
 Nicht in dieser Liste, weil es **keine** SPEC-Abweichung ist: **KPI P5 (Authorization
 Method, Kontaktlos/Chip) wurde bereits in Task 0 verworfen** und steht deshalb gar nicht
@@ -857,6 +1083,33 @@ erst in der eingecheckten SPEC (§4.2 führt P1, P6, P7, P2, P3, P4; §6.3 kennt
 irgendwann „nachgetragen" wird: das Label `1761481788939` trägt unter
 `staticValueContent` nur eine Static-Value-ID, und im ganzen Referenzmonat kommt an POS
 **und** E-Com genau **ein** Wert vor. Eine Kennzahl mit einem einzigen Wert misst nichts.
+
+#### Bewusste Abweichungen von `dashboard/SPEC-ITERATION-2.md`
+
+Wie bei `dashboard/SPEC.md`: jede offengelegt, keine übersehen. Es sind drei.
+
+1. **Die Katalog-Beschreibungen werden nicht vollständig eingebettet** (§1.3 Punkt 2 wünscht
+   die «Bedeutung» aus dem Katalog für alle Gründe). Eingebettet sind Name und Kategorie
+   aller 2'254 Einträge (~107 KB) plus **~30 kuratierte** Beschreibungen — genau die IDs aus
+   §1.2, also die, die in den beiden Referenz-Reports tatsächlich vorkamen. Alle 2'254
+   Beschreibungen wären rund **450 KB** zusätzlich, in einer Datei, die schon 1.41 MB wiegt
+   und per Doppelklick aus dem Dateisystem geladen wird. §1.3 Punkt 1 rechnet selbst nur mit
+   Name + Kategorie und beziffert genau das als den bewusst bezahlten Preis. Für alles
+   Übrige gibt es die Proxy-Route, die die Beschreibung je ID mitliefert; im Kopieren-Modus
+   bleibt es bei Name und Kategorie — der Name allein beseitigt die `#<id>`-Zeilen, und das
+   war der Auftrag.
+2. **Der Ablehngrund-Kuchen zeichnet die Zeilen der Tabelle, nicht „Top 6 + Übrige".** §2.1
+   nennt für diesen Block „Top 6 + «Übrige»", §2.2 verlangt im selben Abschnitt, dass Tabelle
+   und Kuchen **dieselben** Zahlen zeigen — die beiden Vorgaben schliessen sich aus.
+   Aufgelöst zugunsten von §2.2: ein Kuchen, der andere Zahlen zeigt als die Tabelle direkt
+   darunter, wäre der teurere Fehler, denn dann müsste der Leser raten, welche der beiden
+   gilt. In der Praxis stellt die 2-%-Regel den Richtwert „Top 6" meist selbst her — an den
+   Referenzdaten liegen ab dem sechsten bis achten Grund fast alle Anteile unter 2 %.
+3. **Ein *einzelnes* Sub-2-%-Segment wird nicht eingeklappt.** §2.2 sagt „Segmente unter 2 %
+   werden in «Übrige» zusammengefasst", ohne Untergrenze. Bei genau einem bräuchte «Übrige»
+   dieselbe Zeile wie der Eintrag selbst, hiesse aber weniger — dieselbe Überlegung, die
+   `reportingUebrige()` für die Tabellen schon trifft. Ab zwei greift die Regel wie
+   spezifiziert.
 
 #### Grenzen (dem Kunden so kommunizieren)
 
@@ -1126,7 +1379,10 @@ Einzelnes Node-Script, nur Builtins (`http`, `crypto`, `fs`), **kein npm install
 `/index.html`) liefert die **App-HTML selbst** (Standalone-/Serve-Betrieb, siehe unten),
 `/health`, `GET`+`POST /setup`, `GET`+`POST /credentials`, `POST /submit` (Body-Feld
 `account`, optional), `GET /status/:token` + `GET /result/:token` (beide zusätzlich
-`?account=<id>`, optional), `DELETE /query/:token`, `GET /terminals?space=<id>`, `POST /update`.
+`?account=<id>`, optional), `DELETE /query/:token`, `GET /terminals?space=<id>`, `POST /update`,
+`GET /failure-reasons?ids=<id>,…` (seit v5.12 — die einzige Route ohne JWT und ohne
+Account-Header, sie liest die öffentliche Doku-Seite; Details unter „Proxy-Route
+`/failure-reasons`").
 
 - **Account pro Abfrage überschreibbar (seit v5.8):** `apiKopfZusatz(zugangsdaten, optionen)`
   entscheidet, welcher Kontext-Header an wallee geht — `optionen.space` hat Vorrang (Terminal-
@@ -1497,6 +1753,20 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    **Parser und Modell zusammen** in `reporting-model` · Export-Blöcke · Render, SVG-Balken,
    CSV/PDF-Blöcke, Verlaufszeile · State/Panels/`generate()`/Ingest · XLSX end-to-end),
    `embedding`/`dom-ids` (Struktur-/ID-Wächter).
+   **v5.12 hat keine neue Testdatei gebracht, sondern vier neue Nähte in bestehenden:**
+   `embedding` prüft zusätzlich den Build-Schritt `tools/build-failure-reasons.mjs` (er
+   gehört dorthin, weil er dasselbe schützt wie der Rest der Datei — die Unversehrtheit der
+   Single-File-App beim Einbetten, inklusive der `$&`-Falle: erzeugter Block, Idempotenz,
+   Abbruch bei fehlenden/doppelten Markern **und bei unbekannter Kategorie**, dazu der
+   Wächter „der eingecheckte Block ist der Stand des Katalogs"). `proxy` deckt die Route
+   `GET /failure-reasons` mit ab — Zerlegen der `ids` **vor** dem ersten Netzzugriff, der
+   Seitenparser gegen **zwei eingefrorene HTML-Fixtures**
+   (`test/fixtures/failure-reason-treffer.html` und `-login.html`, Stand 2026-09-03, nie
+   gegen das Netz), Cache-Version/Höchstalter/atomares Schreiben und das Gesamtbudget.
+   `dom-ids` trägt zusätzlich den **statischen Farb-Wächter** `:root` ↔ `SVG_KUCHEN_FARBEN`
+   (siehe „Kuchendiagramme"), und `reporting-render`/`-export`/`-xlsx` die Kuchen: Geometrie,
+   Bezier-Näherung, 2-%-Regel in beide Richtungen, PDF-Pfad und die Zusicherung, dass **kein
+   Excel-Blatt** eine Kuchenzeile trägt.
    Die Reporting-Tests laufen gegen `test/fixtures/reporting-beispiel.csv` — eine
    **synthetische**, deterministisch erzeugte Fixture
    (`test/fixtures/generate-reporting-beispiel.mjs`, fest verankerte Summen). **Inhalt
@@ -1645,6 +1915,37 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
   - Sollte wallee den **Failure-Reason-Dienst** je veröffentlichen, ersetzt er die statische
     `FAILURE_REASONS`-Tabelle (das Modell existiert in der API, nur der Dienst fehlt) —
     Nachfrage bei wallee wäre der Weg, erneutes Pfad-Raten nicht.
+- **Reporting-Modus, Iteration 2 (v5.12) — was diese Version bewusst NICHT gebracht hat.**
+  `dashboard/SPEC-ITERATION-2.md` beschreibt vier Vorhaben; umgesetzt sind **§1**
+  (Ablehngründe im Klartext samt Proxy-Route) und **§2** (Kuchendiagramme). Offen bleibt:
+  - **§3 — die Seite «3DS-Failures»** (Transaktionsliste mit Export und Dashboard-Link,
+    eigene zeilenweise Query `buildReportingTdsQuery`, zweiter `queryToken`). Sie ist der
+    eigentliche Auftrag aus Referenzfall B: 3-D Secure Failure ist dort mit **64.8 % aller
+    Fehlschläge** der grösste Ablehngrund, und der Händler kann die betroffenen Versuche
+    heute weder sehen noch exportieren. v5.12 macht den Grund **sichtbar und benannt** — es
+    beantwortet aber nicht, *welche* Versuche es waren.
+  - **§4.3 — Discovery Q2 für den zweiten Händler-Space** (Challenge Status, Status Reason,
+    Challenge Cancel, ACS Reference). Ohne diesen Lauf ist unbelegt, ob das Analytics-Schema
+    diese Labels überhaupt führt; §3 kann seine Kernachse deshalb noch nicht bauen, sondern
+    nur die Näherung über Dauer-Eimer. **Dieser Schritt braucht Portal-Zugang und steht noch
+    aus** — dasselbe Muster wie der Referenzlauf zu v5.11: erst messen, dann Konstanten
+    setzen. Eine geratene Descriptor-ID wirft nicht, sie liefert dauerhaft `NULL`.
+  - **§4.4 — die Proxy-Route `GET /charge-attempts`** (Anreicherung je 20 Attempts über die
+    echte API, mit PII-Filter im Proxy). Vor dem Bau ist die Filter-/`expand`-Syntax zu
+    verifizieren; die Doku-Seite ist abgeschnitten. Als Batch-Werkzeug für den
+    wallee-Support gedacht, nicht als Default für den Händler-Report (~200 Aufrufe für
+    4'000 Attempts).
+  - **§5.3 — der Block «Transaktionen ohne Zahlungsversuch» (CONV2).** `Processing not
+    Initiated` und `Transaction Timed Out` sind Transaktions-, nicht Attempt-Signale: es gibt
+    dafür gar keinen Charge Attempt, der Report **sieht diese Fälle also gar nicht** (das ist
+    die direkte Folge des Grundsatzentscheids „Attempt-Basis", SPEC 2.1 — kein Versehen). Der
+    Händler kann deshalb heute nicht unterscheiden, ob seine Abbrüche **beim** Bezahlen oder
+    **vor** dem Bezahlen entstehen.
+  - **§5.2 — der Block «Datenqualität für 3DS»** (Anteil Transaktionen mit Rechnungsadresse,
+    E-Mail, Kunden-ID, Token je `userinterfacetype`) — die konkrete Antwort auf „sagt uns,
+    welche Felder für eine höhere Frictionless-Quote fehlen". Er setzt §4.3 voraus und
+    braucht ebenfalls einen **Portal-Schritt**; beide stehen noch aus.
+
 
 ## Kontext
 

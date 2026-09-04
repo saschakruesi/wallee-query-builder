@@ -171,7 +171,7 @@ Nachkommastelle, Schweizer Zahlformat (`formatZahlCH`, `CH_TAUSENDER`).
 | E2 | **Success Rate nach 3DS-Status** | K1 gruppiert nach `tds_status` — zeigt, ob 3DS-Failures die Conversion drücken |
 | E3 | **Transaktions-Conversion** | `tx_erfolgreich / tx_mit_attempt` (Block CONV) — der Wert, den der Shop-Betreiber «Conversion» nennt; neben K1 ausgewiesen, mit Erklärung des Unterschieds |
 | E4 | **Retry-Rate** | `anzahl_attempts / tx_mit_attempt` pro Brand (Block `CONV`, nicht die entfallene DIM-Spalte `anzahl_transaktionen`) — > 1.3 deutet auf Reibung im Checkout |
-| E5 | **Ablehngründe pro Zahlungsmittel** | K8 × Brand (Tabelle, Top 5 je Brand) |
+| E5 | **Ablehngründe pro Zahlungsmittel** | K8 × Brand (Tabelle). *Korrektur 2026-09-04: hier stand «Top 5 je Brand» — das widersprach der in Iteration 2 nachgezogenen Zeile K8 oben und dem Code. Wie K8 steht der Block **vollständig** da, der Rest je Brand als eine Zeile «Übrige (n Gründe)»; zusammengefasst wird je Brand, nicht über die ganze Kreuztabelle.* |
 | E6 | **PAN-Quelle / Token-Anteil** | Verteilung `pan_type` (Klartext-PAN vs. Device Token Apple/Google Pay vs. Scheme Token Click to Pay) mit Success Rate je Typ — `ca.tokenversion_id` ist in Task 0 durchgehend NULL und taugt nicht |
 
 ### 4.4 Weitere Ideen (bewusst nicht in v5.11, im Spec festgehalten)

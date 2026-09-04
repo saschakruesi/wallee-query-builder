@@ -1,6 +1,6 @@
 # Wallee Analytics Query Builder
 
-**Aktuelle Version: v5.11.0**
+**Aktuelle Version: v5.12.0**
 
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies
@@ -83,7 +83,7 @@ Gerät. Zugangsdaten für den API-Modus liegen ausschliesslich beim Proxy, nie i
 | **Transaktions-Export** | eine Zeile pro Transaktion, Spalten frei wählbar — u. a. `tip_amount` (Trinkgeld) und `gross_excl_tip` (Brutto ohne Trinkgeld) |
 | **Kartensuche** | Transaktionen zu den letzten vier Kartenziffern (für Streitfälle) |
 | **Settlement-Report** | **account-basiert** (nicht space-basiert): was ist bereits ausbezahlt, was steht noch aus, was ist ganz ohne Settlement-Record — im API-Modus wird das Ergebnis der eigenen Query automatisch zum Settlement-Report (siehe unten) |
-| **Reporting** | Händler-Kennzahlen über **Zahlungsversuche** (Charge Attempts), getrennt nach POS und E-Commerce: Success Rate, Zahlungsmittel-Mix, Karten-Herkunft, Business/Privat, Debit/Kredit, Ø-Beträge, Ablehngründe, 3DS-Akzeptanz, Verlauf und Stosszeiten — als Report auf dem Bildschirm, in Excel, PDF und CSV (siehe unten) |
+| **Reporting** | Händler-Kennzahlen über **Zahlungsversuche** (Charge Attempts), getrennt nach POS und E-Commerce: Success Rate, Zahlungsmittel-Mix, Karten-Herkunft, Business/Privat, Debit/Kredit, Ø-Beträge, Ablehngründe **im Klartext** (Name, Kategorie, Bedeutung und Empfehlung aus dem wallee-Katalog), 3DS-Akzeptanz, Verlauf und Stosszeiten — als Report auf dem Bildschirm, in Excel, PDF und CSV, mit **Kuchendiagrammen** über den Verteilungen (siehe unten) |
 
 ## Abfrage-Verlauf
 
@@ -169,8 +169,18 @@ Trinkgeld, Retries und Stosszeiten?
 - **Einstellungen:** Kanal (POS / E-Commerce / Beide), Händler-Land für die
   Herkunfts-Einstufung (ISO-2, Default `CH`: domestisch / intra-europäisch / interkontinental
   / unbekannt) und optional eine Terminal-Aufschlüsselung (nur POS).
-- **Vier Ausgaben aus einer Quelle:** Bildschirm (mit Balken als Inline-SVG), CSV, Excel
-  (ein Blatt je Kanal) und PDF (ein Kapitel je Kanal) — gebrandet wie die anderen Reports.
+- **Ablehngründe im Klartext.** Jeder gescheiterte Versuch bekommt den Namen des
+  Ablehngrunds, seine **Kategorie** (liegt es beim Kunden, am Netz oder bei wallee bzw. dem
+  Acquirer?) und für die häufigen Gründe eine **Bedeutung** und eine **Empfehlung**
+  („Wiederholung möglich", „Nicht wiederholen", „Anderes Zahlungsmittel", „wallee
+  kontaktieren"). Grundlage ist der vollständige wallee-Katalog mit 2'254 Einträgen, in der
+  Datei mitgeliefert — auch im Kopieren-Modus, ganz ohne Netz. Im API-Modus lädt die App
+  Gründe nach, die nach dem Stand des Katalogs neu dazugekommen sind. Nichts wird geraten:
+  wo der Katalog schweigt, bleibt die Zelle leer.
+- **Vier Ausgaben aus einer Quelle:** Bildschirm (mit Balken und **Kuchendiagrammen** als
+  Inline-SVG), CSV, Excel (ein Blatt je Kanal) und PDF (ein Kapitel je Kanal, **mit den
+  Kuchen**) — gebrandet wie die anderen Reports. In Excel gibt es keine Diagramme; dort
+  tragen die Tabellen die Prozentwerte.
 - **CSV-Import im Kopieren-Modus:** Anders als Terminal- und Settlement-Report lässt sich
   dieser Report auch **ohne API-Modus** vollständig nutzen. Die Query liefert bereits
   verdichtete Zählwerte — keine Kartennummern, keine Kundendaten. Also: SQL kopieren, im
