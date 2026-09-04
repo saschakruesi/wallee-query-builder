@@ -6819,8 +6819,8 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // --- Balken als inline-SVG ------------------------------------------------
   // Kein Chart-Vendor (SPEC 5): die Datei ist mit den beiden bestehenden
   // Vendor-Bloecken und dem eingebetteten Ablehngrund-Katalog bereits ~1.41 MB
-  // gross (1'412'059 Bytes, gemessen 2026-09-04 an v5.12.0; hier stand bis
-  // dahin "~1.06 MB"), und ein Balkendiagramm sind ein paar <rect>. Das
+  // gross (gemessen 2026-09-04 an v5.12.0; hier stand bis dahin "~1.06 MB" -
+  // eine Zahl aus v5.8), und ein Balkendiagramm sind ein paar <rect>. Das
   // Argument ist mit jedem Wachstum staerker geworden, nicht schwaecher.
   // Farben ausschliesslich ueber die :root-Variablen.
   const SVG_BALKEN_STANDARD = { breite: 640, hoehe: 90 };

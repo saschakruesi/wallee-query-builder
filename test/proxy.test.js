@@ -1228,6 +1228,10 @@ test('parseFailureReasonSeite: eine Klasse, die den Namen nur enthaelt, zaehlt n
   // treffen (hier: "row subtitle" oben).
   assert.strictEqual(
     P.parseFailureReasonSeite('<div class="a maintitle b">Titel</div>', '1').name, 'Titel');
+  // Und der Tagname ist ebenfalls ein Name, kein Praefix: <divider> ist kein <div>.
+  assert.strictEqual(
+    P.parseFailureReasonSeite('<divider class="maintitle">Falsch</divider>'
+      + '<div class="maintitle">Richtig</div>', '1').name, 'Richtig');
 });
 
 // JSON-Runde: die Objekte kommen aus dem ES-Modul-Realm, deepStrictEqual
@@ -1376,6 +1380,31 @@ test('holeFailureReasons: das Gesamtbudget bricht ab statt zu blockieren', async
       'die uebrigen kommen als name: null zurueck, die App laesst sie als #<id> stehen');
     assert.strictEqual(r.neu, 1, 'nur der eine Treffer wird gecacht');
     assert.strictEqual(P.FAILURE_GESAMT_BUDGET_MS, 30000);
+  } finally { stub.wiederherstellen(); }
+});
+
+test('holeFailureReasons: bei aufgebrauchtem Budget gilt der abgelaufene Eintrag', async () => {
+  // Das Hoechstalter sagt "hol das neu, wenn du kannst" - nicht "wirf es weg".
+  // Reicht das Budget nicht mehr fuer den Abruf, ist ein 31 Tage alter Name
+  // immer noch mehr wert als '#<id>'.
+  const stub = dokuFetch(['1568360440179']);
+  const alt = new Date(Date.now() - P.FAILURE_CACHE_MAX_ALTER_MS - 60000).toISOString();
+  const cache = new Map([
+    ['222', { name: 'Alter Name', category: 'End User', description: 'x', geholtAm: alt }],
+  ]);
+  try {
+    // Der ERSTE Abruf laeuft immer (sonst brachte der Aufruf gar nichts);
+    // danach greift das Budget.
+    const r = await P.holeFailureReasons(['1568360440179', '222', '333'],
+      { cache, abstandMs: 0, budgetMs: 0 });
+    assert.strictEqual(stub.rufe.length, 1);
+    assert.deepStrictEqual(plainish(r.reasons), [
+      { id: '1568360440179', name: '3-D Secure Failure', category: 'End User',
+        description: 'The 3-D Secure authentication failed.' },
+      { id: '222', name: 'Alter Name', category: 'End User', description: 'x' },
+      // Ohne Eintrag bleibt es bei name: null - da gibt es nichts auszuliefern.
+      { id: '333', name: null },
+    ]);
   } finally { stub.wiederherstellen(); }
 });
 

@@ -338,10 +338,14 @@ function nurText(roh) {
 // zusammen mit der Cache-Datei dauerhaft eingefroren.
 function ersterBlock(html, klasse) {
   const text = String(html == null ? '' : html);
-  const re = /<div([^>]*)>/g;
+  // `<div(\s…)?>` und nicht `<div[^>]*>`: sonst traefe das Muster auch ein
+  // erfundenes <divider class="maintitle">. Derselbe Gedanke wie der
+  // Token-Vergleich unten - der Tagname ist ein Name, kein Praefix.
+  const re = /<div(\s[^>]*)?>/g;
   let m;
   while ((m = re.exec(text)) !== null) {
-    const attr = /\bclass\s*=\s*"([^"]*)"/.exec(m[1]);
+    // m[1] fehlt bei einem attributlosen <div> - dann gibt es auch keine Klasse.
+    const attr = m[1] ? /\bclass\s*=\s*"([^"]*)"/.exec(m[1]) : null;
     if (!attr) continue;
     if (attr[1].trim().split(/\s+/).indexOf(klasse) === -1) continue;
     const ende = text.indexOf('</div>', re.lastIndex);
@@ -505,12 +509,19 @@ export async function holeFailureReasons(ids, optionen = {}) {
     }
 
     // Gesamtbudget: ist es aufgebraucht, wird kein weiterer Abruf gestartet.
-    // Die verbleibenden IDs kommen als name: null zurueck - die App laesst sie
-    // dann als '#<id>' stehen, genau wie eine ID, die auch die Doku nicht
-    // kennt. Geprueft wird VOR dem Abruf, weil ein bereits laufender nicht
-    // mehr abzubrechen ist, ohne den Timeout zu unterlaufen.
+    // Geprueft wird VOR dem Abruf, weil ein bereits laufender nicht mehr
+    // abzubrechen ist, ohne den Timeout zu unterlaufen.
+    //
+    // Steht zu der ID noch ein ABGELAUFENER Eintrag im Cache, wird er dann
+    // trotzdem ausgeliefert: ein 31 Tage alter Name ist fast immer richtig und
+    // in jedem Fall mehr wert als '#<id>'. Das Hoechstalter sagt "hol das neu,
+    // wenn du kannst", nicht "wirf es weg". Ohne Eintrag bleibt es bei
+    // name: null - die App laesst die Zeile dann als '#<id>' stehen, genau wie
+    // bei einer ID, die auch die Doku nicht kennt. Rueckfall statt Blockade.
     if (geholt > 0 && Date.now() - beginn >= budget) {
-      reasons.push({ id, name: null });
+      reasons.push(treffer
+        ? { id, name: treffer.name, category: treffer.category, description: treffer.description }
+        : { id, name: null });
       continue;
     }
 

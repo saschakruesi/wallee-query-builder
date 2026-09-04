@@ -102,8 +102,8 @@ Seit v4 enthält die HTML-Datei mehrere `<script>`-Blöcke: den eingebetteten XL
 PDF-Vendor (`<script id="vendor-jspdf">`, jsPDF 2.5.2 + jspdf-autotable 3.8.4, UMD, nur für den
 Settlement-Report-PDF-Export) und den App-Code (`<script id="app-logic">`) — **drei** Blöcke
 insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch **~1.41 MB** gross
-(1'412'059 Bytes, gemessen 2026-09-04 an v5.12.0 — die Angabe stand über mehrere Versionen
-auf „~1.06 MB" und war schon vor v5.12 überholt; seit v5.12 kommen die ~110 KB des
+(gemessen 2026-09-04 an v5.12.0 — die Angabe stand über mehrere Versionen auf „~1.06 MB",
+einem Wert aus v5.8, und war schon vor v5.12 überholt; seit v5.12 kommen die ~107 KB des
 eingebetteten Ablehngrund-Katalogs dazu, siehe „Reporting-Report"). Der Vendor
 `vendor-xlsx` ist seit v5.1 **`xlsx-js-style` 1.2.0** (~425 KB minified, MIT-Fork von SheetJS
 0.18.5) statt der reinen SheetJS Community Edition: nur dieser Fork kann beim Schreiben
@@ -852,7 +852,11 @@ Route deckt ab, was danach kam. Im Kopieren-Modus gibt es sie nicht — dort ble
   8 s — `fetch` hat von sich aus keinen) **und ein Gesamtbudget**
   (`FAILURE_GESAMT_BUDGET_MS`, 30 s): der Timeout gilt *pro* Abruf, 50 hängende IDs wären
   sonst rund 6 Minuten 50 Sekunden, in denen die App auf diese eine Antwort wartet. Ist das
-  Budget aufgebraucht, bricht der Lauf ab und liefert, was er hat; der Rest bleibt `#<id>`.
+  Budget aufgebraucht, bricht der Lauf ab und liefert, was er hat; der erste Abruf läuft
+  dabei immer, sonst brächte der Aufruf gar nichts. Steht zu einer verbleibenden ID noch ein
+  **abgelaufener** Eintrag im Cache, wird er dann trotzdem ausgeliefert — ein 31 Tage alter
+  Name ist fast immer richtig und in jedem Fall mehr wert als `#<id>`; das Höchstalter sagt
+  „hol das neu, wenn du kannst", nicht „wirf es weg". Ohne Eintrag bleibt es bei `#<id>`.
   **Rückfall statt Blockade**, wie überall in dieser Anwendung.
 - **Geprüft wird vor dem ersten Netzzugriff:** eine `ids`-Liste mit einem Nicht-Zahl-Eintrag
   ergibt `400`, ohne einen einzigen Abruf. Die URL setzt `failureReasonUrl()` ausschliesslich
