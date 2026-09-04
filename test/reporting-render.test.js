@@ -783,6 +783,41 @@ test('„Übrige“ entsteht erst ab zwei kleinen Segmenten und traegt deren Sum
   assert.strictEqual(zwei[1].farbe, 'grau', '„Übrige“ ist immer Grau');
 });
 
+test('Die 2-%-Regel stellt keine zweite „Übrige“ neben eine vorhandene', () => {
+  const { app } = starte();
+  const e = (label, wert, anteil) => ({ label, wert, anteil });
+  // Die Lage aus Referenzfall B: die Tabelle traegt ab REPORTING_GRUENDE_MAX
+  // schon eine Sammelzeile "Übrige (11 Gründe)", und darunter liegen weitere
+  // Zeilen unter 2 %. Wuerde die 2-%-Regel ihre eigene Sammelzeile daneben
+  // stellen, stuenden zwei graue Wedges im Ring, beide "Übrige" beschriftet
+  // und nicht auseinanderzuhalten.
+  const seg = plain(app.reportingKuchenSegmente([
+    e('3-D Secure Failure', 600, 60), e('Transaction declined', 300, 30),
+    e('Card Expired', 15, 1.5), e('Life Cycle Decline', 15, 1.5),
+    e('Übrige (11 Gründe)', 70, 7),
+  ]));
+  assert.deepStrictEqual(seg.map(s => s.label),
+    ['3-D Secure Failure', 'Transaction declined', 'Übrige']);
+  assert.strictEqual(seg.filter(s => s.farbe === 'grau').length, 1,
+    'genau ein grauer Wedge');
+  // Hineinaddiert, nicht danebengestellt: Wert und Anteil sind die Summe
+  // beider, die Segmentsumme bleibt die der Tabelle.
+  assert.strictEqual(seg[2].wert, 100);
+  assert.strictEqual(Math.round(seg[2].anteil * 10) / 10, 10);
+  assert.strictEqual(seg.reduce((a, s) => a + s.wert, 0), 1000);
+  // Die Zahl im Namen faellt weg: die Zeile enthaelt jetzt 13 Gruende, nicht
+  // 11 - eine Zahl, die nicht mehr stimmt, ist schlechter als keine.
+  assert.doesNotMatch(seg[2].label, /\d/);
+  // Gegenprobe: greift die 2-%-Regel gar nicht, bleibt die Tabellenzeile
+  // samt ihrer Anzahl unangetastet.
+  const ohne = plain(app.reportingKuchenSegmente([
+    e('3-D Secure Failure', 600, 60), e('Transaction declined', 330, 33),
+    e('Übrige (11 Gründe)', 70, 7),
+  ]));
+  assert.strictEqual(ohne[2].label, 'Übrige (11 Gründe)');
+  assert.strictEqual(ohne[2].wert, 70);
+});
+
 test('Farben: feste Kategorien fest, offene Listen der Reihe nach, Grau extra', () => {
   const { app } = starte();
   const f = labels => plain(app.reportingKuchenFarben(labels));

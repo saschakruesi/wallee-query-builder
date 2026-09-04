@@ -5991,10 +5991,19 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // Zahlungsmittel-Tabelle als 'UNKNOWN'. Beide meinen dasselbe und gehoeren
   // deshalb in dieselbe Farbe; nur eine der beiden zu treffen hiesse, dass
   // derselbe Sachverhalt in zwei Kuchen verschieden aussieht.
+  // Eine Sammelzeile - die des Kuchens ("Uebrige") ebenso wie die, die
+  // reportingUebrige() schon in die Tabelle geschrieben hat ("Uebrige
+  // (11 Gruende)"). Eigene Funktion, weil zwei Stellen sie brauchen: die
+  // Farbvergabe (grau) und die 2-%-Regel, die nicht neben eine vorhandene
+  // Sammelzeile eine zweite stellen darf.
+  function reportingKuchenIstUebrige(label) {
+    return String(label == null ? '' : label).indexOf(REPORTING_UEBRIGE_PRAEFIX) === 0;
+  }
+
   function reportingKuchenIstGrau(label) {
     const l = String(label == null ? '' : label);
     return l === reportingLabel(REPORTING_UNBEKANNT) || l === REPORTING_UNBEKANNT
-      || l.indexOf(REPORTING_UEBRIGE_PRAEFIX) === 0;
+      || reportingKuchenIstUebrige(l);
   }
 
   // Der Modell-Schluessel zu einem angezeigten Label. Die Suche laeuft ueber
@@ -6067,18 +6076,30 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // nicht aus den Anteilen (siehe kuchenSegmente).
   function reportingKuchenSegmente(eintraege) {
     const klein = eintraege.filter(e => e.anteil < REPORTING_KUCHEN_MIN_ANTEIL);
-    const liste = klein.length > 1
-      ? eintraege.filter(e => e.anteil >= REPORTING_KUCHEN_MIN_ANTEIL).concat([{
-        // Bewusst ohne Anzahl im Namen: die Sammelzeile kann eine bereits
-        // zusammengefasste Zeile "Uebrige (n Gruende)" der Tabelle mit
-        // aufnehmen, und "Uebrige (3)" haette dann 3 gezaehlt, wo mehr
-        // drinsteckt. Wert und Anteil daneben sagen ohnehin mehr als eine
-        // Stueckzahl.
-        label: REPORTING_UEBRIGE_PRAEFIX,
-        wert: klein.reduce((a, e) => a + e.wert, 0),
-        anteil: klein.reduce((a, e) => a + e.anteil, 0),
-      }])
-      : eintraege;
+    let liste = eintraege;
+    if (klein.length > 1) {
+      const gross = eintraege.filter(e => e.anteil >= REPORTING_KUCHEN_MIN_ANTEIL);
+      const wert = klein.reduce((a, e) => a + e.wert, 0);
+      const anteil = klein.reduce((a, e) => a + e.anteil, 0);
+      // Traegt die Tabelle bereits eine Sammelzeile ("Uebrige (11 Gruende)",
+      // von reportingUebrige() ab REPORTING_GRUENDE_MAX erzeugt) und ueberlebt
+      // sie die 2-%-Regel, dann wird HINEIN addiert statt danebengestellt.
+      // Sonst stuenden zwei graue Wedges nebeneinander, beide "Uebrige"
+      // beschriftet und im Ring nicht auseinanderzuhalten - genau die Lage in
+      // Referenzfall B (14+ Gruende, davon die Raenge 8-12 unter 2 %). Die
+      // Zahlen waeren richtig und trotzdem unlesbar.
+      //
+      // Die zusammengefuehrte Zeile heisst dann schlicht "Uebrige": sie
+      // enthaelt mehr Gruende als die Tabellenzeile nennt, und eine Zahl, die
+      // nicht mehr stimmt, ist schlechter als keine. Die Segmentsumme bleibt
+      // in beiden Faellen die der Tabelle - das ist die Zusage aus §2.2.
+      const idx = gross.findIndex(e => reportingKuchenIstUebrige(e.label));
+      liste = idx === -1
+        ? gross.concat([{ label: REPORTING_UEBRIGE_PRAEFIX, wert, anteil }])
+        : gross.map((e, i) => (i === idx
+          ? { label: REPORTING_UEBRIGE_PRAEFIX, wert: e.wert + wert, anteil: e.anteil + anteil }
+          : e));
+    }
     const farben = reportingKuchenFarben(liste.map(e => e.label));
     return liste.map((e, i) => ({
       label: e.label, wert: e.wert, anteil: e.anteil, farbe: farben[i],
@@ -6971,7 +6992,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // --- Kuchen im PDF --------------------------------------------------------
   // Anders als die Balken stehen die Kuchen im PDF (§2.2): jsPDF kann Vektoren
   // selbst, es braucht also weder ein Rasterbild noch einen dritten Vendor.
-  const PDF_KUCHEN = { radius: 45, zeile: 11, abstand: 9, schrift: 7, labelMax: 26 };
+  const PDF_KUCHEN = { radius: 45, zeile: 11, abstand: 9, schrift: 7, tupfen: 6 };
 
   // Hoehe, die ein Kuchen samt Legende im PDF belegt. Wird VOR dem Zeichnen
   // gebraucht, um zu entscheiden, ob Titel, Kuchen und Tabelle noch gemeinsam
@@ -7007,12 +7028,26 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     return linien;
   }
 
-  // Lange Label in der PDF-Legende hart kuerzen statt umbrechen: die Legende
-  // steht in einer festen Spalte neben dem Ring, und eine zweite Zeile
-  // verschoebe jede folgende Legendenzeile gegen den Ring.
-  function kuchenPdfLabel(text) {
-    const s = String(text == null ? '' : text);
-    return s.length > PDF_KUCHEN.labelMax ? `${s.slice(0, PDF_KUCHEN.labelMax - 1)}…` : s;
+  // Lange Label in der PDF-Legende kuerzen statt umbrechen: die Legende steht
+  // in einer festen Spalte neben dem Ring, und eine zweite Zeile verschoebe
+  // jede folgende Legendenzeile gegen den Ring.
+  //
+  // Gekuerzt wird nach GEMESSENER Breite (doc.getTextWidth bei der gerade
+  // gesetzten Schriftgroesse), nicht nach einer Zeichenzahl. Eine Zeichenzahl
+  // ist bei einer proportionalen Schrift nur geraten: "PostFinance Apple Pay"
+  // und "MMMMMMMMMMMMMMMMMMMMM" sind gleich lang und verschieden breit, und im
+  // Zahlungsmittel-Block - dem einzigen mit zwei Kuchen nebeneinander, und
+  // ausgerechnet dem mit den langen Markennamen - lief die zweite Legende
+  // damit ueber den rechten Seitenrand hinaus.
+  function kuchenPdfKuerzen(doc, text, maxBreite) {
+    let s = String(text == null ? '' : text);
+    if (!(maxBreite > 0)) return '';
+    if (doc.getTextWidth(s) <= maxBreite) return s;
+    // Zeichenweise zuruecknehmen, bis das Kuerzel samt Auslassungspunkten
+    // passt. Die Schleife laeuft ueber die Laenge eines Labels, nicht ueber
+    // die Zeilen - das ist billig genug und braucht keine Breitentabelle.
+    while (s.length > 0 && doc.getTextWidth(`${s}…`) > maxBreite) s = s.slice(0, -1);
+    return `${s}…`;
   }
 
   // Zeichnet EINEN Kuchen samt Legende. x/y ist die linke obere Ecke des
@@ -7024,11 +7059,17 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     const rInnen = r * KUCHEN_INNEN_ANTEIL;
     const teile = kuchenSegmente(segmente, r, rInnen);
     if (!teile.length) return 0;
+    // Die Spaltenbreite kommt vom Aufrufer, der als Einziger weiss, wie viele
+    // Kuchen sich die Seite teilen. Der Vorgabewert gilt fuer einen einzeln
+    // gezeichneten Kuchen (Tests) und ist so bemessen, dass die Legende neben
+    // dem Ring Platz hat.
+    const breite = Number(opt.breite) > 0
+      ? Number(opt.breite) : 2 * r + PDF_KUCHEN.abstand + 150;
     const kopfHoehe = opt.titel ? PDF_KUCHEN.zeile : 0;
     if (opt.titel) {
       doc.setFontSize(8);
       doc.setTextColor(90);
-      doc.text(String(opt.titel), x, y + 8);
+      doc.text(kuchenPdfKuerzen(doc, opt.titel, breite), x, y + 8);
     }
     // Keine Prozentzahl IM Segment - anders als auf dem Bildschirm. Der Ring
     // hat hier 90 pt Durchmesser; "62.1 %" waere bei lesbarer Schrift breiter
@@ -7044,14 +7085,22 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         cx + s.aussen[0].x, cy + s.aussen[0].y, [1, 1], 'F', true);
     });
     const lx = x + 2 * r + PDF_KUCHEN.abstand;
+    const textX = lx + PDF_KUCHEN.tupfen + 4;
+    // Was der Legende an Breite bleibt, nachdem Ring, Abstand und Farbtupfen
+    // ihren Platz haben.
+    const textBreite = breite - (textX - x);
     let ly = y + kopfHoehe + 8;
     doc.setFontSize(PDF_KUCHEN.schrift);
     teile.forEach(s => {
       doc.setFillColor(kuchenFarbe(s.farbe).hex);
-      doc.rect(lx, ly - 5, 6, 6, 'F');
+      doc.rect(lx, ly - 5, PDF_KUCHEN.tupfen, PDF_KUCHEN.tupfen, 'F');
       doc.setTextColor(60);
-      doc.text(`${kuchenPdfLabel(s.label)}  ${reportingZellText(s.wert, opt.format || 'zahl')}`
-        + `  ${reportingZellText(s.anteil, 'pct')}`, lx + 10, ly);
+      // Zahlen zuerst: Wert und Anteil sind die Aussage der Zeile und werden
+      // nie gekuerzt - das Label bekommt, was danach uebrig bleibt.
+      const zahlen = `  ${reportingZellText(s.wert, opt.format || 'zahl')}`
+        + `  ${reportingZellText(s.anteil, 'pct')}`;
+      const label = kuchenPdfKuerzen(doc, s.label, textBreite - doc.getTextWidth(zahlen));
+      doc.text(label + zahlen, textX, ly);
       ly += PDF_KUCHEN.zeile;
     });
     doc.setTextColor(0);
@@ -9403,12 +9452,20 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       y += 8;
       if (kuchenHoehe > 0) {
         // Nebeneinander, in derselben Reihenfolge wie auf dem Bildschirm. Die
-        // Spaltenbreite von 260 pt teilt die nutzbaren 515 pt so auf, dass
-        // Ring (90 pt) und Legende daneben Platz haben.
+        // Spaltenbreite wird aus der Seite hergeleitet, nicht gesetzt: bei
+        // zwei Kuchen bleiben je knapp 258 pt, bei einem die vollen 515 -
+        // eine feste Zahl hier hiesse, dass die Legende beim zweiten Kuchen
+        // ueber den rechten Rand laufen kann, ohne dass es jemand merkt.
         y += 6;
+        const spalte = (doc.internal.pageSize.getWidth() - 80) / kuchenListe.length;
         kuchenListe.forEach((kuchen, i) => {
-          pdfKuchen(doc, 40 + i * 260, y, kuchen.segmente,
-            { titel: kuchen.titel, format: kuchen.format });
+          pdfKuchen(doc, 40 + i * spalte, y, kuchen.segmente, {
+            titel: kuchen.titel,
+            format: kuchen.format,
+            // Ein Steg zwischen den Spalten, damit die Legende des linken
+            // Kuchens nicht am Ring des rechten klebt.
+            breite: spalte - (kuchenListe.length > 1 ? PDF_KUCHEN.abstand : 0),
+          });
         });
         y += kuchenHoehe + 12;
       }

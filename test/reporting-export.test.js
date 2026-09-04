@@ -953,25 +953,85 @@ test('Die Bezier-Naeherung eines 90-Grad-Bogens bleibt auf der Kreisbahn', () =>
 // Ein doc, das jeden Aufruf mitschreibt. jsPDF wird dafuer NICHT gebraucht -
 // pdfKuchen benutzt nur Vektorprimitive, und genau deshalb steht der Kuchen
 // ueberhaupt im PDF (die Balken bleiben mangels SVG-Faehigkeit draussen).
+// A4 in Punkt - dieselben Masse, mit denen exportReportingPdf jsPDF anlegt.
+const PDF_SEITE = { breite: 595, hoehe: 842, rand: 40 };
+
 function fakeDoc() {
   const rufe = [];
+  let schrift = 10;
+  // Grobe, aber MONOTONE Breitenschaetzung: 0.5 em je Zeichen. Sie muss nicht
+  // Helvetica treffen - sie muss nur dafuer sorgen, dass laengerer Text auch
+  // breiter misst, damit die Kuerzung in pdfKuchen ueberhaupt eine Wirkung
+  // hat, die sich pruefen laesst. Die echten Breiten misst das
+  // Wegwerf-Skript im Scratchpad an jsPDF selbst.
+  const breite = t => String(t).length * schrift * 0.5;
   const doc = {
     rufe,
-    internal: { pageSize: { getHeight: () => 842 } },
+    internal: { pageSize: { getHeight: () => PDF_SEITE.hoehe, getWidth: () => PDF_SEITE.breite } },
     lastAutoTable: { finalY: 0 },
-    setFontSize(n) { rufe.push(['setFontSize', n]); },
+    setFontSize(n) { schrift = n; rufe.push(['setFontSize', n]); },
     setTextColor(n) { rufe.push(['setTextColor', n]); },
     setFillColor(c) { rufe.push(['setFillColor', c]); },
-    text(t, x, y) { rufe.push(['text', String(t), x, y]); },
+    getTextWidth: breite,
+    text(t, x, y) {
+      // jsPDF nimmt auch ein Array (eine Zeile je Eintrag) - jede Zeile wird
+      // einzeln mitgeschrieben, sonst waere ihre Breite nicht zu pruefen.
+      (Array.isArray(t) ? t : [t]).forEach((zeile, i) =>
+        rufe.push(['text', String(zeile), x, y + i * schrift, breite(zeile)]));
+    },
     rect(x, y, w, h, s) { rufe.push(['rect', x, y, w, h, s]); },
     lines(l, x, y, sc, st) { rufe.push(['lines', l, x, y, st]); },
     addPage() { rufe.push(['addPage']); },
-    splitTextToSize(t) { return [String(t)]; },
+    // Wie das Original umbrechen, nicht durchreichen: sonst behauptete eine
+    // einzige, sehr lange Hinweiszeile spaeter einen Ueberlauf, den es im
+    // echten PDF nicht gibt.
+    splitTextToSize(t, max) {
+      const worte = String(t).split(' ');
+      const zeilen = [];
+      let aktuell = '';
+      worte.forEach(w => {
+        const kandidat = aktuell ? `${aktuell} ${w}` : w;
+        if (aktuell && breite(kandidat) > max) { zeilen.push(aktuell); aktuell = w; } else { aktuell = kandidat; }
+      });
+      if (aktuell) zeilen.push(aktuell);
+      return zeilen;
+    },
     autoTable(opt) { rufe.push(['autoTable', opt.head[0][0]]); doc.lastAutoTable = { finalY: 400 }; },
   };
   return doc;
 }
 const nurArt = (doc, art) => doc.rufe.filter(r => r[0] === art);
+
+// Das Rechteck, das alles Gezeichnete tatsaechlich einnimmt. Fuer lines()
+// werden die relativen Stuecke aufaddiert - jsPDF rechnet jeden Punkt eines
+// Stuecks gegen dessen ANFANGSPUNKT, deshalb hier genauso. Die Kontrollpunkte
+// einer Bezier liegen etwas ausserhalb des Kreises; das macht die Schaetzung
+// konservativ, und konservativ ist fuer die Frage "laeuft etwas ueber den
+// Rand" die richtige Richtung.
+function gezeichneteGrenzen(doc) {
+  const g = { links: Infinity, rechts: -Infinity, oben: Infinity, unten: -Infinity };
+  const punkt = (x, y) => {
+    g.links = Math.min(g.links, x); g.rechts = Math.max(g.rechts, x);
+    g.oben = Math.min(g.oben, y); g.unten = Math.max(g.unten, y);
+  };
+  doc.rufe.forEach(ruf => {
+    if (ruf[0] === 'lines') {
+      let x = ruf[2];
+      let y = ruf[3];
+      punkt(x, y);
+      ruf[1].forEach(stueck => {
+        for (let i = 0; i < stueck.length; i += 2) punkt(x + stueck[i], y + stueck[i + 1]);
+        x += stueck[stueck.length - 2];
+        y += stueck[stueck.length - 1];
+      });
+    } else if (ruf[0] === 'rect') {
+      punkt(ruf[1], ruf[2]); punkt(ruf[1] + ruf[3], ruf[2] + ruf[4]);
+    } else if (ruf[0] === 'text') {
+      punkt(ruf[2], ruf[3]); punkt(ruf[2] + ruf[4], ruf[3]);
+    }
+  });
+  return g;
+}
 
 test('pdfKuchen zeichnet je Segment eine Flaeche und eine Legendenzeile', () => {
   const { pdfKuchen, pdfKuchenHoehe } = loadBuilders();
@@ -1039,20 +1099,57 @@ test('Der PDF-Pfad zeichnet jeden Kuchen genau einmal, vor seiner Tabelle', () =
     'der Kuchen gehoert zwischen Titel und Tabelle');
 });
 
-test('Ein Kuchen laeuft nicht ueber den Seitenrand', () => {
+test('Nichts Gezeichnetes laeuft ueber den Seitenrand - auch die Legende nicht', () => {
   const { reportingPdfBloecke, reportingPdfSchreiben, pdfKuchenHoehe } = loadBuilders();
   const p = reportingPdfBloecke(fixturModell(), {});
   const doc = fakeDoc();
   reportingPdfSchreiben(doc, p);
-  const hoehe = 842;
-  // Kein gezeichnetes Segment und kein Farbtupfer der Legende darf unter dem
-  // Seitenrand liegen. Der Umbruch davor rechnet die Kuchenhoehe mit ein -
-  // ohne das stuende ein Ring halb neben der Seite.
-  nurArt(doc, 'lines').forEach(r => assert.ok(r[4] === 'F' && r[3] < hoehe - 20,
-    `Segment bei y=${r[3]} unter dem Seitenrand`));
-  nurArt(doc, 'rect').forEach(r => assert.ok(r[2] < hoehe - 20,
-    `Legendenzeile bei y=${r[2]} unter dem Seitenrand`));
+  // Gemessen wird die tatsaechliche Ausdehnung JEDES gezeichneten Elements,
+  // nicht der Startpunkt eines Aufrufs: der liegt beim Ring nahe der
+  // Oberkante und sagte weder etwas ueber die Unterkante noch ueber die
+  // Breite. Die vorige Fassung dieses Tests versprach beides und pruefte
+  // keines von beidem.
+  const g = gezeichneteGrenzen(doc);
+  assert.ok(g.unten <= PDF_SEITE.hoehe - PDF_SEITE.rand,
+    `Unterkante bei ${g.unten} unter dem Seitenrand`);
+  assert.ok(g.oben >= 0, `Oberkante bei ${g.oben} ueber dem Blatt`);
+  assert.ok(g.links >= 0, `linke Kante bei ${g.links}`);
+  assert.ok(g.rechts <= PDF_SEITE.breite - PDF_SEITE.rand,
+    `rechte Kante bei ${g.rechts} rechts vom Satzspiegel`);
+  // Gegenprobe, dass ueberhaupt etwas gemessen wurde und der Kuchen breit
+  // genug ist, um den Rand ueberhaupt erreichen zu koennen.
+  assert.ok(g.rechts > PDF_SEITE.breite / 2, `nur ${g.rechts} pt genutzt`);
   // Und die Hoehenrechnung selbst: viele Segmente sind hoeher als der Ring.
   assert.ok(pdfKuchenHoehe({ segmente: new Array(13).fill({}) })
     > pdfKuchenHoehe({ segmente: new Array(3).fill({}) }));
+});
+
+test('Die PDF-Legende kuerzt nach gemessener Breite, nicht nach Zeichenzahl', () => {
+  const { pdfKuchen } = loadBuilders();
+  const lang = 'PostFinance Apple Pay Kreditkarte Schweiz';
+  const segmente = [
+    { label: lang, wert: 123456789, anteil: 62.1, farbe: 'tuerkis' },
+    { label: 'Visa', wert: 100, anteil: 37.9, farbe: 'orange' },
+  ];
+  // Zwei Kuchen nebeneinander: die schmale Spalte, in der der Ueberlauf
+  // aufgetreten ist.
+  const eng = fakeDoc();
+  const spalte = (PDF_SEITE.breite - 80) / 2 - 9;
+  pdfKuchen(eng, 40 + (PDF_SEITE.breite - 80) / 2, 100, segmente,
+    { titel: 'Umsatz je Zahlungsmittel (CHF)', format: 'zahl', breite: spalte });
+  nurArt(eng, 'text').forEach(r => assert.ok(r[2] + r[4] <= PDF_SEITE.breite - PDF_SEITE.rand,
+    `"${r[1]}" endet bei ${r[2] + r[4]}`));
+  // Der Wert und der Anteil ueberleben die Kuerzung - sie sind die Aussage
+  // der Zeile; gekuerzt wird ausschliesslich das Label.
+  const zeile = nurArt(eng, 'text').find(r => /62\.1 %/.test(r[1]));
+  assert.ok(zeile, 'Legendenzeile fehlt');
+  assert.match(zeile[1], /123’456’789\s+62\.1 %$/);
+  assert.match(zeile[1], /^PostFinance/);
+  assert.ok(zeile[1].length < lang.length, 'Label haette gekuerzt werden muessen');
+  assert.match(zeile[1], /…/);
+  // In einer breiten Spalte (ein einzelner Kuchen) passt dasselbe Label ganz.
+  const weit = fakeDoc();
+  pdfKuchen(weit, 40, 100, segmente, { format: 'zahl', breite: PDF_SEITE.breite - 80 });
+  assert.ok(nurArt(weit, 'text').some(r => r[1].indexOf(lang) === 0),
+    'in der breiten Spalte darf nichts gekuerzt werden');
 });
