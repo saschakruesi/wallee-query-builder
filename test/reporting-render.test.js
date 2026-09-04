@@ -803,6 +803,34 @@ test('Farben: feste Kategorien fest, offene Listen der Reihe nach, Grau extra', 
   // Gemischt: die feste Zuordnung gewinnt, die offene Liste weicht ihr aus -
   // sonst stuenden zwei Segmente desselben Kuchens in derselben Farbe da.
   assert.deepStrictEqual(f(['Domestisch', 'Fremdes Label']), ['tuerkis', 'orange']);
+  // "Unbekannt" kommt in zwei Schreibweisen vor: uebersetzt in den
+  // Eimer-Bloecken, als Rohwert 'UNKNOWN' in den offenen Listen (eine Brand
+  // ohne Namen). Beide meinen dasselbe und muessen gleich aussehen - sonst
+  // ist derselbe Sachverhalt im Kartentyp-Kuchen grau und im
+  // Zahlungsmittel-Kuchen tuerkis.
+  assert.deepStrictEqual(f(['Visa', 'UNKNOWN', 'Mastercard']),
+    ['tuerkis', 'grau', 'orange']);
+});
+
+test('Die Farb-Whitelist fuehrt zu jedem Schluessel beide Darstellungen', () => {
+  const { app } = starte();
+  const farben = plain(app.SVG_KUCHEN_FARBEN);
+  const reihe = plain(app.SVG_KUCHEN_REIHE);
+  Object.keys(farben).forEach(k => {
+    // CSS-Variable fuer den Bildschirm, Hex fuer jsPDF - an EINER Stelle.
+    assert.match(farben[k].css, /^var\(--kuchen-[\w-]+\)$/, k);
+    assert.match(farben[k].hex, /^#[0-9a-f]{6}$/, k);
+    assert.ok(farben[k].text, `${k} ohne Textfarbe`);
+  });
+  // Die Vorgabe aus §2.2: sechs Farben plus Grau, keine mehr.
+  assert.strictEqual(Object.keys(farben).length, 7);
+  assert.strictEqual(reihe.length, 6);
+  assert.strictEqual(reihe.includes('grau'), false,
+    'Grau ist fuer „Unbekannt“/„Übrige“ reserviert und verbraucht keine der sechs');
+  reihe.forEach(k => assert.ok(farben[k], `${k} steht nicht in der Whitelist`));
+  // Und die feste Zuordnung zeigt ausschliesslich auf bekannte Schluessel.
+  Object.values(plain(app.REPORTING_KUCHEN_FARBE)).forEach(k =>
+    assert.ok(farben[k], `feste Zuordnung auf unbekannte Farbe ${k}`));
 });
 
 // --- Bildschirm ------------------------------------------------------------

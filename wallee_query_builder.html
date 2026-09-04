@@ -435,7 +435,11 @@
     width: 10px; height: 10px; flex: 0 0 auto; border-radius: 2px;
     border: 1px solid var(--panel-3);
   }
-  .kuchen-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* min-width: 0, damit der Name im Flex-Element ueberhaupt schrumpfen DARF -
+     ohne das schoebe ein langer Grund den Wert aus der Legende heraus. */
+  .kuchen-name {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .kuchen-wert {
     margin-left: auto; padding-left: 8px; color: var(--muted);
     font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -5934,16 +5938,19 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   //
   // Jeder Eintrag traegt BEIDE Darstellungen an EINER Stelle: css fuer den
   // Bildschirm (Hausregel: Farben nur ueber :root), hex fuer jsPDF - der kann
-  // keine CSS-Variablen. text/textHex ist die Farbe der Prozentzahl IM
-  // Segment: auf Schwarz und Orange hell, auf den uebrigen dunkel.
+  // keine CSS-Variablen. text ist die Farbe der Prozentzahl IM Segment: auf
+  // Schwarz und Orange hell, auf den uebrigen dunkel. Ein Hex-Gegenstueck dazu
+  // fuehrt die Tabelle NICHT - im PDF steht keine Zahl im Segment (siehe
+  // pdfKuchen), und ein Eintrag auf Vorrat sieht nur benutzt aus. Dieselbe
+  // Ueberlegung wie bei SVG_BALKEN_FARBEN.
   const SVG_KUCHEN_FARBEN = {
-    tuerkis: { css: 'var(--kuchen-1)', hex: '#11d9cc', text: 'var(--text)', textHex: '#414141' },
-    orange: { css: 'var(--kuchen-2)', hex: '#ff4d00', text: 'var(--kuchen-text-hell)', textHex: '#ffffff' },
-    schwarz: { css: 'var(--kuchen-3)', hex: '#111111', text: 'var(--kuchen-text-hell)', textHex: '#ffffff' },
-    tuerkisHell: { css: 'var(--kuchen-4)', hex: '#7ceae3', text: 'var(--text)', textHex: '#414141' },
-    orangeHell: { css: 'var(--kuchen-5)', hex: '#ff9d73', text: 'var(--text)', textHex: '#414141' },
-    tuerkisBlass: { css: 'var(--kuchen-6)', hex: '#c4f6f2', text: 'var(--text)', textHex: '#414141' },
-    grau: { css: 'var(--kuchen-grau)', hex: '#9aa3a8', text: 'var(--text)', textHex: '#414141' },
+    tuerkis: { css: 'var(--kuchen-1)', hex: '#11d9cc', text: 'var(--text)' },
+    orange: { css: 'var(--kuchen-2)', hex: '#ff4d00', text: 'var(--kuchen-text-hell)' },
+    schwarz: { css: 'var(--kuchen-3)', hex: '#111111', text: 'var(--kuchen-text-hell)' },
+    tuerkisHell: { css: 'var(--kuchen-4)', hex: '#7ceae3', text: 'var(--text)' },
+    orangeHell: { css: 'var(--kuchen-5)', hex: '#ff9d73', text: 'var(--text)' },
+    tuerkisBlass: { css: 'var(--kuchen-6)', hex: '#c4f6f2', text: 'var(--text)' },
+    grau: { css: 'var(--kuchen-grau)', hex: '#9aa3a8', text: 'var(--text)' },
   };
   const REPORTING_KUCHEN_GRAU = 'grau';
 
@@ -5978,9 +5985,16 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // davon.
   const REPORTING_TOTAL_ZEILE = 'Total';
 
+  // Beide Schreibweisen von "unbekannt" zaehlen: die uebersetzte ("Unbekannt",
+  // so steht sie in den Eimer-Bloecken) UND der Rohwert 'UNKNOWN', den die
+  // offenen Listen durchreichen - eine Brand ohne Namen erscheint in der
+  // Zahlungsmittel-Tabelle als 'UNKNOWN'. Beide meinen dasselbe und gehoeren
+  // deshalb in dieselbe Farbe; nur eine der beiden zu treffen hiesse, dass
+  // derselbe Sachverhalt in zwei Kuchen verschieden aussieht.
   function reportingKuchenIstGrau(label) {
-    return label === reportingLabel(REPORTING_UNBEKANNT)
-      || label.indexOf(REPORTING_UEBRIGE_PRAEFIX) === 0;
+    const l = String(label == null ? '' : label);
+    return l === reportingLabel(REPORTING_UNBEKANNT) || l === REPORTING_UNBEKANNT
+      || l.indexOf(REPORTING_UEBRIGE_PRAEFIX) === 0;
   }
 
   // Der Modell-Schluessel zu einem angezeigten Label. Die Suche laeuft ueber
@@ -6025,7 +6039,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // Hinweisbloecke (kopf: [], zeilen: []) bekommen keinen Kuchen. Die
     // Zeilenpruefung darunter wuerde das auch leisten - hier steht es
     // ausdruecklich, weil es eine Entscheidung ist und kein Nebeneffekt.
-    if (!block.kopf.length) return [];
+    if (!block.kopf || !block.kopf.length) return [];
     let gruppe = '';
     const treffer = [];
     block.zeilen.forEach(z => {
@@ -7016,6 +7030,11 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       doc.setTextColor(90);
       doc.text(String(opt.titel), x, y + 8);
     }
+    // Keine Prozentzahl IM Segment - anders als auf dem Bildschirm. Der Ring
+    // hat hier 90 pt Durchmesser; "62.1 %" waere bei lesbarer Schrift breiter
+    // als der Bogen eines mittleren Segments und liefe in die Nachbarn. Die
+    // Legende steht ohnehin direkt daneben und traegt dieselbe Zahl - das ist
+    // dieselbe Abwaegung wie beim Kuerzen der Label weiter oben.
     const cx = x + r;
     const cy = y + kopfHoehe + r;
     teile.forEach(s => {
