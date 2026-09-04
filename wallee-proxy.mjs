@@ -345,7 +345,11 @@ function ersterBlock(html, klasse) {
   let m;
   while ((m = re.exec(text)) !== null) {
     // m[1] fehlt bei einem attributlosen <div> - dann gibt es auch keine Klasse.
-    const attr = m[1] ? /\bclass\s*=\s*"([^"]*)"/.exec(m[1]) : null;
+    // (?:^|\s) und nicht \b: zwischen '-' und 'c' liegt eine Wortgrenze, also
+    // haette \bclass auch data-class="..." getroffen - und als erster Treffer
+    // im Tag gegen das echte class-Attribut gewonnen. Derselbe Defekt, den
+    // diese Funktion beheben soll, eine Ebene hoeher im Attributnamen.
+    const attr = m[1] ? /(?:^|\s)class\s*=\s*"([^"]*)"/.exec(m[1]) : null;
     if (!attr) continue;
     if (attr[1].trim().split(/\s+/).indexOf(klasse) === -1) continue;
     const ende = text.indexOf('</div>', re.lastIndex);
@@ -356,7 +360,14 @@ function ersterBlock(html, klasse) {
 
 // Der Separator trennt in der subtitle-Zeile die ID von der Kategorie:
 //   #1568360440179<span class="separator"></span> End User
-const SEPARATOR_RE = /<span[^>]*class="[^"]*\bseparator\b[^"]*"[^>]*>\s*<\/span>/;
+// Tagname, Attributname und Klasse werden alle drei als NAME verglichen, nicht
+// als Praefix bzw. \b-Fund - wie in ersterBlock() daneben: '<span(?=\s)'
+// schliesst <spanner> aus, '\sclass' das data-class-Attribut, und die
+// Klassenliste wird ueber ihre Trennzeichen zerlegt statt ueber \b. Ein
+// Fehltreffer kostete hier nur die Kategorie einer nachgeladenen ID (der Name
+// steht in einem anderen Block), aber es ist derselbe Defekt.
+const SEPARATOR_RE =
+  /<span(?=\s)[^>]*\sclass\s*=\s*"(?:[^"]*\s)?separator(?:\s[^"]*)?"[^>]*>\s*<\/span>/;
 
 // An der echten Seite verifiziert (2026-09-03, eingefrorene Fixtures in
 // test/fixtures/failure-reason-*.html).

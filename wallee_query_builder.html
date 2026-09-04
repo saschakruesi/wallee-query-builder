@@ -33,9 +33,14 @@
        --kuchen-text-dunkel gilt allein fuer das ORANGE Segment und ist ein
        eigener, dunklerer Wert als --text (#414141). Gemessen (WCAG-Kontrast
        gegen #ff4d00): Weiss 3.33:1, --text 3.07:1 - also SCHLECHTER als
-       Weiss -, #111111 dagegen 5.68:1. Auf allen uebrigen Segmenten reicht
-       --text (Tuerkis 5.75:1, Tuerkis hell 7.16:1, Orange hell 5.02:1,
-       Tuerkis blass 8.66:1, Grau 3.98:1), deshalb aendert sich dort nichts. */
+       Weiss -, #111111 dagegen 5.68:1. Auf den fuenf hellen Segmenten traegt
+       --text deutlich (Tuerkis 5.75:1, Tuerkis hell 7.16:1, Orange hell
+       5.02:1, Tuerkis blass 8.66:1), deshalb aendert sich dort nichts. Grau
+       liegt mit 3.98:1 als einziges UNTER den 4.5:1, die WCAG AA fuer
+       Normaltext verlangt (die Prozentzahl steht auf font-size 9). Bewusst so
+       belassen: die sieben Farben sind Spec-Vorgabe (SPEC-ITERATION-2 §2.2),
+       betroffen ist allein der graue Wedge "Uebrige"/"Unbekannt", und dessen
+       Zahl steht daneben in der Legende und in der Tabelle. */
     --kuchen-1: #11d9cc;
     --kuchen-2: #ff4d00;
     --kuchen-3: #111111;
@@ -4206,7 +4211,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     '1579281542342': 'END_USER',   // Automatically cancelled (POS-Gegenstueck)
   };
 
-  // Bedeutung im Klartext, deutsch. BEWUSST NUR die rund 25 IDs aus
+  // Bedeutung im Klartext, deutsch. BEWUSST NUR die 30 IDs aus
   // SPEC-ITERATION-2 §1.2 - also die, die in den beiden Referenz-Reports
   // tatsaechlich vorkamen -, nicht alle 2'254: die Beschreibungen des Katalogs
   // waeren rund 450 KB zusaetzlich, waehrend der Name allein schon die
@@ -6291,7 +6296,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     // Leser es fuer nicht vorhanden, obwohl es in der Tabelle daneben steht.
     + (mitBetragsKuchen
       ? ` Der Umsatz-Kuchen zeigt allein ${leitWaehrung.waehrung}; Zahlungsmittel ohne `
-        + 'Umsatz in dieser Währung stehen in der Tabelle, aber nicht im Ring.'
+        + 'positiven Umsatz in dieser Währung stehen in der Tabelle, aber nicht im Ring.'
       : ''));
     bloecke.push(reportingKuchenAnhaengen(zmBlock, [
       reportingKuchen(zmBlock, {

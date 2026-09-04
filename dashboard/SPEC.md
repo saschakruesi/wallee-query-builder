@@ -249,8 +249,17 @@ lokalen Debitkarte braucht denselben Nachtrag.
 
 ### 6.4 Proxy: Failure-Reason-Namen
 
-**Überholt (Task 6): die Route existiert nicht und wird nicht gebaut** — siehe CLAUDE.md,
-«Ablehngründe».
+~~**Überholt (Task 6): die Route existiert nicht und wird nicht gebaut.**~~
+**Korrektur 2026-09-04 (v5.12.0): die Route ist gebaut — aber anders, als dieser Abschnitt
+sie sich dachte.** Task 6 bleibt richtig, soweit er die API betrifft: einen
+Failure-Reason-**Dienst** gibt es in der wallee-Web-Service-API nicht, und die beiden unten
+genannten Kandidaten antworten mit einer HTML-404. `GET /failure-reasons?ids=<id>,…` ruft
+deshalb **keine API**, sondern die öffentliche Doku-**Detailseite**
+`…/doc/api/failure-reason/view/<id>` — ohne JWT, ohne Account-Header, ohne `rufeApi()`.
+Sie deckt nur noch die Lücke ab, die der eingebettete Katalog offenlässt (IDs, die wallee
+nach dem Scrape neu vergeben hat); der Katalog selbst kommt aus der Doku-**Liste**, siehe
+die Korrektur vom 2026-09-03 weiter unten in diesem Abschnitt und CLAUDE.md,
+«Ablehngründe im Klartext (v5.12)».
 
 Neue Route `GET /failure-reasons` → JSON `{ id: name }`, beim ersten Aufruf von der
 wallee-API geholt und im Prozess gecacht (Referenzdaten, ändern sich praktisch nie).

@@ -7,7 +7,7 @@
 //
 // Die zwei optionalen Argumente sind die Testnaht (test/embedding.test.js):
 // nur so laesst sich der Schritt gegen eine Wegwerf-Datei und einen winzigen
-// Katalog laufen lassen, statt die 1.35-MB-App im Test zu kopieren.
+// Katalog laufen lassen, statt die 1.41-MB-App im Test zu kopieren.
 //
 // WARUM EIN BUILD-SCHRITT UND NICHT HANDARBEIT: der Katalog hat 2'254
 // Eintraege. Von Hand gepflegt blieb die Tabelle bei den sieben IDs stehen,

@@ -856,7 +856,9 @@ test('Die Blockhinweise sagen, was die Kuchen NICHT zeigen', () => {
   const zm = bloecke.find(b => b.titel === 'POS · Zahlungsmittel');
   assert.match(zm.hinweis, /Umsatz-Kuchen zeigt allein CHF/,
     'die Leitwaehrung wird beim Namen genannt, nicht nur im Kuchen-Titel');
-  assert.match(zm.hinweis, /stehen in der Tabelle, aber nicht im Ring/);
+  // "ohne POSITIVEN Umsatz": die Bedingung im Kuchen ist !(wert > 0), eine
+  // Marke mit Refund-Ueberhang faellt also ebenfalls heraus.
+  assert.match(zm.hinweis, /ohne positiven Umsatz in dieser Währung stehen in der Tabelle, aber nicht im Ring/);
 
   const k8 = bloecke.find(b => b.titel === 'E-Com · Ablehngründe');
   assert.match(k8.hinweis, /unter 2 %/);

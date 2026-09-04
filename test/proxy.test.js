@@ -1232,6 +1232,33 @@ test('parseFailureReasonSeite: eine Klasse, die den Namen nur enthaelt, zaehlt n
   assert.strictEqual(
     P.parseFailureReasonSeite('<divider class="maintitle">Falsch</divider>'
       + '<div class="maintitle">Richtig</div>', '1').name, 'Richtig');
+  // Dasselbe fuer den ATTRIBUTNAMEN: zwischen '-' und 'c' liegt eine
+  // Wortgrenze, \bclass haette also data-class getroffen - und als erster
+  // Treffer im Tag gegen das echte class-Attribut gewonnen.
+  assert.strictEqual(
+    P.parseFailureReasonSeite('<div data-class="maintitle">Falsch</div>'
+      + '<div class="maintitle">Richtig</div>', '1').name, 'Richtig');
+  assert.strictEqual(
+    P.parseFailureReasonSeite('<div data-class="x" class="maintitle">Richtig</div>', '1').name,
+    'Richtig', 'ein anderes Attribut davor darf das echte class nicht verdecken');
+});
+
+test('parseFailureReasonSeite: der Separator wird ebenso als Name verglichen', () => {
+  // SEPARATOR_RE trennt in der subtitle-Zeile die ID von der Kategorie und trug
+  // dieselbe \b-Schwaeche. Ein Fehltreffer kostet hier nur die Kategorie - der
+  // Name kommt aus einem anderen Block -, es ist aber derselbe Defekt.
+  const seite = klasse => `<div class="maintitle">X</div>`
+    + `<div class="subtitle">#1 <span class="${klasse}"></span> End User</div>`;
+  assert.strictEqual(P.parseFailureReasonSeite(seite('separator'), '1').category, 'End User');
+  assert.strictEqual(P.parseFailureReasonSeite(seite('row separator'), '1').category, 'End User',
+    'mehrere Klassen am selben span sind der Normalfall');
+  // Kein Separator: die subtitle wird nicht zerlegt, die Kategorie bleibt leer -
+  // und faellt damit auf, statt still die ID mitzuschleppen.
+  assert.strictEqual(P.parseFailureReasonSeite(seite('separator-lead'), '1').category, '');
+  assert.strictEqual(P.parseFailureReasonSeite(
+    '<div class="maintitle">X</div>'
+    + '<div class="subtitle">#1 <span data-class="separator"></span> End User</div>',
+    '1').category, '');
 });
 
 // JSON-Runde: die Objekte kommen aus dem ES-Modul-Realm, deepStrictEqual
