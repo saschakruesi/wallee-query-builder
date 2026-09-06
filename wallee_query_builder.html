@@ -8486,7 +8486,13 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // Das leere Modell kommt aus der Modellfunktion selbst, nicht aus einem
     // handgeschriebenen Literal daneben - so kann es nicht veralten, wenn das
     // Modell ein Feld dazubekommt.
-    const m = (modell && modell.kpi) ? modell : buildReportingTdsModel([], {});
+    //
+    // Geprueft werden zwei Felder, nicht eines: kpi allein liesse ein
+    // halbfertiges Objekt durch, und der erste Zugriff auf zeitraum.von waere
+    // dann ein Wurf mitten in der Ausgabe. Entweder es ist ein Modell aus
+    // buildReportingTdsModel - dann hat es beide -, oder es ist keines.
+    const m = (modell && modell.kpi && modell.zeitraum)
+      ? modell : buildReportingTdsModel([], {});
     const k = m.kpi;
     const zr = m.zeitraum;
     const spaces = (Array.isArray(opt.spaces) && opt.spaces.length) ? opt.spaces : k.spaces;
@@ -8700,9 +8706,15 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     + 'auf die Versuche DIESER Währung und summieren je Währung auf 100 %.'));
 
     // --- Die uebrigen Achsen ----------------------------------------------
-    bloecke.push(listeBlock('Zahlungsmittel', 'Brand', m.brands, 'brand',
-      'Anteil an allen 3DS-Failures. Ein einzelnes Zahlungsmittel mit auffällig hohem Anteil '
-      + 'deutet auf dessen Issuer-Seite, nicht auf den Checkout.', true));
+    // Alle offenen Listen laufen durch dieselbe Aussage-Pruefung, das
+    // Zahlungsmittel eingeschlossen: eine Tabelle mit der einzigen Zeile
+    // "Unbekannt 100 %" sagt nichts, was der fehlende Block nicht auch sagt -
+    // und ein Kuchen darueber waere ein einfarbiger Ring.
+    if (tdsListeHatAussage(m.brands, 'brand')) {
+      bloecke.push(listeBlock('Zahlungsmittel', 'Brand', m.brands, 'brand',
+        'Anteil an allen 3DS-Failures. Ein einzelnes Zahlungsmittel mit auffällig hohem Anteil '
+        + 'deutet auf dessen Issuer-Seite, nicht auf den Checkout.', true));
+    }
 
     if (tdsListeHatAussage(m.wallets, 'wallet')) {
       bloecke.push(listeBlock('Wallet', 'Wallet', m.wallets, 'wallet',
@@ -8747,7 +8759,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     }
 
     if (tdsListeHatAussage(m.retry, 'attemptRetry')) {
-      bloecke.push(listeBlock('Attempt Retry', 'Empfehlung', m.retry, 'attemptRetry',
+      // Der Spaltenname nennt den Absender: "Empfehlung" allein waere genau
+      // die Verwechslung mit der kuratierten Empfehlung des Aggregat-Blocks,
+      // vor der der Hinweis darunter warnt.
+      bloecke.push(listeBlock('Attempt Retry', 'Empfehlung des Schemes', m.retry, 'attemptRetry',
         // Der Unterschied zur kuratierten "Empfehlung" des Aggregat-Blocks
         // K8: die hier kommt als Label vom Scheme mit, sie ist gemessen.
         'Die vom Scheme MITGELIEFERTE Wiederholungs-Empfehlung (Label „Attempt Retry“) — '
@@ -11146,7 +11161,6 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     });
     ws['!cols'] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 26 : 15 }));
     XLSX.utils.book_append_sheet(wb, ws, xlsxBlattName(blattName));
-    return ws;
   }
 
   // Das Blatt der 3DS-Failure-Seite. Es haengt sich an eine BESTEHENDE Mappe:
@@ -11156,7 +11170,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   const REPORTING_TDS_BLATT = '3DS-Failures';
   function reportingTdsXlsxBlatt(wb, modell, optionen) {
     const d = new Date();
-    return reportingXlsxBlatt(wb, REPORTING_TDS_BLATT, 'wallee — 3DS-Failures',
+    reportingXlsxBlatt(wb, REPORTING_TDS_BLATT, 'wallee — 3DS-Failures',
       reportingTdsExportBloecke(modell, optionen),
       `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`);
   }

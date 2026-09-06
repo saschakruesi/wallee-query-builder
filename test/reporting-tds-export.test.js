@@ -117,10 +117,15 @@ test('Ohne Daten: Titelblock plus EIN Hinweisblock, keine leeren Tabellen', () =
   assert.match(leer[1].hinweis, /kein Zahlungsversuch/);
 });
 
-test('Ein Modell ohne kpi wirft nicht, sondern ergibt den leeren Bericht', () => {
+test('Ein halbes Modell wirft nicht, sondern ergibt den leeren Bericht', () => {
   assert.deepStrictEqual(plain(B.reportingTdsExportBloecke(null, {}).map(b => b.titel)),
     ['3DS-Failures', 'Keine Daten']);
   assert.deepStrictEqual(plain(B.reportingTdsExportBloecke(undefined).map(b => b.titel)),
+    ['3DS-Failures', 'Keine Daten']);
+  // Ein Objekt mit kpi, aber ohne zeitraum: der erste Zugriff auf zeitraum.von
+  // waere ein Wurf mitten in der Ausgabe.
+  assert.deepStrictEqual(
+    plain(B.reportingTdsExportBloecke({ kpi: { failures: 3 } }, {}).map(b => b.titel)),
     ['3DS-Failures', 'Keine Daten']);
 });
 
@@ -384,12 +389,14 @@ test('Eine offene Liste ohne Aussage entfaellt, der feste Eimersatz nie', () => 
   // Alle Label-Achsen auf UNKNOWN: die offenen Listen verschwinden, Einordnung
   // und Dauer stehen weiter da.
   const m = modell();
-  ['wallets', 'laender', 'bins', 'panTypes', 'eci', 'retry'].forEach(name => {
-    m[name] = [{ [{ wallets: 'wallet', laender: 'land', bins: 'bin', panTypes: 'panType',
-      eci: 'eci', retry: 'attemptRetry' }[name]]: B.REPORTING_UNBEKANNT, anzahl: 8, anteil: 100 }];
+  const feld = { brands: 'brand', wallets: 'wallet', laender: 'land', bins: 'bin',
+    panTypes: 'panType', eci: 'eci', retry: 'attemptRetry' };
+  Object.keys(feld).forEach(name => {
+    m[name] = [{ [feld[name]]: B.REPORTING_UNBEKANNT, anzahl: 8, anteil: 100 }];
   });
   const titel = plain(B.reportingTdsExportBloecke(m, {}).map(b => b.titel));
-  ['Wallet', 'Issuer-Land', 'BIN (Herausgeber)', 'PAN-Quelle', 'ECI', 'Attempt Retry']
+  ['Zahlungsmittel', 'Wallet', 'Issuer-Land', 'BIN (Herausgeber)', 'PAN-Quelle', 'ECI',
+    'Attempt Retry']
     .forEach(t => assert.strictEqual(titel.indexOf(t), -1, `"${t}" sagt nichts und muss entfallen`));
   ['Einordnung', 'Dauer bis zum Abbruch', 'Betrag je Währung']
     .forEach(t => assert.notStrictEqual(titel.indexOf(t), -1, `"${t}" ist fest und muss bleiben`));
@@ -454,8 +461,10 @@ test('Der BIN-Block sagt, dass er den Herausgeber und nicht die Karte meint', ()
 test('Attempt Retry ist als GEMESSENE Empfehlung des Schemes gekennzeichnet', () => {
   const b = block(bloecke(), 'Attempt Retry');
   assert.match(b.hinweis, /MITGELIEFERTE/);
-  // Und ausdruecklich von der kuratierten Empfehlung des Aggregats getrennt.
+  // Und ausdruecklich von der kuratierten Empfehlung des Aggregats getrennt -
+  // schon im Spaltennamen, damit es nicht allein am Hinweis haengt.
   assert.match(b.hinweis, /nicht die kuratierte Empfehlung/);
+  assert.strictEqual(b.kopf[0].label, 'Empfehlung des Schemes');
 });
 
 // --- Kuchen ------------------------------------------------------------------
