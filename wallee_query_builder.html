@@ -5716,9 +5716,15 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Date, haengte der Stunden-Eimer an der Zeitzone des Browsers - dieselbe
   // Zeile laege in Zuerich und in London in verschiedenen Eimern, und die
   // beiden Modelle widersprechen sich, ohne dass irgendwo etwas rot wird.
+  //
+  // Gegatet wird mit REPORTING_TDS_MUSTER_ZEIT, demselben Muster wie in
+  // tdsZeitMs: sonst gaebe es ZWEI Antworten auf "ist das ein Zeitstempel",
+  // und ein Wert mit angehaengtem Muell bekaeme hier Tag und Stunde, waehrend
+  // die Sortierung ihn als unlesbar ans Ende schoebe.
   const TDS_ZEIT_FELDER = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):\d{2}:\d{2}/;
   function tdsTagStunde(wert) {
-    const m = TDS_ZEIT_FELDER.exec(String(wert == null ? '' : wert).trim());
+    const s = String(wert == null ? '' : wert).trim();
+    const m = REPORTING_TDS_MUSTER_ZEIT.test(s) ? TDS_ZEIT_FELDER.exec(s) : null;
     if (!m) return { tag: '', stunde: null };
     const stunde = Number(m[2]);
     return {
@@ -5799,9 +5805,12 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // gruppierbar und die Zeile gehoert zu "ohne Bestellnummer" - nicht in eine
   // Quote, deren Nenner eine Gruppe waere, die es so nicht gibt.
   function tdsBestellzeile(z) {
-    return z.merchantReference !== ''
-      && z.versucheDerBestellung !== null && z.versucheDerBestellung !== undefined
-      && z.tdsFehlschlaegeDerBestellung !== null && z.tdsFehlschlaegeDerBestellung !== undefined;
+    // Die Nummer wird auf einen nicht leeren String geprueft, nicht bloss
+    // gegen '': ein fehlendes Feld ergaebe sonst eine Bestellung namens
+    // "undefined", in der alle solchen Zeilen zusammenliefen.
+    return typeof z.merchantReference === 'string' && z.merchantReference !== ''
+      && typeof z.versucheDerBestellung === 'number'
+      && typeof z.tdsFehlschlaegeDerBestellung === 'number';
   }
 
   // Transaktionszustaende, die "am Ende doch bezahlt" bedeuten (§3.5).
@@ -5838,12 +5847,30 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
 
     let ohneTag = 0, ohneStunde = 0, ohneTransaktion = 0, ohneBestellnummer = 0;
 
-    roh.forEach(z => {
+    // Zuerst die Zeilenliste mit ihren abgeleiteten Feldern, DANN gezaehlt -
+    // und zwar ueber genau diese Felder. Das ist nicht bloss billiger (jeder
+    // Zeitstempel wird einmal statt dreimal geparst), es macht die Aussage
+    // strukturell wahr, dass der Dauer-Eimer einer Zeile zu der Dauer passt,
+    // die in derselben Zeile steht: es gibt nur noch eine Herleitung, nicht
+    // zwei, die gleich AUSSEHEN. Der Zeitstempel fuer die Sortierung faehrt
+    // mit, damit der Vergleich ihn nicht O(n log n) mal neu parst.
+    const dekoriert = roh.map(z => ({
+      ms: tdsZeitMs(z.createdOn),
+      zeile: Object.assign({}, z, {
+        grundName: reportingFailureName(z.failureReasonId, failureReasons),
+        grundEinordnung: klassifiziereTdsGrund(z.failureReasonId),
+        dauerSekunden: tdsDauerSekunden(z.tdsStartedOn, z.tdsFinishedOn),
+        dashboardUrl: tdsDashboardUrl(z.spaceId, z.transactionId),
+      }),
+    }));
+
+    dekoriert.forEach(d => {
+      const z = d.zeile;
       if (z.spaceId) spaces.add(z.spaceId);
 
       tdsZaehle(grundMap, z.failureReasonId);
-      tdsZaehle(einordnungMap, klassifiziereTdsGrund(z.failureReasonId));
-      tdsZaehle(dauerMap, klassifiziereTdsDauer(tdsDauerSekunden(z.tdsStartedOn, z.tdsFinishedOn)));
+      tdsZaehle(einordnungMap, z.grundEinordnung);
+      tdsZaehle(dauerMap, klassifiziereTdsDauer(z.dauerSekunden));
       tdsZaehle(brandMap, z.brand);
       tdsZaehle(landMap, z.issuerCountry);
       tdsZaehle(panMap, z.panType);
@@ -5934,19 +5961,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // unterscheiden.
     const stunden = Array.from({ length: 24 }, (_, h) => ({ stunde: h, anzahl: stundeMap.get(h) || 0 }));
 
-    // Die Zeilenliste, vor-sortiert (neueste zuerst) und um die abgeleiteten
-    // Felder ergaenzt, die die Ausgabe braucht. Rohwerte, keine Formatierung.
-    // Der Zeitstempel wird EINMAL je Zeile geparst und zum Sortieren
-    // mitgefuehrt, statt im Vergleich - sonst laeuft Date.parse O(n log n) mal.
-    const dekoriert = roh.map(z => ({
-      ms: tdsZeitMs(z.createdOn),
-      zeile: Object.assign({}, z, {
-        grundName: reportingFailureName(z.failureReasonId, failureReasons),
-        grundEinordnung: klassifiziereTdsGrund(z.failureReasonId),
-        dauerSekunden: tdsDauerSekunden(z.tdsStartedOn, z.tdsFinishedOn),
-        dashboardUrl: tdsDashboardUrl(z.spaceId, z.transactionId),
-      }),
-    }));
+    // Die Zeilenliste kommt vor-sortiert (neueste zuerst); Rohwerte, keine
+    // Formatierung - gerundet und beschriftet wird in der Ausgabe.
     dekoriert.sort((a, b) => {
       // Zeilen mit unlesbarem Zeitstempel ans Ende, statt sie irgendwo in die
       // Mitte fallen zu lassen: sie sind nicht "aelter", sie sind unbekannt.
@@ -5999,8 +6015,14 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         mehrfachAnteil: reportingQuote(mehrfach, bestellMap.size),
         mehrfachBezahlt,
         // Nenner sind die mehrfach gescheiterten Bestellungen - "davon am Ende
-        // bezahlt" ist genau diese Frage. Der Betrag dahinter ist der, der
-        // NICHT verloren ist; die Differenz der, der es ist (§3.8).
+        // bezahlt" ist genau diese Frage.
+        //
+        // §3.8 spricht daneben vom BETRAG, der dadurch nicht verloren ist. Der
+        // steht hier bewusst nicht: aus diesen Zeilen liesse er sich nicht
+        // ohne Doppelzaehlung bilden. Jeder gescheiterte Versuch derselben
+        // Bestellung traegt ihren vollen Betrag noch einmal; die Zeilen zu
+        // summieren ergaebe je Wiederholung ein weiteres Mal denselben
+        // Warenkorb. Der Bestellwert selbst steht in keiner Spalte.
         mehrfachBezahltAnteil: reportingQuote(mehrfachBezahlt, mehrfach),
         // Zeilen, nicht Bestellungen: ohne Bestellnummer gibt es keine
         // Bestellung, die sich zaehlen liesse. Stumm weglassen waere ein

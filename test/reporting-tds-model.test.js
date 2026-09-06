@@ -252,6 +252,15 @@ test('Dieselbe Bestellnummer in zwei Spaces ist nicht dieselbe Bestellung', () =
   assert.strictEqual(m.bestellungen.mehrfachBezahlt, 1);
 });
 
+test('Eine fehlende Bestellnummer ergibt keine Bestellung namens "undefined"', () => {
+  const m = modell([
+    zeile({ attemptId: 'a1', transactionId: 't1', merchantReference: undefined }),
+    zeile({ attemptId: 'a2', transactionId: 't2', merchantReference: undefined }),
+  ]);
+  assert.strictEqual(m.bestellungen.gesamt, 0);
+  assert.strictEqual(m.bestellungen.ohneBestellnummer, 2);
+});
+
 test('Eine Zeile mit Nummer, aber ohne Zaehler ist nicht gruppierbar', () => {
   // Aus dieser Query kann das nicht kommen (beide Zaehler haengen an der
   // Nummer), aus einem importierten CSV schon. Dann fehlt die Grundlage fuer
@@ -507,6 +516,37 @@ test('Unbrauchbare Zeitstempel fallen sichtbar heraus, statt in Eimer 0', () => 
 });
 
 // --- Zeilenliste (§3.5 Punkt 3) --------------------------------------------
+
+test('Ein Zeitstempel mit angehaengtem Muell gilt ueberall als unlesbar', () => {
+  // Es darf nur EINE Antwort auf "ist das ein Zeitstempel" geben: bekaeme die
+  // Zeile hier Tag und Stunde, waehrend die Sortierung sie als unlesbar ans
+  // Ende schiebt, stuende sie in der Tabelle ganz unten und im Verlauf
+  // mittendrin - ohne dass irgendwo etwas rot wird.
+  const m = modell([
+    zeile({ attemptId: 'a1', transactionId: 't1', createdOn: '2026-07-04 20:11:03 Uhr' }),
+    zeile({ attemptId: 'a2', transactionId: 't2', createdOn: '2026-07-04 20:11:03' }),
+  ]);
+  assert.strictEqual(m.kpi.ohneTag, 1);
+  assert.strictEqual(m.kpi.ohneStunde, 1);
+  assert.strictEqual(m.verlauf.length, 1);
+  assert.deepStrictEqual(plain(m.zeilen.map(z => z.attemptId)), ['a2', 'a1']);
+});
+
+test('Der Dauer-Eimer einer Zeile und ihre ausgewiesene Dauer sind derselbe Wert', () => {
+  // Beide entstehen aus demselben abgeleiteten Feld, nicht aus zwei
+  // Herleitungen, die gleich aussehen. Der Test rechnet die Eimer aus den
+  // Zeilen nach und haelt sie gegen die Achse.
+  const m = modell();
+  const nachgerechnet = new Map();
+  m.zeilen.forEach(z => {
+    const k = B.klassifiziereTdsDauer(z.dauerSekunden);
+    nachgerechnet.set(k, (nachgerechnet.get(k) || 0) + 1);
+  });
+  m.dauer.gruppen.forEach(g => {
+    assert.strictEqual(g.anzahl, nachgerechnet.get(g.schluessel) || 0,
+      `Der Eimer ${g.schluessel} muss zu den Dauern der Zeilen passen`);
+  });
+});
 
 test('Die Zeilenliste kommt vor-sortiert, neueste zuerst', () => {
   const m = modell();
