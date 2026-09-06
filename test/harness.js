@@ -126,6 +126,26 @@ const EXPORTED = [
   // bleiben zueinander konsistent, auch wenn beide gegen die Query falsch sind.
   'parseReportingTdsCsv',
   'REPORTING_TDS_PFLICHT',
+  // Modell der 3DS-Failure-Seite (Iteration 2, Task 4b). Die Klassifikatoren
+  // stehen einzeln daneben, weil ihre Eimergrenzen nur an ihnen selbst
+  // pruefbar sind: ueber die Fixture allein liesse sich nicht zeigen, dass
+  // eine Dauer von genau 60 s in "1-5 min" faellt und nicht in "10-60 s". Die
+  // beiden Grenz-Konstanten kommen mit, damit ein Test die Grenzen aus
+  // DERSELBEN Quelle liest wie der Code - eine zweite Handliste bliebe zum
+  // Code konsistent, auch wenn beide falsch waeren.
+  'buildReportingTdsModel',
+  'tdsDashboardUrl',
+  'klassifiziereTdsGrund',
+  'klassifiziereTdsDauer',
+  'klassifiziereTdsBetrag',
+  'tdsDauerSekunden',
+  'REPORTING_TDS_GRUENDE',
+  'REPORTING_TDS_DAUER',
+  'REPORTING_TDS_BETRAG',
+  'TDS_DAUER_GRENZEN_SEK',
+  'TDS_BETRAG_GRENZEN',
+  'TDS_GRUND_FAILURE',
+  'TDS_GRUND_TIMEOUT',
   // Reporting-Modell (Task 3)
   'buildReportingModel',
   'klassifiziereHerkunft',

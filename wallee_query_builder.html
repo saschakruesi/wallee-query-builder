@@ -3663,10 +3663,14 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   // Suche nach "3-D") kennt rund 40 weitere, connector-spezifische 3DS-Gruende,
   // die bei einem anderen Acquirer relevant werden koennen. Hier stehen die
   // beiden, die an Produktivdaten belegt sind (SPEC-ITERATION-2 §3.2).
-  const TDS_FAILURE_REASONS = [
-    '1568360440179', // 3-D Secure Failure
-    '1568360434240', // 3-D Secure Timeout
-  ];
+  // Die beiden einzeln benannt, weil die Grund-Achse des Modells sie
+  // UNTERSCHEIDET (Failure / Timeout / anderer Grund), die Query sie dagegen
+  // zusammen braucht. Eine Quelle fuer beides: schriebe jemand die Liste um,
+  // ohne die Konstanten mitzunehmen, liefen Query und Einordnung stumm
+  // auseinander - die Liste zeigte dann Zeilen, die die Achse nicht kennt.
+  const TDS_GRUND_FAILURE = '1568360440179'; // 3-D Secure Failure
+  const TDS_GRUND_TIMEOUT = '1568360434240'; // 3-D Secure Timeout
+  const TDS_FAILURE_REASONS = [TDS_GRUND_FAILURE, TDS_GRUND_TIMEOUT];
 
   // Obergrenze der Zeilenliste (SPEC-ITERATION-2 §3.3). Benannte Konstante,
   // weil die Statuszeile sie mit ausweist ("n von maximal 20'000") und weil das
@@ -5566,6 +5570,486 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       // Abschnitt ankuendigen, der in jedem Kanal leer bliebe.
       hatTerminals: dim.some(z => z.channel === 'POS' && z.terminalIdentifier !== REPORTING_UNBEKANNT),
       fremdeKanaele,
+    };
+  }
+
+  // --- 3DS-Failure-Seite: Modell (SPEC-ITERATION-2 §3.4/§3.5/§3.8) ---------
+  //
+  // Reine Funktion ueber den Zeilen aus parseReportingTdsCsv. Es gelten
+  // dieselben Einheiten wie im Aggregat-Modell darueber: Betraege bleiben
+  // ganzzahlige 1e-8-Einheiten, Prozentwerte sind Zahlen von 0 bis 100 in
+  // voller Genauigkeit, gerundet und formatiert wird ausschliesslich in der
+  // Ausgabe. Gekuerzt wird hier ebenfalls nichts - jede Aufschluesselung kommt
+  // VOLLSTAENDIG zurueck; die Sammelzeile "Uebrige" baut die Blockschicht,
+  // genau wie bei failures[] und laender[] des Aggregats.
+  //
+  // DREI ACHSEN GIBT ES BEWUSST NICHT. Das ist keine Auslassung, sondern das
+  // Ergebnis einer Messung - bitte nicht spaeter "nachtragen":
+  //
+  //   Challenge-Status-Grund und ACS (§3.5, §3.7). Die dreizehn EMVCo-Felder
+  //   (Transaction Status, Transaction Status Reason, Challenge Cancel, ACS
+  //   Reference in beiden Auspraegungen, ...) kommen im labels-Array der
+  //   Analytics gar nicht an - gemessen am 2026-09-04 an einem zweiten
+  //   Haendler-Space mit einem anderen Acquirer-Setup (Discovery Q2, siehe
+  //   dashboard/discovery-results/DESCRIPTORS.md). Der Haendler SIEHT die
+  //   Felder im Backend; in den Export laufen sie nicht. Eine Achse darauf
+  //   waere eine Spalte, die dauerhaft leer ist und trotzdem wie eine Messung
+  //   aussieht.
+  //
+  //   3DS-Version als Achse. Der Wert ist eine Static-Value-ID, kein Name.
+  //   Eine Tabelle voller roher IDs waere genau das '#<id>'-Problem, das v5.12
+  //   beseitigt hat. Die SPALTE bleibt in der Zeilenliste (der wallee-Support
+  //   kann sie nutzen), die Achse entsteht, sobald die Aufloesung ueber
+  //   GET /api/v2.0/static-values da ist.
+  //
+  //   tds_flow (§3.6) mit CHALLENGE_OK/_FAILED/_CANCELLED/_TIMEOUT. Jede
+  //   seiner Zeilen setzt genau die fehlenden EMVCo-Felder voraus; ohne sie
+  //   liesse sich nur raten. Was ein geratener 3DS-Zustand anrichtet, hat die
+  //   Korrektur in v5.12.1 gezeigt (FAILED_OR_ABANDONED -> STARTED_NO_CAVV:
+  //   der Eimer behauptete Scheitern und enthielt zu 16.8 % autorisierte
+  //   Versuche). Der ehrliche Ersatz ist die Dauer-Achse unten - sie trennt
+  //   "sofort abgebrochen" von "Timeout", ohne Connector-Details zu erfinden.
+
+  // Dashboard-Link (§3.4). Verifiziert 2026-09-03: die Route existiert; eine
+  // Attempt-Detailseite gibt es NICHT, der Link zeigt die Transaktion, auf der
+  // das Dashboard alle Versuche mit ihren 3DS-Details listet.
+  //
+  // Zusammengesetzt wird ausschliesslich aus Ziffern, und beide IDs werden
+  // geprueft: eine ungepruefte ID im Pfad ist der Weg, an app-wallee.com eine
+  // fremde Adresse anzuhaengen. Ungueltig ergibt den leeren String - die
+  // Ausgabe zeigt dann keinen Link, statt einen, der aussieht wie einer und
+  // ins Leere fuehrt. Genau dafuer laesst der Parser die drei Schluessel roh
+  // statt sie auf UNKNOWN zu ziehen.
+  const TDS_ID_MUSTER = /^\d+$/;
+  function tdsDashboardUrl(spaceId, transactionId) {
+    const s = String(spaceId == null ? '' : spaceId).trim();
+    const t = String(transactionId == null ? '' : transactionId).trim();
+    if (!TDS_ID_MUSTER.test(s) || !TDS_ID_MUSTER.test(t)) return '';
+    return 'https://app-wallee.com/s/' + s + '/payment/transaction/view/' + t;
+  }
+
+  // Die Dreiteilung der Grund-Achse (§3.2). Sie ist die Zeile, die erklaert,
+  // WARUM eine Zeile ueberhaupt auf dieser Seite steht: ueber einen der beiden
+  // benannten Ablehngruende, oder ueber den zweiten Zweig der Definition
+  // (3DS gestartet, kein CAVV, anderer Grund).
+  //
+  // Wird TDS_FAILURE_REASONS erweitert - der Katalog kennt rund 40 weitere,
+  // connectorspezifische 3DS-Gruende -, landet der neue Grund hier in
+  // ANDERER_GRUND. Der Name bleibt dabei woertlich richtig ("ein anderer
+  // Grund"), nur die Zusatzaussage "3DS abgebrochen" ist dann nicht mehr
+  // garantiert; wer die Liste erweitert, ergaenzt an dieser Stelle einen
+  // eigenen Eimer.
+  const REPORTING_TDS_GRUENDE = ['TDS_FAILURE', 'TDS_TIMEOUT', 'ANDERER_GRUND'];
+  function klassifiziereTdsGrund(id) {
+    const s = String(id == null ? '' : id).trim();
+    if (s === TDS_GRUND_FAILURE) return 'TDS_FAILURE';
+    if (s === TDS_GRUND_TIMEOUT) return 'TDS_TIMEOUT';
+    return 'ANDERER_GRUND';
+  }
+
+  // Zeitstempel -> Millisekunden. Geprueft wird mit DEMSELBEN Muster, das der
+  // Parser benutzt: es soll genau eine Definition davon geben, was hier als
+  // Zeitstempel gilt. Das Leerzeichen wird zu 'T', weil Athena
+  // 'yyyy-mm-dd hh:mm:ss' schreibt und nur die T-Form ueberall verlaesslich
+  // geparst wird.
+  function tdsZeitMs(wert) {
+    const s = String(wert == null ? '' : wert).trim();
+    if (!s || !REPORTING_TDS_MUSTER_ZEIT.test(s)) return null;
+    const ms = Date.parse(s.replace(' ', 'T'));
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  // Dauer bis zum Abbruch, in Sekunden. EIN Ort fuer die Regel "das ist keine
+  // Messung": leerer, unlesbarer ODER negativer Wert ergibt null. Eine
+  // negative Differenz entsteht, wenn ein Connector die beiden Label-Zeitpunkte
+  // in verschiedenen Zeitzonen schreibt oder sie vertauscht - sie in den
+  // kleinsten Eimer zu werfen hiesse, aus einem Datenfehler ein "sofort
+  // abgebrochen" zu machen, also genau die Aussage, um die es der Achse geht.
+  function tdsDauerSekunden(start, ende) {
+    const a = tdsZeitMs(start);
+    const b = tdsZeitMs(ende);
+    if (a === null || b === null) return null;
+    const d = (b - a) / 1000;
+    return Number.isFinite(d) && d >= 0 ? d : null;
+  }
+
+  // Dauer-Eimer (§3.5). Die Grenzen sind benannt und in Sekunden.
+  //
+  // Sie sind HALBOFFEN, jede Grenze gehoert zum oberen Eimer: 10 s liegt in
+  // "10-60 s", 60 s in "1-5 min", 300 s in "> 5 min". Dadurch faellt jede
+  // Dauer in genau einen Eimer, und die Summe der Eimer ist die Zeilenzahl -
+  // gemischte Grenzen ("<= 300" neben "< 60") waeren die Sorte Detail, die
+  // niemand nachrechnet und die trotzdem doppelt zaehlt.
+  const TDS_DAUER_GRENZEN_SEK = [10, 60, 300];
+  const REPORTING_TDS_DAUER = ['UNTER_10S', 'S10_60', 'MIN1_5', 'UEBER_5MIN', 'UNBEKANNT'];
+  function klassifiziereTdsDauer(sekunden) {
+    // Die Negativ-Regel steht in tdsDauerSekunden, dort entsteht der Wert.
+    // Der Guard hier ist die zweite Naht fuer den Fall, dass jemand die
+    // Funktion mit einer rohen Differenz fuettert - beide antworten dasselbe.
+    if (sekunden === null || !Number.isFinite(sekunden) || sekunden < 0) return 'UNBEKANNT';
+    if (sekunden < TDS_DAUER_GRENZEN_SEK[0]) return 'UNTER_10S';
+    if (sekunden < TDS_DAUER_GRENZEN_SEK[1]) return 'S10_60';
+    if (sekunden < TDS_DAUER_GRENZEN_SEK[2]) return 'MIN1_5';
+    return 'UEBER_5MIN';
+  }
+
+  // Betrags-Eimer (§3.5), je Waehrung. Die Grenzen sind WAEHRUNGSBETRAEGE -
+  // 50 CHF und 50 EUR sind nicht dasselbe, und deshalb wird auch hier nie
+  // ueber Waehrungen hinweg gebuendelt (SPEC 2.7). Gerechnet wird in
+  // 1e-8-Einheiten, damit die Domaene ganzzahlig bleibt. Halboffen wie bei der
+  // Dauer: 50 liegt in "50-200", 500 in "> 500".
+  const TDS_BETRAG_GRENZEN = [50, 200, 500];
+  const TDS_BETRAG_GRENZEN_EINHEITEN =
+    TDS_BETRAG_GRENZEN.map(v => Math.round(v * Math.pow(10, AMOUNT_SCALE)));
+  const REPORTING_TDS_BETRAG = ['UNTER_50', 'B50_200', 'B200_500', 'UEBER_500'];
+  function klassifiziereTdsBetrag(betrag) {
+    const b = typeof betrag === 'number' && Number.isFinite(betrag) ? betrag : 0;
+    if (b < TDS_BETRAG_GRENZEN_EINHEITEN[0]) return 'UNTER_50';
+    if (b < TDS_BETRAG_GRENZEN_EINHEITEN[1]) return 'B50_200';
+    if (b < TDS_BETRAG_GRENZEN_EINHEITEN[2]) return 'B200_500';
+    return 'UEBER_500';
+  }
+
+  // Tag und Stunde kommen aus den FELDERN des Zeitstempels, nicht aus einer
+  // Zeitzonen-Umrechnung. Die Aggregat-Query bildet beide mit date()/hour()
+  // aus ca.createdon, also ebenfalls ohne Umrechnung; liefe es hier ueber ein
+  // Date, haengte der Stunden-Eimer an der Zeitzone des Browsers - dieselbe
+  // Zeile laege in Zuerich und in London in verschiedenen Eimern, und die
+  // beiden Modelle widersprechen sich, ohne dass irgendwo etwas rot wird.
+  const TDS_ZEIT_FELDER = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):\d{2}:\d{2}/;
+  function tdsTagStunde(wert) {
+    const m = TDS_ZEIT_FELDER.exec(String(wert == null ? '' : wert).trim());
+    if (!m) return { tag: '', stunde: null };
+    const stunde = Number(m[2]);
+    return {
+      // istTag() ist dasselbe Gueltigkeits-Praedikat, das reportingTagesbereich
+      // benutzt. Liefen die beiden auseinander, landete eine Zeile in einem
+      // Eimer, den der Bereich nie ausgibt - sie verschwaende spurlos.
+      tag: istTag(m[1]) ? m[1] : '',
+      stunde: Number.isInteger(stunde) && stunde >= 0 && stunde <= 23 ? stunde : null,
+    };
+  }
+
+  // Zaehlen, sortieren, Anteil bilden. Eigene, sehr kleine Helfer statt der
+  // reportingGruppen()-Familie des Aggregats: dort traegt jede Zeile ein
+  // attempts-Gewicht und einen attempt_state, hier steht jede Zeile fuer genau
+  // einen Versuch und ist per Konstruktion FAILED. Die Aggregat-Helfer
+  // erwarteten Felder, die es hier nicht gibt.
+  function tdsZaehle(map, schluessel) {
+    map.set(schluessel, (map.get(schluessel) || 0) + 1);
+  }
+  // Offene Liste, absteigend, vollstaendig. reportingAnteil und nicht
+  // reportingQuote: ein Eimer einer leeren Verteilung hat den Anteil 0, nicht
+  // "kein Messwert" - es gaebe schlicht nichts, wovon er ein Teil waere.
+  function tdsListe(map, basis, schluesselName) {
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1] || strCmp(a[0], b[0]))
+      .map(([k, n]) => {
+        const eintrag = {};
+        eintrag[schluesselName] = k;
+        eintrag.anzahl = n;
+        eintrag.anteil = reportingAnteil(n, basis);
+        return eintrag;
+      });
+  }
+  // Feste Reihenfolge, leere Eimer eingeschlossen: dass es keinen einzigen
+  // Timeout gab, ist selbst eine Aussage - eine fehlende Zeile waere von
+  // "nicht erhoben" nicht zu unterscheiden.
+  function tdsEimer(map, reihenfolge, basis) {
+    return reihenfolge.map(schluessel => {
+      const n = map.get(schluessel) || 0;
+      return { schluessel, anzahl: n, anteil: reportingAnteil(n, basis) };
+    });
+  }
+
+  // Die beiden Nenner der Anteils-Kacheln stehen NICHT in diesen Zeilen: die
+  // Liste enthaelt per Konstruktion nur 3DS-Fehlschlaege, "alle gescheiterten
+  // Attempts" und "alle Karten-Attempts mit 3DS-Anforderung" sind groessere
+  // Mengen. Sie kommen aus dem Kanal-Modell des Aggregats, das die App ohnehin
+  // schon gebaut hat. Fehlt es - importierte Liste im Kopieren-Modus, oder das
+  // Aggregat ist nicht gelaufen -, sind beide Kacheln null ("kein Messwert"),
+  // niemals 0: eine 0 in einer Kachel liest sich wie ein gemessener Wert.
+  function tdsAggregatNenner(kanalModell) {
+    if (!kanalModell || !kanalModell.kpi) {
+      return { fehlgeschlagen: 0, tdsAngefordert: 0, vorhanden: false };
+    }
+    const gruppen = (kanalModell.tds && Array.isArray(kanalModell.tds.gruppen))
+      ? kanalModell.tds.gruppen : [];
+    const wert = s => {
+      const g = gruppen.find(x => x.schluessel === s);
+      return g && typeof g.attempts === 'number' ? g.attempts : 0;
+    };
+    return {
+      fehlgeschlagen: kanalModell.kpi.fehlgeschlagen || 0,
+      // "3DS angefordert" sind genau die beiden Eimer mit gestartetem Prozess.
+      // WALLET_CRYPTOGRAM hat keinen Start (Apple/Google Pay bringen ihr
+      // eigenes Kryptogramm mit), NOT_REQUESTED erst recht nicht. Es ist
+      // derselbe Zaehler, aus dem das Aggregat seinen angefordertAnteil bildet
+      // - bewusst aus dessen Gruppen gelesen statt neu definiert, sonst
+      // koennten die beiden Zahlen auseinanderlaufen.
+      tdsAngefordert: wert('AUTHENTICATED') + wert('STARTED_NO_CAVV'),
+      vorhanden: true,
+    };
+  }
+
+  // Ist die Zeile einer Bestellung zuzuordnen? Drei Bedingungen, die aus
+  // DERSELBEN Tatsache der Query stammen: ohne Bestellnummer gruppiert sie
+  // nicht und laesst beide Zaehler auf NULL. Ein importiertes CSV kann sie
+  // trotzdem uneinheitlich tragen; dann ist die Bestellung nicht verlaesslich
+  // gruppierbar und die Zeile gehoert zu "ohne Bestellnummer" - nicht in eine
+  // Quote, deren Nenner eine Gruppe waere, die es so nicht gibt.
+  function tdsBestellzeile(z) {
+    return z.merchantReference !== ''
+      && z.versucheDerBestellung !== null && z.versucheDerBestellung !== undefined
+      && z.tdsFehlschlaegeDerBestellung !== null && z.tdsFehlschlaegeDerBestellung !== undefined;
+  }
+
+  // Transaktionszustaende, die "am Ende doch bezahlt" bedeuten (§3.5).
+  const TDS_BEZAHLT_STATES = ['FULFILL', 'COMPLETED'];
+
+  function buildReportingTdsModel(rows, optionen) {
+    const opt = optionen || {};
+    const roh = Array.isArray(rows) ? rows : [];
+    const failureReasons = opt.failureReasons;
+    const nenner = tdsAggregatNenner(opt.aggregat);
+    const gesamt = roh.length;
+
+    const grundMap = new Map();
+    const einordnungMap = new Map();
+    const dauerMap = new Map();
+    const brandMap = new Map();
+    const landMap = new Map();
+    const panMap = new Map();
+    const eciMap = new Map();
+    const walletMap = new Map();
+    const binMap = new Map();
+    const retryMap = new Map();
+    const tagMap = new Map();
+    const stundeMap = new Map();
+    // Waehrung -> { anzahl, betrag } und Waehrung -> Betrags-Eimer. Zwei Maps,
+    // weil das Volumen eine Summe und die Eimer eine Verteilung sind.
+    const waehrungMap = new Map();
+    const betragMap = new Map();
+    const spaces = new Set();
+    // Transaktions- und Bestellebene: je ein Eintrag pro Einheit, nicht pro
+    // Zeile. Mehrere Fehlschlaege derselben Transaktion sind EINE Transaktion.
+    const txMap = new Map();
+    const bestellMap = new Map();
+
+    let ohneTag = 0, ohneStunde = 0, ohneTransaktion = 0, ohneBestellnummer = 0;
+
+    roh.forEach(z => {
+      if (z.spaceId) spaces.add(z.spaceId);
+
+      tdsZaehle(grundMap, z.failureReasonId);
+      tdsZaehle(einordnungMap, klassifiziereTdsGrund(z.failureReasonId));
+      tdsZaehle(dauerMap, klassifiziereTdsDauer(tdsDauerSekunden(z.tdsStartedOn, z.tdsFinishedOn)));
+      tdsZaehle(brandMap, z.brand);
+      tdsZaehle(landMap, z.issuerCountry);
+      tdsZaehle(panMap, z.panType);
+      tdsZaehle(eciMap, z.eci);
+      // Der Wallet-Wert '-' der Query heisst "kein Wallet" und ist damit eine
+      // MESSUNG, kein fehlendes Label. Er bleibt als eigener Eimer stehen; ihn
+      // mit UNKNOWN zu verschmelzen wuerde zwei verschiedene Aussagen zu einer
+      // machen. Beschriftet wird er in der Ausgabe.
+      tdsZaehle(walletMap, z.wallet);
+      tdsZaehle(binMap, z.cardIssuerNumber);
+      tdsZaehle(retryMap, z.attemptRetry);
+
+      let w = waehrungMap.get(z.waehrung);
+      if (!w) { w = { waehrung: z.waehrung, anzahl: 0, betrag: 0 }; waehrungMap.set(z.waehrung, w); }
+      w.anzahl += 1;
+      w.betrag += (typeof z.betrag === 'number' && Number.isFinite(z.betrag)) ? z.betrag : 0;
+      let be = betragMap.get(z.waehrung);
+      if (!be) { be = new Map(); betragMap.set(z.waehrung, be); }
+      tdsZaehle(be, klassifiziereTdsBetrag(z.betrag));
+
+      const zeit = tdsTagStunde(z.createdOn);
+      if (zeit.tag) tdsZaehle(tagMap, zeit.tag); else ohneTag += 1;
+      if (zeit.stunde !== null) tdsZaehle(stundeMap, zeit.stunde); else ohneStunde += 1;
+
+      // --- Transaktionsebene ---
+      // Eine Zeile ohne Transaktions-ID kann diese Query nicht erzeugen (sie
+      // joint auf transaction). Ein importiertes CSV koennte es; dann alle
+      // solchen Zeilen unter dem Schluessel '' zu buendeln ergaebe eine
+      // Riesen-Transaktion und damit eine erfundene Zahl. Sie werden gezaehlt.
+      if (!z.transactionId) ohneTransaktion += 1;
+      else {
+        let t = txMap.get(z.transactionId);
+        if (!t) { t = { attempts: 0, bezahlt: false }; txMap.set(z.transactionId, t); }
+        // Alle Zeilen derselben Transaktion tragen denselben Wert; max() bzw.
+        // "irgendeine Zeile" ist der defensive Griff fuer den Fall, dass ein
+        // importiertes CSV sie uneinheitlich traegt.
+        const n = typeof z.attemptsDerTransaktion === 'number' ? z.attemptsDerTransaktion : 0;
+        if (n > t.attempts) t.attempts = n;
+        if (TDS_BEZAHLT_STATES.indexOf(z.transactionState) !== -1) t.bezahlt = true;
+      }
+
+      // --- Bestellebene (§3.8) ---
+      if (!tdsBestellzeile(z)) { ohneBestellnummer += 1; return; }
+      // Schluessel ist (Space, Bestellnummer) - dieselbe Nummer in zwei Spaces
+      // ist nicht dieselbe Bestellung. Das Nullzeichen als Trenner, weil es in
+      // keiner Bestellnummer vorkommen kann - ein '-' oder '|' liesse sich aus
+      // zwei anderen Schluesseln zusammensetzen und wuerde sie verschmelzen.
+      const key = z.spaceId + '\u0000' + z.merchantReference;
+      let b = bestellMap.get(key);
+      if (!b) { b = { fehlschlaege: 0, bezahlt: false }; bestellMap.set(key, b); }
+      if (z.tdsFehlschlaegeDerBestellung > b.fehlschlaege) {
+        b.fehlschlaege = z.tdsFehlschlaegeDerBestellung;
+      }
+      if (z.bestellungAmEndeBezahlt === true) b.bezahlt = true;
+    });
+
+    // Transaktions-Kennzahlen. Nenner ist die Zahl der TRANSAKTIONEN, nicht
+    // die der Zeilen: eine Transaktion mit zwei Fehlschlaegen liefert zwei
+    // Zeilen, ist aber eine Transaktion - ueber Zeilen gerechnet zaehlte sie
+    // im Zaehler wie im Nenner doppelt, und der Wiederholer-Anteil stiege
+    // allein dadurch, dass es Wiederholer gibt.
+    let wiederholer = 0, amEndeBezahlt = 0;
+    txMap.forEach(t => {
+      if (t.attempts >= 2) wiederholer += 1;
+      if (t.bezahlt) amEndeBezahlt += 1;
+    });
+    const transaktionen = txMap.size;
+
+    // Bestellebene. Gezaehlt wird gegen tdsFehlschlaegeDerBestellung, NICHT
+    // gegen versucheDerBestellung - das ist der Unterschied, den die Kachel
+    // traegt: versucheDerBestellung zaehlt alle Versuche der Bestellung und
+    // stuende damit auch bei einem einzigen Fehlschlag mit darauffolgendem
+    // Erfolg auf 2. In dem Space, fuer den diese Seite gedacht ist (je Versuch
+    // eine neue Transaktion), waere das der Regelfall, nicht der Sonderfall.
+    let mehrfach = 0, mehrfachBezahlt = 0;
+    bestellMap.forEach(b => {
+      if (b.fehlschlaege < 2) return;
+      mehrfach += 1;
+      if (b.bezahlt) mehrfachBezahlt += 1;
+    });
+
+    // Tagesachse ueber denselben Helfer wie der Aggregat-Verlauf - eine zweite
+    // Tagesarithmetik waere eine zweite Gelegenheit, sich zu verrechnen.
+    const bereich = reportingTagesbereich([...tagMap.keys()].map(tag => ({ tag })));
+    const verlauf = bereich.tage.map(tag => ({ tag, anzahl: tagMap.get(tag) || 0 }));
+    // Stunden immer vollstaendig 0-23: eine fehlende Stunde waere in einer
+    // Stosszeiten-Darstellung nicht von einer Stunde ohne Fehlschlag zu
+    // unterscheiden.
+    const stunden = Array.from({ length: 24 }, (_, h) => ({ stunde: h, anzahl: stundeMap.get(h) || 0 }));
+
+    // Die Zeilenliste, vor-sortiert (neueste zuerst) und um die abgeleiteten
+    // Felder ergaenzt, die die Ausgabe braucht. Rohwerte, keine Formatierung.
+    // Der Zeitstempel wird EINMAL je Zeile geparst und zum Sortieren
+    // mitgefuehrt, statt im Vergleich - sonst laeuft Date.parse O(n log n) mal.
+    const dekoriert = roh.map(z => ({
+      ms: tdsZeitMs(z.createdOn),
+      zeile: Object.assign({}, z, {
+        grundName: reportingFailureName(z.failureReasonId, failureReasons),
+        grundEinordnung: klassifiziereTdsGrund(z.failureReasonId),
+        dauerSekunden: tdsDauerSekunden(z.tdsStartedOn, z.tdsFinishedOn),
+        dashboardUrl: tdsDashboardUrl(z.spaceId, z.transactionId),
+      }),
+    }));
+    dekoriert.sort((a, b) => {
+      // Zeilen mit unlesbarem Zeitstempel ans Ende, statt sie irgendwo in die
+      // Mitte fallen zu lassen: sie sind nicht "aelter", sie sind unbekannt.
+      if (a.ms === null && b.ms !== null) return 1;
+      if (b.ms === null && a.ms !== null) return -1;
+      if (a.ms !== null && b.ms !== null && a.ms !== b.ms) return b.ms - a.ms;
+      // Tie-Break allein fuer die Bestimmtheit der Reihenfolge, wie das
+      // ORDER BY der Query ihn ebenfalls traegt - ohne ihn zeigten zwei Laeufe
+      // derselben Daten verschiedene Reihenfolgen.
+      return strCmp(b.zeile.attemptId || '', a.zeile.attemptId || '');
+    });
+
+    return {
+      kpi: {
+        failures: gesamt,
+        transaktionen,
+        wiederholer,
+        wiederholerAnteil: reportingQuote(wiederholer, transaktionen),
+        amEndeBezahlt,
+        amEndeBezahltAnteil: reportingQuote(amEndeBezahlt, transaktionen),
+        // Beide null, solange kein Aggregat vorliegt. Die Nenner werden
+        // mitgegeben, damit die Ausgabe "n von m" schreiben kann, ohne sie
+        // erneut herzuleiten.
+        anteilAnFailed: nenner.vorhanden
+          ? reportingQuote(gesamt, nenner.fehlgeschlagen) : null,
+        anteilAnTdsAngefordert: nenner.vorhanden
+          ? reportingQuote(gesamt, nenner.tdsAngefordert) : null,
+        basisFailed: nenner.fehlgeschlagen,
+        basisTdsAngefordert: nenner.tdsAngefordert,
+        hatAggregat: nenner.vorhanden,
+        ohneTag,
+        ohneStunde,
+        ohneTransaktion,
+        spaces: [...spaces].sort(strCmp),
+        waehrungen: [...waehrungMap.keys()].sort(strCmp),
+      },
+      // Betroffenes Volumen je Waehrung - nie eine Gesamtsumme darueber
+      // (SPEC 2.7). anteil ist der Anteil der ZEILEN dieser Waehrung, nicht
+      // ein Betragsanteil: Betraege verschiedener Waehrungen haben keinen
+      // gemeinsamen Nenner.
+      waehrungen: [...waehrungMap.values()]
+        .sort((a, b) => strCmp(a.waehrung, b.waehrung))
+        .map(w => ({
+          waehrung: w.waehrung, anzahl: w.anzahl, betrag: w.betrag,
+          anteil: reportingAnteil(w.anzahl, gesamt),
+        })),
+      bestellungen: {
+        gesamt: bestellMap.size,
+        mehrfach,
+        mehrfachAnteil: reportingQuote(mehrfach, bestellMap.size),
+        mehrfachBezahlt,
+        // Nenner sind die mehrfach gescheiterten Bestellungen - "davon am Ende
+        // bezahlt" ist genau diese Frage. Der Betrag dahinter ist der, der
+        // NICHT verloren ist; die Differenz der, der es ist (§3.8).
+        mehrfachBezahltAnteil: reportingQuote(mehrfachBezahlt, mehrfach),
+        // Zeilen, nicht Bestellungen: ohne Bestellnummer gibt es keine
+        // Bestellung, die sich zaehlen liesse. Stumm weglassen waere ein
+        // Verlust, mitzaehlen eine Erfindung - deshalb eine eigene Zahl.
+        ohneBestellnummer,
+      },
+      gruende: tdsListe(grundMap, gesamt, 'id').map(g => Object.assign(g, {
+        name: reportingFailureName(g.id, failureReasons),
+        einordnung: klassifiziereTdsGrund(g.id),
+      })),
+      einordnung: { basis: gesamt, gruppen: tdsEimer(einordnungMap, REPORTING_TDS_GRUENDE, gesamt) },
+      dauer: { basis: gesamt, gruppen: tdsEimer(dauerMap, REPORTING_TDS_DAUER, gesamt) },
+      // Je Waehrung ein eigener Satz Eimer, mit der Zeilenzahl DIESER Waehrung
+      // als Basis: die Anteile summieren dadurch je Waehrung auf 100 %.
+      betraege: [...betragMap.keys()].sort(strCmp).map(waehrung => {
+        const basis = (waehrungMap.get(waehrung) || { anzahl: 0 }).anzahl;
+        return { waehrung, basis, gruppen: tdsEimer(betragMap.get(waehrung), REPORTING_TDS_BETRAG, basis) };
+      }),
+      brands: tdsListe(brandMap, gesamt, 'brand'),
+      laender: tdsListe(landMap, gesamt, 'land'),
+      panTypes: tdsListe(panMap, gesamt, 'panType'),
+      eci: tdsListe(eciMap, gesamt, 'eci'),
+      wallets: tdsListe(walletMap, gesamt, 'wallet'),
+      // Die Issuer-Achse aus §5.1. Weiter als bis zur BIN geht es nicht: einen
+      // Herausgebernamen fuehrt wallee nirgends, und eine BIN-Tabelle ist
+      // lizenzpflichtig. Der Hinweis dazu gehoert in die Ausgabe.
+      bins: tdsListe(binMap, gesamt, 'bin'),
+      // Attempt Retry ist die GEMESSENE Wiederholungs-Empfehlung des Schemes
+      // und damit fachlich staerker als die kuratierte FAILURE_ADVICE -
+      // deshalb eine eigene Achse, nicht eine Spalte an den Gruenden.
+      retry: tdsListe(retryMap, gesamt, 'attemptRetry'),
+      verlauf,
+      stunden,
+      zeitraum: {
+        von: bereich.von, bis: bereich.bis,
+        tage: bereich.spanne, lueckenlos: bereich.lueckenlos,
+      },
+      zeilen: dekoriert.map(d => d.zeile),
+      // Die Query traegt ein LIMIT. Erreicht die Zeilenzahl es, ist das
+      // Ergebnis mit hoher Wahrscheinlichkeit abgeschnitten - sicher wissen
+      // koennte es nur eine zweite Zaehlabfrage. Das Flag ist da, damit die
+      // Ausgabe "mindestens n" schreiben kann statt einer Zahl, die wie eine
+      // Messung aussieht; stummes Abschneiden ist genau der Verlustkanal, den
+      // dieser Code sonst ueberall zaehlt. >= und nicht ===, damit der
+      // Waechter auch dann greift, wenn die Konstante spaeter gesenkt und ein
+      // aelteres Ergebnis nachgeparst wird.
+      abgeschnitten: gesamt >= REPORTING_TDS_LIMIT,
+      limit: REPORTING_TDS_LIMIT,
+      hatDaten: gesamt > 0,
     };
   }
 
