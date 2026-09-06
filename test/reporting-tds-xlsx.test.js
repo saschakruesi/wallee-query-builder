@@ -37,10 +37,17 @@ function stubElement() {
   return el;
 }
 
+const downloads = [];
+
 const sandbox = {
   console, setTimeout, clearTimeout, Buffer, Uint8Array, Date, Math, JSON,
   TextEncoder, TextDecoder, Blob,
-  URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+  URL: {
+    // Der Export legt seine Datei ueber createObjectURL ab - so laesst sich die
+    // ganze Kette bis zum Download pruefen, nicht nur der Blattschreiber.
+    createObjectURL(blob) { downloads.push(blob); return 'blob:test'; },
+    revokeObjectURL() {},
+  },
   document: {
     getElementById: () => stubElement(),
     querySelector: () => stubElement(),
@@ -66,7 +73,10 @@ vm.runInContext(
   '\n;globalThis.__x.buildReportingTdsModel = buildReportingTdsModel;' +
   '\n;globalThis.__x.reportingTdsExportBloecke = reportingTdsExportBloecke;' +
   '\n;globalThis.__x.reportingTdsXlsxBlatt = reportingTdsXlsxBlatt;' +
-  '\n;globalThis.__x.exportReportingXlsx = exportReportingXlsx;',
+  '\n;globalThis.__x.exportReportingXlsx = exportReportingXlsx;' +
+  '\n;globalThis.__x.exportReportingTdsXlsx = exportReportingTdsXlsx;' +
+  '\n;globalThis.__x.ingestReportingCsv = ingestReportingCsv;' +
+  '\n;globalThis.__x.ingestReportingTdsCsv = ingestReportingTdsCsv;',
   sandbox, { filename: 'app-logic.js' },
 );
 
@@ -269,4 +279,43 @@ test('XLSX: kein Blatt traegt eine Zeile aus block.kuchen', () => {
     assert.strictEqual(String(danach[0] == null ? '' : danach[0]), b.hinweis,
       `nach den Zeilen von "${b.titel}" steht etwas anderes als sein Hinweis`);
   });
+});
+
+// --- Der Export-Knopf (Task 4d) -------------------------------------------
+// Bis hierher wurde der BLATTSCHREIBER geprueft. Diese beiden Tests nageln die
+// Entscheidung fest, die die Verdrahtung getroffen hat: eine EIGENE Mappe.
+//
+// Der Grund steht bei exportReportingTdsXlsx ausfuehrlich - kurz: das
+// Aggregat traegt bewusst keine personenbezogenen Daten (§3.3) und ist
+// deshalb weitergabefaehig, die Zeilenliste traegt Bestellnummern und
+// Transaktions-IDs. Laegen beide in einer Mappe, koennte der Haendler den
+// Reporting-Report nicht mehr weiterreichen, ohne die Transaktionsliste
+// mitzugeben.
+
+const FIXTURE_AGG = fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'reporting-beispiel.csv'), 'utf8');
+
+async function exportiere(fn) {
+  downloads.length = 0;
+  fn();
+  assert.strictEqual(downloads.length, 1, 'Export muss genau eine Datei erzeugen');
+  const bytes = new Uint8Array(await downloads[0].arrayBuffer());
+  return XLSX.read(bytes, { type: 'array' });
+}
+
+test('XLSX-Export: die 3DS-Liste bekommt eine eigene Mappe mit genau einem Blatt', async () => {
+  assert.strictEqual(X.ingestReportingTdsCsv(FIXTURE), true);
+  const wb = await exportiere(() => X.exportReportingTdsXlsx());
+  assert.deepStrictEqual(plain(wb.SheetNames), ['3DS-Failures']);
+});
+
+test('XLSX-Export: die Reporting-Mappe traegt die 3DS-Liste NICHT mit', async () => {
+  // Gegenprobe zur Entscheidung oben: haette jemand das Blatt zusaetzlich in
+  // exportReportingXlsx gehaengt, waeren beide Tests einzeln gruen und die
+  // Daten trotzdem in einer Datei.
+  assert.strictEqual(X.ingestReportingCsv(FIXTURE_AGG), true);
+  assert.strictEqual(X.ingestReportingTdsCsv(FIXTURE), true);
+  const wb = await exportiere(() => X.exportReportingXlsx());
+  assert.strictEqual(wb.SheetNames.indexOf('3DS-Failures'), -1,
+    'Die weitergabefaehige Aggregat-Mappe darf die Zeilenliste nicht enthalten');
 });

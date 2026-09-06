@@ -635,8 +635,8 @@
   .radio-row input[type="radio"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
   /* Bewusst nur auf die eine neue Statuszeile gemuenzt: die Statuszeilen von
      Terminal- und Settlement-Report sollen sich nicht mit aendern. */
-  #reportingStatus[data-art="fehler"] { color: var(--danger); }
-  #reportingStatus[data-art="erfolg"] { color: var(--accent-dark); }
+  #reportingStatus[data-art="fehler"], #reportingTdsStatus[data-art="fehler"] { color: var(--danger); }
+  #reportingStatus[data-art="erfolg"], #reportingTdsStatus[data-art="erfolg"] { color: var(--accent-dark); }
   .item-info {
     flex: 1;
     display: flex;
@@ -1269,6 +1269,13 @@
            Konfigurations-Import des Terminal-Reports. -->
       <button class="btn" id="reportingCsvImportBtn" title="Ergebnis-CSV aus dem Portal laden (Kopieren-Modus)">CSV importieren</button>
       <input type="file" id="reportingCsvImport" accept=".csv,text/csv" class="hidden">
+      <!-- Der Import der 3DS-Liste steht bewusst HIER und nicht in ihrem
+           eigenen Panel darunter: jenes erscheint erst, wenn es etwas zu
+           zeigen gibt (Modell oder Statuszeile) - der Import waere sonst der
+           Weg zu einem Modell, den man nur mit einem Modell erreicht. Zwei
+           Abfragen, zwei Dateien, eine Import-Leiste. -->
+      <button class="btn" id="reportingTdsCsvImportBtn" title="Ergebnis-CSV der 3DS-Failure-Abfrage laden (Kopieren-Modus)">3DS-Liste importieren</button>
+      <input type="file" id="reportingTdsCsvImport" accept=".csv,text/csv" class="hidden">
     </div>
 
     <div id="reportingReportActions" class="list-actions hidden" style="margin-top:8px;">
@@ -1278,6 +1285,26 @@
     </div>
 
     <div id="reportingReportOutput" class="report-output"></div>
+  </div>
+
+  <!-- Ausgabe der zweiten, zeilenweisen Abfrage des reporting-Modus
+       (SPEC-ITERATION-2 §3). Bewusst ein GESTAPELTER Abschnitt und kein
+       Reiter, obwohl §3.1 von einem solchen spricht: dieses Projekt hat sich
+       gegen Tabs entschieden (CLAUDE.md, "Bewusste Abweichungen von
+       dashboard/SPEC.md", Punkt 2) - ein Reiter zeigt immer nur eine Seite,
+       bricht Ausdruck und Browser-Suche und haette in XLSX und PDF ohnehin
+       keine Entsprechung. -->
+  <div class="panel cond-section" id="reportingTdsSection">
+    <h2>3DS-Failures</h2>
+    <p class="hint" id="reportingTdsStatus" style="margin-bottom:0;"></p>
+
+    <div id="reportingTdsActions" class="list-actions hidden" style="margin-top:14px;">
+      <button class="btn" id="reportingTdsCsvBtn" title="3DS-Failure-Report als CSV herunterladen">CSV</button>
+      <button class="btn" id="reportingTdsXlsxBtn" title="3DS-Failure-Report als Excel-Datei herunterladen">Excel</button>
+      <button class="btn btn-primary" id="reportingTdsPdfBtn" title="3DS-Failure-Report als PDF herunterladen">PDF</button>
+    </div>
+
+    <div id="reportingTdsOutput" class="report-output"></div>
   </div>
 
 </div>
@@ -1951,6 +1978,19 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const reportingPdfBtn           = document.getElementById('reportingPdfBtn');
   const reportingCsvImport        = document.getElementById('reportingCsvImport');
   const reportingCsvImportBtn     = document.getElementById('reportingCsvImportBtn');
+
+  // Die 3DS-Failure-Seite (Iteration 2, §3): eigenes Panel, eigene Statuszeile,
+  // eigene Export-Leiste. Die beiden Import-Elemente liegen im Markup im Panel
+  // des Aggregat-Reports - siehe Kommentar dort.
+  const reportingTdsSection       = document.getElementById('reportingTdsSection');
+  const reportingTdsStatus        = document.getElementById('reportingTdsStatus');
+  const reportingTdsActions       = document.getElementById('reportingTdsActions');
+  const reportingTdsOutput        = document.getElementById('reportingTdsOutput');
+  const reportingTdsCsvBtn        = document.getElementById('reportingTdsCsvBtn');
+  const reportingTdsXlsxBtn       = document.getElementById('reportingTdsXlsxBtn');
+  const reportingTdsPdfBtn        = document.getElementById('reportingTdsPdfBtn');
+  const reportingTdsCsvImport     = document.getElementById('reportingTdsCsvImport');
+  const reportingTdsCsvImportBtn  = document.getElementById('reportingTdsCsvImportBtn');
   const terminalModeHint= document.getElementById('terminalModeHint');
   const tipUnsettledHint= document.getElementById('tipUnsettledHint');
   const reportSection   = document.getElementById('reportSection');
@@ -8474,6 +8514,17 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // ein PDF, das niemand oeffnen kann, ist keine Ausgabe.
   const REPORTING_TDS_PDF_ZEILEN = 500;
 
+  // Hoechstzahl Zeilen der Transaktionsliste AUF DEM BILDSCHIRM. Das <details>
+  // verhindert nur die Darstellung, nicht den Aufbau des Markup-Strings - bei
+  // REPORTING_TDS_LIMIT (20'000) Zeilen a 13 Spalten baut die Ausgabe sonst
+  // ein Markup von mehreren Megabyte, das der Browser beim Einhaengen
+  // vollstaendig parsen muss, nur damit es zugeklappt dasteht. Eigene
+  // Konstante statt REPORTING_TDS_PDF_ZEILEN mitzubenutzen: die beiden Deckel
+  // haben verschiedene Gruende (Seitenzahl gegen Parse-Zeit) und werden
+  // getrennt nachjustiert. CSV und Excel bleiben vollstaendig - dort ist die
+  // Laenge kein Problem, und genau dorthin verweist der Hinweis.
+  const REPORTING_TDS_SCREEN_ZEILEN = 500;
+
   // Beschriftung der Link-Zelle auf dem Bildschirm. In CSV und Excel heisst
   // die Spalte dashboard_url (siehe reportingKopfLabel) und traegt die
   // Adresse selbst.
@@ -8879,32 +8930,37 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return bloecke;
   }
 
-  // --- 3DS-Failures: Bildschirm --------------------------------------------
-  // Dieselben Bloecke, derselbe Renderer wie das Aggregat - inklusive
-  // <details> ab REPORTING_TABELLE_OFFEN Zeilen, was genau die lange
-  // Transaktionsliste betrifft. Reine Funktion: sie gibt Markup zurueck und
-  // fasst kein DOM an; das Einhaengen ist Sache der Verdrahtung.
-  function reportingTdsBerichtHtml(modell, optionen) {
-    return reportingTdsExportBloecke(modell, optionen)
-      .map(b => reportingBlockHtml(b)).join('');
-  }
-
-  // --- 3DS-Failures: PDF-Layout --------------------------------------------
-  // Die PDF-Sicht eines Blocks: ohne Link-Spalten und mit gedeckelter
-  // Zeilenzahl. Beides sind Eigenschaften der AUSGABE, nicht des Blocks -
-  // deshalb hier und nicht in reportingTdsExportBloecke.
-  function reportingTdsPdfSicht(block) {
+  // --- 3DS-Failures: die gedeckelte Sicht auf einen Block ------------------
+  // Zeilendeckel und Spaltenauswahl sind Eigenschaften der AUSGABE, nicht des
+  // Blocks - deshalb hier und nicht in reportingTdsExportBloecke. EINE
+  // Funktion fuer beide gedeckelten Ausgaben (PDF und Bildschirm): zwei
+  // Kopien liefen mit der Zeit auseinander, und die Zeilentabelle ist ohnehin
+  // die einzige Stelle, an der ein Deckel ueberhaupt greift.
+  //
+  // optionen.ohneLink entfernt die Link-Spalten (nur das PDF),
+  // optionen.limit deckelt die Zeilenzahl, optionen.ziel benennt die Ausgabe
+  // im Hinweis ("Im PDF" / "Auf dem Bildschirm"). CSV und Excel bekommen
+  // beides nicht - dort ist weder die Laenge noch die Spaltenbreite ein
+  // Problem, und genau dorthin verweist der Hinweis.
+  function reportingTdsSicht(block, optionen) {
+    const opt = optionen || {};
     const behalten = [];
-    block.kopf.forEach((k, c) => { if (k.format !== 'link') behalten.push(c); });
+    block.kopf.forEach((k, c) => {
+      if (!(opt.ohneLink && k.format === 'link')) behalten.push(c);
+    });
     const ohneLink = behalten.length < block.kopf.length;
-    const gekuerzt = block.zeilen.length > REPORTING_TDS_PDF_ZEILEN;
-    const quelle = gekuerzt ? block.zeilen.slice(0, REPORTING_TDS_PDF_ZEILEN) : block.zeilen;
-    const sicht = {
+    const limit = opt.limit || 0;
+    const gekuerzt = limit > 0 && block.zeilen.length > limit;
+    const quelle = gekuerzt ? block.zeilen.slice(0, limit) : block.zeilen;
+    // Ueber den ganzen Block spreaden, nicht nur die vier gelesenen Felder
+    // aufzaehlen: die Bildschirm-Ausgabe braucht zusaetzlich titel, kanal und
+    // typ, und ein Block, der spaeter ein Feld dazubekommt, verliert es hier
+    // sonst still.
+    const sicht = Object.assign({}, block, {
       kopf: behalten.map(c => block.kopf[c]),
       zeilen: quelle.map(z => behalten.map(c => z[c])),
-      kuchen: block.kuchen,
       hinweis: block.hinweis || '',
-    };
+    });
     // zellFormate wird MITGEFILTERT, sonst zeigte reportingZellFormat() nach
     // dem Entfernen einer Spalte auf die falsche Zelle. Heute traegt kein
     // Block mit Link-Spalte zellFormate - "heute" ist kein Zustand, auf den
@@ -8917,10 +8973,33 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         + 'die Seite) — sie ist in der Bildschirmansicht sowie in CSV und Excel enthalten.';
     }
     if (gekuerzt) {
-      sicht.hinweis += ` Im PDF stehen die ersten ${formatIntCH(REPORTING_TDS_PDF_ZEILEN)} von `
+      sicht.hinweis += ` ${opt.ziel || 'Hier'} stehen die ersten ${formatIntCH(limit)} von `
         + `${formatIntCH(block.zeilen.length)} Zeilen. Vollständige Liste im Excel/CSV.`;
     }
     return sicht;
+  }
+
+  // --- 3DS-Failures: Bildschirm --------------------------------------------
+  // Dieselben Bloecke, derselbe Renderer wie das Aggregat - inklusive
+  // <details> ab REPORTING_TABELLE_OFFEN Zeilen, was genau die lange
+  // Transaktionsliste betrifft. Reine Funktion: sie gibt Markup zurueck und
+  // fasst kein DOM an; das Einhaengen ist Sache der Verdrahtung.
+  //
+  // Der Zeilendeckel greift auch hier: das <details> klappt die Tabelle nur
+  // zu, gebaut wird der ganze String trotzdem (siehe
+  // REPORTING_TDS_SCREEN_ZEILEN). Die Link-Spalte bleibt - auf dem Bildschirm
+  // ist sie der Zweck der Liste.
+  function reportingTdsBerichtHtml(modell, optionen) {
+    return reportingTdsExportBloecke(modell, optionen)
+      .map(b => reportingBlockHtml(reportingTdsSicht(b,
+        { limit: REPORTING_TDS_SCREEN_ZEILEN, ziel: 'Auf dem Bildschirm' })))
+      .join('');
+  }
+
+  // --- 3DS-Failures: PDF-Layout --------------------------------------------
+  function reportingTdsPdfSicht(block) {
+    return reportingTdsSicht(block,
+      { ohneLink: true, limit: REPORTING_TDS_PDF_ZEILEN, ziel: 'Im PDF' });
   }
 
   function reportingTdsPdfBloecke(modell, optionen) {
@@ -9371,6 +9450,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     card: 'Kartensuche',
     settlement: 'Settlement / Auszahlung',
     reporting: 'Reporting',
+    // Kein Bedienmodus - es gibt keinen Knopf dafuer -, sondern die zweite
+    // Abfrage des Reporting-Modus (§3.3). Sie bekommt einen eigenen Eintrag,
+    // weil sie einen eigenen Token hat.
+    'reporting-tds': '3DS-Failures',
   };
   function modusLabel(mode) { return MODUS_LABELS[mode] || String(mode || ''); }
 
@@ -9412,6 +9495,12 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         filterSummary = reportingTerminalPanelSichtbar(s.reportingChannel, s.reportingByTerminal)
           ? kanal + ' · ' + (term ? term + ' Terminal(s)' : 'alle Terminals')
           : kanal;
+      } else if (mode === 'reporting-tds') {
+        // Die zweite Abfrage kennt weder Kanalwahl noch Terminals: sie filtert
+        // fest auf E-Commerce (§3.3). Die Zeile sagt deshalb, was sie IST,
+        // statt eine Einschraenkung zu versprechen, die die Query nicht traegt
+        // - dieselbe Ueberlegung wie beim Kanal-Zweig darueber.
+        filterSummary = '3DS-Failures · E-Commerce';
       }
     }
     return {
@@ -9432,8 +9521,19 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return [eintrag, ...ohneDup].slice(0, HISTORY_MAX);
   }
 
+  // Nebenmodi: Eintraege, die zwar einen eigenen Modus-Namen tragen, aber im
+  // Verlauf desselben Bedienmodus stehen. 'reporting-tds' ist die zweite
+  // Abfrage des Reporting-Modus - es gibt keinen Knopf, mit dem man dorthin
+  // umschaltet, und renderHistory filtert nach state.mode: ohne diese
+  // Zuordnung waere ihr Eintrag unsichtbar, obwohl er der einzige Weg zum
+  // Roh-CSV der 3DS-Abfrage ist.
+  const HISTORY_NEBENMODI = { reporting: ['reporting-tds'] };
+
   function historyFuerModus(list, mode) {
-    return (list || []).filter(e => e.mode === mode);
+    const neben = Object.prototype.hasOwnProperty.call(HISTORY_NEBENMODI, mode)
+      ? HISTORY_NEBENMODI[mode] : [];
+    const erlaubt = [mode].concat(neben);
+    return (list || []).filter(e => erlaubt.indexOf(e.mode) !== -1);
   }
 
   function historyLaden() {
@@ -9520,16 +9620,90 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     reporting:  { name: 'Reporting-Report',  uebergib: uebergibReportingCsv },
   };
 
-  async function holeErgebnisInBericht(mode, token, account) {
+  async function holeErgebnisInBericht(mode, token, account, filter) {
     const bericht = BERICHT_INGEST[mode];
     const r = await holeErgebnisText(token, account);
     if (!r.ok) { zeigeFortschritt(r.fehler, 'fehler'); return false; }
-    const ok = bericht.uebergib(r.text);
+    const ok = bericht.uebergib(r.text, filter);
     zeigeFortschritt(ok
       ? `Ergebnis geladen – ${bericht.name} erstellt.`
       : 'Ergebnis geladen, aber es liess sich kein Report bilden. Bitte die Spalten prüfen.',
       ok ? 'erfolg' : 'fehler');
     return ok;
+  }
+
+  // Submit + Status-Polling bis zum Endzustand. Herausgeloest, seit der
+  // Reporting-Modus ZWEI Abfragen absetzt (Aggregat und 3DS-Liste, §3.3): der
+  // Ablauf ist beide Male derselbe, und eine zweite Kopie waere eine zweite
+  // Stelle, an der die 404-Toleranz, das Retry-After oder der Account-Kontext
+  // veralten koennte.
+  //
+  // Wirft nicht und meldet nur Fortschritt - das Fehler-Urteil faellt der
+  // Aufrufer, weil es je Abfrage anders ausfaellt: ein Fehlschlag der zweiten
+  // darf den bereits stehenden Aggregat-Report nicht mitnehmen. Rueckgabe:
+  // { ok, token, status, fehler, abgebrochen }.
+  //
+  // `praefix` stellt den Fortschrittsmeldungen einen Namen voran, damit sich
+  // die zwei Laeufe im selben Feld unterscheiden lassen.
+  async function absetzenUndWarten(sql, account, praefix) {
+    const p = praefix || '';
+    const leer = { ok: false, token: '', status: '', fehler: '', abgebrochen: false };
+    zeigeFortschritt(p + 'Query wird übermittelt …');
+    // Leer heisst: der im Proxy konfigurierte Account gilt - das Feld bleibt
+    // dann ganz weg, damit sich am ausgehenden Request nichts aendert
+    // (gleiches Muster wie mitAccount() bei Status/Result).
+    const submitBody = { sql };
+    if (account) submitBody.account = account;
+    const submit = await proxyJson('/submit', 'POST', submitBody);
+    if (submit.status >= 400 || !submit.daten) {
+      return Object.assign({}, leer,
+        { fehler: fehlerText(submit, p + 'Die Query konnte nicht übermittelt werden.') });
+    }
+    const token = leseQueryToken(submit.daten);
+    if (!token) {
+      return Object.assign({}, leer,
+        { fehler: p + 'Der Proxy hat keinen Query-Token zurückgegeben.' });
+    }
+    apiLauf.token = token;
+
+    // Status-Polling nach Doku: der Endpunkt long-pollt und antwortet mit
+    // HTTP 200, sobald der Endzustand erreicht ist (Body traegt dann status:
+    // SUCCESS/FAILED/CANCELLED), oder mit 202, solange er noch laeuft. Bei
+    // 202 wird die im Body mitgelieferte Retry-After-Zeit abgewartet. Der
+    // Submit-Response (201) traegt nur den Token, keinen Status.
+    let versuche = 0;
+    let transient = 0;
+    while (true) {
+      if (apiLauf.abgebrochen) return Object.assign({}, leer, { token, abgebrochen: true });
+      if (++versuche > apiPollConfig.maxVersuche) {
+        return Object.assign({}, leer, { token, fehler: p + 'Zeitüberschreitung – die Query läuft noch. '
+          + 'Der Token kann später unter „Vorhandenen Token abrufen" verwendet werden: '
+          + token });
+      }
+      const s = await proxyJson(mitAccount('/status/' + encodeURIComponent(token), account), 'GET');
+      // Direkt nach dem Submit (v. a. der erste einer Sitzung) ist der Token bei
+      // wallee gelegentlich noch nicht propagiert -> 404 (oder 502/503). Ein paar
+      // Mal tolerieren und erneut pollen, statt sofort abzubrechen - das war die
+      // Ursache fuer den "beim ersten Mal 404, beim zweiten klappt es"-Effekt.
+      if ((s.status === 404 || s.status === 502 || s.status === 503)
+          && transient < apiPollConfig.transientMax) {
+        transient++;
+        zeigeFortschritt(`${p}Query wird registriert … (Versuch ${transient})`);
+        await warte(apiPollConfig.retryStandardSek * 1000);
+        continue;
+      }
+      if (s.status >= 400) {
+        return Object.assign({}, leer, { token,
+          fehler: fehlerText(s, p + 'Der Status konnte nicht abgefragt werden.') });
+      }
+      if (s.status === 200) {                 // Endzustand erreicht
+        return { ok: true, token, status: leseQueryStatus(s.daten), fehler: '', abgebrochen: false };
+      }
+      // 202: laeuft noch. Retry-After (Sekunden) aus dem Body, mit Puffer.
+      zeigeFortschritt(`${p}Query läuft … (${leseQueryStatus(s.daten) || 'PROCESSING'})`);
+      const sekunden = (s.daten && Number(s.daten.retryAfter)) || apiPollConfig.retryStandardSek;
+      await warte(sekunden * 1000);
+    }
   }
 
   async function submitUndReport(sql) {
@@ -9543,70 +9717,21 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // /query/:token verwendet.
     const account = aktiverAccount();
     apiLauf.account = account;
+    // Genau EINMAL gelesen, bevor die erste Anfrage rausgeht - und danach von
+    // beiden Reporting-Abfragen und beiden Ingests benutzt. Der Nutzer kann
+    // den Zeitraum waehrend eines laufenden Abrufs umstellen; laesen die
+    // beiden Abfragen den Picker einzeln, rechnete die 3DS-Seite ihre Anteile
+    // gegen die Grundgesamtheit eines anderen Zeitraums. Siehe abfrageFilter().
+    const filter = abfrageFilter();
 
     try {
-      zeigeFortschritt('Query wird übermittelt …');
-      // Leer heisst: der im Proxy konfigurierte Account gilt - das Feld bleibt
-      // dann ganz weg, damit sich am ausgehenden Request nichts aendert
-      // (gleiches Muster wie mitAccount() bei Status/Result).
-      const submitBody = { sql };
-      if (account) submitBody.account = account;
-      const submit = await proxyJson('/submit', 'POST', submitBody);
-      if (submit.status >= 400 || !submit.daten) {
-        zeigeFortschritt(fehlerText(submit, 'Die Query konnte nicht übermittelt werden.'), 'fehler');
-        return;
-      }
-      const token = leseQueryToken(submit.daten);
-      if (!token) {
-        zeigeFortschritt('Der Proxy hat keinen Query-Token zurückgegeben.', 'fehler');
-        return;
-      }
-      apiLauf.token = token;
+      const lauf = await absetzenUndWarten(sql, account, '');
+      if (lauf.abgebrochen) return;
+      if (!lauf.ok) { zeigeFortschritt(lauf.fehler, 'fehler'); return; }
+      const token = lauf.token;
 
-      // Status-Polling nach Doku: der Endpunkt long-pollt und antwortet mit
-      // HTTP 200, sobald der Endzustand erreicht ist (Body traegt dann status:
-      // SUCCESS/FAILED/CANCELLED), oder mit 202, solange er noch laeuft. Bei
-      // 202 wird die im Body mitgelieferte Retry-After-Zeit abgewartet. Der
-      // Submit-Response (201) traegt nur den Token, keinen Status.
-      let status = '';
-      let versuche = 0;
-      let transient = 0;
-      while (true) {
-        if (apiLauf.abgebrochen) return;
-        if (++versuche > apiPollConfig.maxVersuche) {
-          zeigeFortschritt('Zeitüberschreitung – die Query läuft noch. '
-            + 'Der Token kann später unter „Vorhandenen Token abrufen" verwendet werden: '
-            + token, 'fehler');
-          return;
-        }
-        const s = await proxyJson(mitAccount('/status/' + encodeURIComponent(token), account), 'GET');
-        // Direkt nach dem Submit (v. a. der erste einer Sitzung) ist der Token bei
-        // wallee gelegentlich noch nicht propagiert -> 404 (oder 502/503). Ein paar
-        // Mal tolerieren und erneut pollen, statt sofort abzubrechen - das war die
-        // Ursache fuer den "beim ersten Mal 404, beim zweiten klappt es"-Effekt.
-        if ((s.status === 404 || s.status === 502 || s.status === 503)
-            && transient < apiPollConfig.transientMax) {
-          transient++;
-          zeigeFortschritt(`Query wird registriert … (Versuch ${transient})`);
-          await warte(apiPollConfig.retryStandardSek * 1000);
-          continue;
-        }
-        if (s.status >= 400) {
-          zeigeFortschritt(fehlerText(s, 'Der Status konnte nicht abgefragt werden.'), 'fehler');
-          return;
-        }
-        if (s.status === 200) {                 // Endzustand erreicht
-          status = leseQueryStatus(s.daten);
-          break;
-        }
-        // 202: laeuft noch. Retry-After (Sekunden) aus dem Body, mit Puffer.
-        zeigeFortschritt(`Query läuft … (${leseQueryStatus(s.daten) || 'PROCESSING'})`);
-        const sekunden = (s.daten && Number(s.daten.retryAfter)) || apiPollConfig.retryStandardSek;
-        await warte(sekunden * 1000);
-      }
-
-      if (!istErfolg(status)) {
-        zeigeFortschritt(`Die Query wurde mit Status ${status || 'unbekannt'} beendet.`, 'fehler');
+      if (!istErfolg(lauf.status)) {
+        zeigeFortschritt(`Die Query wurde mit Status ${lauf.status || 'unbekannt'} beendet.`, 'fehler');
         return;
       }
 
@@ -9621,9 +9746,20 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       if (state.mode === 'terminal') {
         await holeErgebnisInReport(token, account);
       } else if (BERICHT_INGEST[state.mode]) {
-        await holeErgebnisInBericht(state.mode, token, account);
+        await holeErgebnisInBericht(state.mode, token, account, filter);
       } else {
         zeigeFortschritt('Fertig — Ergebnis unten im Verlauf als CSV oder Excel herunterladen.', 'erfolg');
+      }
+
+      // Die zweite Abfrage: die zeilenweise 3DS-Failure-Liste (§3.3). Sie
+      // laeuft NACH dem Aggregat, im selben apiLauf (der Abbrechen-Knopf
+      // stoppt also auch sie), mit demselben Filter - und nur, wenn der
+      // gewaehlte Kanal E-Commerce ueberhaupt enthaelt. Ihr Ergebnis geht in
+      // ein eigenes Panel; scheitert sie, bleibt der Aggregat-Report stehen.
+      if (apiLauf && !apiLauf.abgebrochen
+          && state.mode === 'reporting'
+          && reportingTdsQueryNoetig(state.reportingChannel)) {
+        await reportingTdsAbfragen(filter, account);
       }
     } catch (e) {
       zeigeFortschritt('Die Ausführung ist fehlgeschlagen. Läuft der Proxy noch?', 'fehler');
@@ -9747,7 +9883,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Modi mit eigenem Report-Panel: dort gibt es Excel (und beim Settlement- und
   // Reporting-Report zusaetzlich PDF) gebrandet aus dem Panel selbst, deshalb
   // traegt ihre Verlaufszeile nur den Roh-CSV-Download.
-  const MODI_MIT_REPORT_PANEL = ['terminal', 'settlement', 'reporting'];
+  const MODI_MIT_REPORT_PANEL = ['terminal', 'settlement', 'reporting', 'reporting-tds'];
 
   function renderHistory() {
     const list = historyFuerModus(historyLaden(), state.mode);
@@ -9803,7 +9939,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       // Terminal-Report-Pfad und wuerde dort mit "Pflichtspalten fehlen"
       // scheitern.
       if (BERICHT_INGEST[state.mode]) {
-        await holeErgebnisInBericht(state.mode, token, account);
+        // Der Filter kommt aus derselben Quelle wie beim Submit; hier gibt es
+        // nur eine Abfrage, aber der Kopf des Reports soll denselben Zeitraum
+        // ausweisen wie dort.
+        await holeErgebnisInBericht(state.mode, token, account, abfrageFilter());
       } else {
         await holeErgebnisInReport(token, account);
       }
@@ -10549,10 +10688,36 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return !!byTerminal && kanal !== 'ECOM';
   }
 
+  // Die zweite, zeilenweise Abfrage der 3DS-Failure-Seite (§3.3) filtert fest
+  // auf E-Commerce. Bei Kanal POS wird sie deshalb GAR NICHT abgesetzt: sie
+  // kaeme zwangslaeufig leer zurueck, und eine leere Seite saehe aus wie
+  // "keine 3DS-Fehlschlaege" - eine Aussage ueber Daten, die nie abgefragt
+  // wurden. Dazu ein Abruf, der bei wallee als Download zaehlt.
+  //
+  // Eine unbekannte Kanalwahl verhaelt sich wie "Beide" (so wie in
+  // reportingKanalFilter): dann filtert die Aggregat-Query gar nicht nach
+  // Kanal, E-Commerce ist also enthalten.
+  function reportingTdsQueryNoetig(kanal) {
+    return kanal !== 'POS';
+  }
+
+  // Zeitraum und Spaces, wie jede Query sie sieht - state haelt Datum und
+  // Uhrzeit getrennt. Bewusst EINE Quelle statt derselben drei Ausdruecke an
+  // vier Stellen: der Reporting-Modus setzt seit Iteration 2 zwei Abfragen ab
+  // (Aggregat und 3DS-Liste), und die Anteils-Kacheln der 3DS-Seite rechnen
+  // gegen die Grundgesamtheit des Aggregats. Sehen die beiden verschiedene
+  // Zeitraeume oder Spaces, steht der Nenner ueber einer Liste, zu der er
+  // nicht gehoert - und niemand koennte es der Seite ansehen.
+  function abfrageFilter() {
+    return {
+      start: `${state.startDate} ${state.startTime}`,
+      end: `${state.endDate} ${state.endTime}`,
+      spaceIds: selectedSpaceIds(),
+    };
+  }
+
   function generate() {
-    const start = `${state.startDate} ${state.startTime}`;
-    const end   = `${state.endDate} ${state.endTime}`;
-    const spaceIds = selectedSpaceIds();
+    const { start, end, spaceIds } = abfrageFilter();
     let sql;
     if (state.mode === 'terminal') {
       const ids = state.terminals.filter(t => t.selected).map(t => t.id);
@@ -10639,6 +10804,9 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // Terminal- und Settlement-Report.
     reportingSection.classList.toggle('active', mode === 'reporting');
     reportingReportSection.classList.toggle('active', mode === 'reporting');
+    // Die 3DS-Seite haengt zusaetzlich daran, ob es etwas zu zeigen gibt -
+    // deshalb ueber die eigene Funktion statt inline am Modus.
+    aktualisiereReportingTdsPanel();
     // tip_total/unsettled_anzahl erscheinen nur in brand/terminal;
     // der Settlement-Modus (seit v5.8 account-basiert) liefert kein tip_total mehr
     // und hat dafuer keinen eigenen Hinweis.
@@ -10764,6 +10932,11 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       failureReasons: reportingFailureNachgeladen,
     });
     renderReportingReport();
+    // Das Aggregat ist die Grundgesamtheit der beiden Anteils-Kacheln der
+    // 3DS-Seite. Wird es neu gebaut (Haendler-Land, nachgeschlagene Namen),
+    // muss sie mitziehen - sonst stuenden dort Prozente aus einem Nenner, den
+    // es nicht mehr gibt.
+    reportingTdsModellNeuBauen();
   }
 
   // --- Unbekannte Ablehngruende nachladen ---------------------------------
@@ -11022,7 +11195,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Kommentar an der Konstante). Durchgereicht wird nur, was der Proxy
   // seither nachgeschlagen hat (reportingFailureNachgeladen, anfangs leer) -
   // also genau die IDs, die nach dem Scrape neu dazugekommen sind.
-  function ingestReportingCsv(text) {
+  function ingestReportingCsv(text, filter) {
     const res = parseReportingCsv(text);
     if (res.error) {
       reportingModell = null;
@@ -11031,23 +11204,25 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       // den Lauf des VORIGEN, geglueckten Ingests zurueck.
       reportingNachladeLauf = null;
       renderReportingReport();
+      // Mit dem Aggregat faellt die Grundlage der beiden Anteils-Kacheln weg -
+      // sie muessen verschwinden, nicht mit dem alten Nenner stehenbleiben.
+      reportingTdsModellNeuBauen();
       reportingZeigeStatus(res.error.message, 'fehler');
       return false;
     }
     reportingRohzeilen = res.rows;
 
-    // Zeitraum genau so zusammensetzen wie generate() es fuer die Query tut -
-    // state haelt Datum und Uhrzeit getrennt.
-    reportingZeitraum = {
-      start: `${state.startDate} ${state.startTime}`,
-      end: `${state.endDate} ${state.endTime}`,
-      spaces: selectedSpaceIds(),
-    };
+    // Der Filter kommt vom Aufrufer, wenn es einen Lauf gibt (dann ist es
+    // derselbe, den auch die 3DS-Abfrage sieht); beim CSV-Import gibt es
+    // keinen, dort gilt der aktuelle Stand des Pickers.
+    const f = filter || abfrageFilter();
+    reportingZeitraum = { start: f.start, end: f.end, spaces: f.spaceIds };
     reportingModell = buildReportingModel(res.rows, {
       merchantCountry: state.reportingMerchantCountry,
       failureReasons: reportingFailureNachgeladen,
     });
     renderReportingReport();
+    reportingTdsModellNeuBauen();
 
     // Unbekannte Ablehngruende nachschlagen - nebenher, damit der Ingest
     // synchron bleibt und der Report sofort steht. Kommen Namen zurueck, baut
@@ -11084,8 +11259,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
 
   // Wie uebergibReportCsv/uebergibSettlementCsv: der Report ist die Ausgabe des
   // Modus, kein eigener Tab - setMode frischt die Ansicht auf.
-  function uebergibReportingCsv(csv) {
-    const ok = ingestReportingCsv(csv);
+  function uebergibReportingCsv(csv, filter) {
+    const ok = ingestReportingCsv(csv, filter);
     if (ok) setMode('reporting');
     return ok;
   }
@@ -11334,6 +11509,232 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     doc.save(reportingDateiname('pdf'));
   }
 
+  // --- 3DS-Failures: Ansicht, Ingest und die drei Exporte ------------------
+  // Aufbau wie beim Aggregat daneben: ein Modell im Modul-Scope, die geparsten
+  // Zeilen daneben, ein Ingest, der Parser -> Modell -> Status -> Render
+  // verkettet, und eine duenne UI-Schicht darueber. Die Blockschicht und alle
+  // vier Ausgaben stehen weiter oben als reine Funktionen; hier wird nur
+  // verdrahtet.
+  let reportingTdsModell = null;
+  // Wie reportingRohzeilen: das Haendler-Land und nachgeschlagene
+  // Ablehngrund-Namen aendern nur die Auswertung, nicht die Daten. Statt das
+  // Ergebnis erneut abzurufen (bei wallee zaehlt jeder Abruf als Download)
+  // wird das Modell daraus neu gebaut.
+  let reportingTdsRohzeilen = null;
+  let reportingTdsZeitraum = { start: '', end: '', spaces: [] };
+
+  // Lesezugriff auf das zuletzt gebaute Modell - Testnaht wie
+  // reportingModellAktuell().
+  function reportingTdsModellAktuell() { return reportingTdsModell; }
+
+  // Das Kanal-Modell des E-Commerce aus dem Aggregat: genau das erwartet
+  // buildReportingTdsModel als `aggregat`, NICHT das Gesamtmodell. Fehlt es
+  // (Aggregat nicht geladen, oder kein E-Com im Ergebnis), entfallen die
+  // beiden Anteils-Kacheln - besser als 0 %, was eine Messung vortaeuschte.
+  function reportingAggregatEcom() {
+    return (reportingModell && reportingModell.kanaele && reportingModell.kanaele.ECOM) || null;
+  }
+
+  function reportingTdsZeigeStatus(text, art) {
+    reportingTdsStatus.textContent = text;
+    reportingTdsStatus.dataset.art = art || '';
+    aktualisiereReportingTdsPanel();
+  }
+
+  // Das Panel erscheint nur im Reporting-Modus - und nur, wenn es etwas zu
+  // zeigen hat: ein Modell oder eine Statuszeile. Die zweite Bedingung ist
+  // nicht Kosmetik: ohne sie waere eine Fehlermeldung unsichtbar, denn ohne
+  // Modell gaebe es kein Panel, in dem sie stuende.
+  function aktualisiereReportingTdsPanel() {
+    reportingTdsSection.classList.toggle('active',
+      state.mode === 'reporting' && !!(reportingTdsModell || reportingTdsStatus.textContent));
+  }
+
+  function reportingTdsExportOptionen() {
+    return {
+      zeitraum: { start: reportingTdsZeitraum.start, end: reportingTdsZeitraum.end },
+      spaces: reportingTdsZeitraum.spaces,
+    };
+  }
+
+  function renderReportingTdsReport() {
+    if (!reportingTdsModell) {
+      reportingTdsOutput.innerHTML = '';
+      reportingTdsActions.classList.add('hidden');
+      return;
+    }
+    // Kein Kanal-Zwischentitel wie beim Aggregat: die Seite hat nur einen
+    // Abschnitt (REPORTING_TDS_KANAL), eine Ueberschrift "3DS" darueber waere
+    // eine Gliederungsebene ohne Geschwister.
+    reportingTdsOutput.innerHTML =
+      reportingTdsBerichtHtml(reportingTdsModell, reportingTdsExportOptionen());
+    reportingTdsActions.classList.remove('hidden');
+  }
+
+  function reportingTdsModellNeuBauen() {
+    if (!reportingTdsRohzeilen) return;
+    reportingTdsModell = buildReportingTdsModel(reportingTdsRohzeilen, {
+      aggregat: reportingAggregatEcom(),
+      failureReasons: reportingFailureNachgeladen,
+    });
+    renderReportingTdsReport();
+    aktualisiereReportingTdsPanel();
+  }
+
+  // Der gemeinsame Kern: geparste Zeilen -> Modell -> Statuszeile -> Ansicht.
+  // Getrennt vom CSV-Pfad, weil es einen zweiten Weg hierher gibt: HTTP 204
+  // ("die Query lieferte keine Zeilen") ist auf dieser Seite eine Aussage und
+  // kein Fehler - es gab keinen gescheiterten 3DS-Versuch. Ohne diesen
+  // Einstieg muesste dafuer ein leeres CSV erfunden werden, das der Parser
+  // dann als Fehler zurueckwiese.
+  function ingestReportingTdsZeilen(rows, unbrauchbar, filter) {
+    reportingTdsRohzeilen = rows;
+    const f = filter || abfrageFilter();
+    reportingTdsZeitraum = { start: f.start, end: f.end, spaces: f.spaceIds };
+    reportingTdsModellNeuBauen();
+
+    const m = reportingTdsModell;
+    let hinweise = '';
+    // Derselbe Verlustkanal wie beim Aggregat: ein unerwartetes Zahlen-,
+    // Boolean- oder Zeitformat wuerde sich sonst als sauberes "unbekannt"
+    // tarnen - und die Dauer-Achse ist die Kernachse dieser Seite.
+    // Der Zaehler lebt an der DATEI, nicht am Modell - deshalb steht er hier
+    // und nicht in reportingTdsModellNeuBauen(). Ein Modellneubau (Aggregat
+    // nachgeliefert, Haendler-Land gewechselt) laesst die Statuszeile
+    // unangetastet stehen; ohne diese Trennung verschwaende der Hinweis beim
+    // ersten Neubau, und mit ihm der einzige Beleg dafuer, dass die Zahlen
+    // nicht stimmen.
+    if (unbrauchbar > 0) {
+      hinweise += ` · ${formatIntCH(unbrauchbar)} Werte im unerwarteten Format `
+        + '(als 0 bzw. unbekannt gewertet)';
+    }
+    if (m.abgeschnitten) {
+      hinweise += ` · Höchstzahl von ${formatIntCH(m.limit)} Zeilen erreicht — die Liste ist `
+        + 'unvollständig, alle Zählwerte sind Untergrenzen';
+    }
+    if (!m.hatDaten) {
+      reportingTdsZeigeStatus(
+        'Kein Zahlungsversuch mit 3-D Secure ist im gewählten Zeitraum gescheitert.' + hinweise,
+        'info');
+      return true;
+    }
+    reportingTdsZeigeStatus(
+      `${formatIntCH(m.kpi.failures)} 3DS-Fehlschläge · `
+      + `${formatIntCH(m.kpi.transaktionen)} Transaktionen${hinweise}`, 'erfolg');
+    return true;
+  }
+
+  function ingestReportingTdsCsv(text, filter) {
+    const res = parseReportingTdsCsv(text);
+    if (res.error) {
+      reportingTdsModell = null;
+      reportingTdsRohzeilen = null;
+      renderReportingTdsReport();
+      reportingTdsZeigeStatus(res.error.message, 'fehler');
+      return false;
+    }
+    return ingestReportingTdsZeilen(res.rows, res.unbrauchbareWerte, filter);
+  }
+
+  // Wie uebergibReportingCsv: die Seite ist eine Ausgabe des Reporting-Modus,
+  // kein eigener Tab - setMode frischt die Ansicht auf.
+  function uebergibReportingTdsCsv(csv, filter) {
+    const ok = ingestReportingTdsCsv(csv, filter);
+    if (ok) setMode('reporting');
+    return ok;
+  }
+
+  // Die zweite Abfrage. Wirft nie und meldet ausschliesslich ueber die eigene
+  // Statuszeile: der Aggregat-Report steht zu diesem Zeitpunkt bereits, und
+  // ein Fehlschlag hier darf ihn nicht mitnehmen - Rueckfall statt Blockade,
+  // wie ueberall in dieser Anwendung.
+  async function reportingTdsAbfragen(filter, account) {
+    try {
+      reportingTdsZeigeStatus('3DS-Liste wird abgefragt …', '');
+      const sql = buildReportingTdsQuery({
+        spaceIds: filter.spaceIds, start: filter.start, end: filter.end,
+      });
+      const lauf = await absetzenUndWarten(sql, account, '3DS-Liste: ');
+      if (lauf.abgebrochen) {
+        reportingTdsZeigeStatus('3DS-Abfrage abgebrochen.', 'fehler');
+        return false;
+      }
+      if (!lauf.ok) { reportingTdsZeigeStatus(lauf.fehler, 'fehler'); return false; }
+      if (!istErfolg(lauf.status)) {
+        reportingTdsZeigeStatus(
+          `Die 3DS-Abfrage wurde mit Status ${lauf.status || 'unbekannt'} beendet.`, 'fehler');
+        return false;
+      }
+
+      // Eigener Verlaufseintrag mit eigenem Token (§3.3). Er steht im Verlauf
+      // des Reporting-Modus (HISTORY_NEBENMODI) und bietet dort nur den
+      // Roh-CSV-Download an - Excel und PDF laufen ueber dieses Panel.
+      historySpeichern(historyEinfuegen(historyLaden(),
+        historyEintragBauen('reporting-tds', lauf.token, state,
+          new Date().toISOString(), 'SUCCESS')));
+      renderHistory();
+
+      const r = await holeErgebnisText(lauf.token, account);
+      // 204 heisst "keine Zeilen" - hier die Antwort auf die Frage, mit der
+      // jemand diese Seite oeffnet, und kein Fehler.
+      if (!r.ok && r.status === 204) return ingestReportingTdsZeilen([], 0, filter);
+      if (!r.ok) { reportingTdsZeigeStatus(r.fehler, 'fehler'); return false; }
+      return ingestReportingTdsCsv(r.text, filter);
+    } catch (e) {
+      reportingTdsZeigeStatus('Die 3DS-Abfrage ist fehlgeschlagen. Der Reporting-Report '
+        + 'oben bleibt davon unberührt.', 'fehler');
+      return false;
+    }
+  }
+
+  function reportingTdsDateiname(endung) {
+    const d = new Date();
+    const stempel = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return `3ds-failures_${stempel}.${endung}`;
+  }
+
+  function exportReportingTdsCsv() {
+    if (!reportingTdsModell) return;
+    downloadDatei(buildReportingTdsCsv(reportingTdsModell, reportingTdsExportOptionen()),
+      reportingTdsDateiname('csv'), 'text/csv;charset=utf-8');
+  }
+
+  // EIGENE Mappe, nicht ein zusaetzliches Blatt in der Reporting-Mappe -
+  // bewusst, obwohl reportingTdsXlsxBlatt beides koennte:
+  //
+  //  1. Der Grund, aus dem die 3DS-Liste ueberhaupt eine zweite Abfrage ist
+  //     (§3.3), gilt fuer die Ausgabe genauso: das Aggregat traegt keine
+  //     personenbezogenen Daten und ist deshalb weitergabefaehig. Die
+  //     Zeilenliste traegt Bestellnummern und Transaktions-IDs. In EINER
+  //     Mappe koennte der Haendler den Reporting-Report nicht mehr
+  //     weiterreichen, ohne die Transaktionsliste mitzugeben.
+  //  2. Die beiden Modelle sind unabhaengig: jedes kann ohne das andere
+  //     existieren (Kanal POS, CSV-Import nur einer Datei, gescheiterte
+  //     zweite Abfrage). Ein gemeinsamer Knopf muesste entscheiden, was er
+  //     bei nur einem Modell tut - zwei Knoepfe muessen das nicht.
+  //
+  // "Eigenes Blatt «3DS-Failures»" aus §3.5 Punkt 4 bleibt erfuellt: die
+  // Mappe hat genau dieses eine Blatt.
+  function exportReportingTdsXlsx() {
+    if (!reportingTdsModell) return;
+    const wb = XLSX.utils.book_new();
+    reportingTdsXlsxBlatt(wb, reportingTdsModell, reportingTdsExportOptionen());
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    downloadDatei(
+      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      reportingTdsDateiname('xlsx'),
+    );
+  }
+
+  function exportReportingTdsPdf() {
+    if (!reportingTdsModell) return;
+    const p = reportingTdsPdfBloecke(reportingTdsModell, reportingTdsExportOptionen());
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    reportingPdfSchreiben(doc, p);
+    doc.save(reportingTdsDateiname('pdf'));
+  }
+
   // --- Event bindings: Reporting -------------------------------------------
   function reportingKanalSetzen(wahl) {
     state.reportingChannel = wahl;
@@ -11405,6 +11806,25 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   reportingCsvBtn.addEventListener('click', () => exportReportingCsv());
   reportingXlsxBtn.addEventListener('click', () => exportReportingXlsx());
   reportingPdfBtn.addEventListener('click', () => exportReportingPdf());
+
+  // --- Event bindings: 3DS-Failures ----------------------------------------
+  reportingTdsCsvImportBtn.addEventListener('click', () => reportingTdsCsvImport.click());
+  reportingTdsCsvImport.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) {
+      const reader = new FileReader();
+      reader.onload = () => uebergibReportingTdsCsv(String(reader.result || ''));
+      // Wie beim Aggregat bewusst nicht ueber leseDatei(): dessen Fehlerpfad
+      // schreibt in die Statuszeile des Terminal-Reports.
+      reader.onerror = () => reportingTdsZeigeStatus('Die Datei konnte nicht gelesen werden.', 'fehler');
+      reader.readAsText(f, 'utf-8');
+    }
+    reportingTdsCsvImport.value = '';
+  });
+
+  reportingTdsCsvBtn.addEventListener('click', () => exportReportingTdsCsv());
+  reportingTdsXlsxBtn.addEventListener('click', () => exportReportingTdsXlsx());
+  reportingTdsPdfBtn.addEventListener('click', () => exportReportingTdsPdf());
 
   function aktualisiereReportingTerminalPanel() {
     if (state.mode !== 'reporting') return;

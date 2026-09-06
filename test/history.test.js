@@ -16,6 +16,11 @@ test('modusLabel liefert die erwarteten Anzeigenamen', () => {
   assert.strictEqual(x.modusLabel('export'), 'Transaktions-Export');
   assert.strictEqual(x.modusLabel('card'), 'Kartensuche');
   assert.strictEqual(x.modusLabel('settlement'), 'Settlement / Auszahlung');
+  assert.strictEqual(x.modusLabel('reporting'), 'Reporting');
+  // Kein Bedienmodus, sondern die zweite Abfrage des Reporting-Modus
+  // (Iteration 2, §3.3). Ohne Eintrag stuende der rohe Schluessel in der
+  // Verlaufszeile - modusLabel gibt Unbekanntes unveraendert zurueck.
+  assert.strictEqual(x.modusLabel('reporting-tds'), '3DS-Failures');
 });
 
 test('historyEintragBauen baut Metadaten ohne SQL', () => {
@@ -51,6 +56,40 @@ test('historyFuerModus filtert', () => {
   list = x.historyEinfuegen(list, x.historyEintragBauen('brand', 'A', ST, '2026-07-08T10:00:00.000Z'));
   list = x.historyEinfuegen(list, x.historyEintragBauen('card', 'B', ST, '2026-07-08T10:00:00.000Z'));
   assert.deepStrictEqual(plain(x.historyFuerModus(list, 'card')).map(e => e.token), ['B']);
+});
+
+test('historyFuerModus zeigt die zweite Reporting-Abfrage im Reporting-Verlauf', () => {
+  // 'reporting-tds' ist kein Bedienmodus - es gibt keinen Knopf, mit dem man
+  // dorthin umschaltet. renderHistory filtert aber nach state.mode: ohne die
+  // Zuordnung waere der Eintrag unsichtbar, obwohl er der einzige Weg zum
+  // Roh-CSV der 3DS-Abfrage ist.
+  const x = loadBuilders();
+  let list = [];
+  list = x.historyEinfuegen(list, x.historyEintragBauen('reporting', 'A', ST, '2026-07-08T10:00:00.000Z'));
+  list = x.historyEinfuegen(list, x.historyEintragBauen('reporting-tds', 'B', ST, '2026-07-08T10:01:00.000Z'));
+  list = x.historyEinfuegen(list, x.historyEintragBauen('brand', 'C', ST, '2026-07-08T10:02:00.000Z'));
+
+  assert.deepStrictEqual(
+    plain(x.historyFuerModus(list, 'reporting')).map(e => e.token).sort(), ['A', 'B']);
+  // Nur in DIESE Richtung: der Aggregat-Eintrag gehoert nicht in einen
+  // Verlauf, den niemand aufrufen kann.
+  assert.deepStrictEqual(
+    plain(x.historyFuerModus(list, 'reporting-tds')).map(e => e.token), ['B']);
+  assert.deepStrictEqual(
+    plain(x.historyFuerModus(list, 'brand')).map(e => e.token), ['C'],
+    'Kein anderer Modus darf die 3DS-Zeile mit einsammeln');
+});
+
+test('historyFuerModus laesst sich nicht von Prototyp-Namen ueberrumpeln', () => {
+  // Die Nebenmodi-Tabelle wird ueber den Modus-Namen nachgeschlagen. Ohne
+  // hasOwnProperty kaeme fuer 'constructor' eine Funktion statt einer Liste
+  // zurueck - concat legte sie dann als erlaubten Modus daneben.
+  const x = loadBuilders();
+  const list = [{ id: 'A', token: 'A', mode: 'brand' }];
+  ['constructor', 'toString', '__proto__', 'valueOf'].forEach(name => {
+    assert.doesNotThrow(() => x.historyFuerModus(list, name));
+    assert.deepStrictEqual(plain(x.historyFuerModus(list, name)), []);
+  });
 });
 
 test('historyLaden vertraegt Private Mode', () => {
@@ -105,7 +144,7 @@ test('Verlaufseintrag traegt den Super-User-Account nur im Settlement-Modus', ()
     settlementSuperUser: true, settlementAccountId: '99999',
   };
 
-  ['brand', 'terminal', 'export', 'card'].forEach(mode => {
+  ['brand', 'terminal', 'export', 'card', 'reporting', 'reporting-tds'].forEach(mode => {
     const e = historyEintragBauen(mode, 'tok-' + mode, st, '2026-07-24T10:00:00Z', 'SUCCESS');
     assert.strictEqual(e.account, '', `Modus ${mode} darf den Settlement-Account nicht merken`);
   });

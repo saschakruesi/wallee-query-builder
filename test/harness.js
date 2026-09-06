@@ -211,6 +211,28 @@ const EXPORTED = [
   // Zeitraum/Spaces fuer die Bloecke - Step 7 haengt daran (siehe §6.2 des Berichts).
   'reportingExportOptionen',
   'aktualisiereReportingInputs',
+  // Verdrahtung der 3DS-Failure-Seite (Iteration 2, Task 4d). Dieselbe
+  // Aufteilung wie beim Aggregat daneben: eine reine Regel
+  // (reportingTdsQueryNoetig - wird die zweite Abfrage ueberhaupt abgesetzt),
+  // der Ingest-Pfad und die Testnaht auf das zuletzt gebaute Modell.
+  //
+  // abfrageFilter() ist die EINE Quelle fuer Zeitraum und Spaces: beide
+  // Reporting-Abfragen muessen denselben Schnitt sehen, sonst rechnen die
+  // Anteils-Kacheln der 3DS-Seite gegen eine fremde Grundgesamtheit.
+  // REPORTING_TDS_SCREEN_ZEILEN ist der Bildschirm-Deckel der Zeilentabelle -
+  // ein Test liest ihn aus DERSELBEN Quelle wie der Code.
+  'reportingTdsQueryNoetig',
+  'abfrageFilter',
+  'ingestReportingTdsCsv',
+  'uebergibReportingTdsCsv',
+  'renderReportingTdsReport',
+  'reportingTdsModellAktuell',
+  'reportingTdsExportOptionen',
+  'REPORTING_TDS_SCREEN_ZEILEN',
+  // Der Moduswechsel als Naht: die Panel-Sichtbarkeit der 3DS-Seite haengt
+  // nicht nur am Modus, sondern auch daran, ob es etwas zu zeigen gibt -
+  // ohne setMode() liesse sich das Zusammenspiel der beiden nicht pruefen.
+  'setMode',
   // Reporting-Ausgabe (Task 5b): Zellformatierung, Balken-SVG, CSV und
   // PDF-Layout. Alles reine Funktionen; nur der XLSX-Schreiber braucht den
   // Vendor-Block und wird deshalb in test/reporting-xlsx.test.js separat
