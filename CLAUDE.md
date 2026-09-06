@@ -1384,7 +1384,7 @@ vier aus v5.12, die letzten vier aus der 3DS-Seite in v5.13.
    Ausgaben mit — der Hinweis des Blocks steht in jeder von ihnen, und seit der
    Abschlussrunde auch in der Prosa daneben (vorher wies die Kachel „mindestens" aus und
    der Satz darunter dieselbe Zahl als exakt).
-8. **Die Kachel «Bestellungen mit ≥ 2 3DS-Fehlschlägen» kommt ohne den zugehörigen
+8. **Die Kachel «Bestellungen mit 2 oder mehr 3DS-Fehlschlägen» kommt ohne den zugehörigen
    Betrag** (§3.8 nennt „der Betrag, der nicht verloren ist" als Ziel). Er ist aus diesen
    Zeilen **ohne Doppelzählung nicht bildbar**: jeder gescheiterte Versuch trägt den vollen
    Betrag der Bestellung erneut, und der Bestellwert selbst steht in keiner Spalte. Eine

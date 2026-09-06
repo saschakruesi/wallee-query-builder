@@ -163,7 +163,7 @@ test('Kacheln: Zahlen von Hand an der Fixture', () => {
   // Fuenf Bestellungen (ORD-1001..1003, ORD-2001, ORD-2002), davon zwei mit
   // >= 2 3DS-Fehlschlaegen, davon eine am Ende bezahlt.
   assert.strictEqual(zeile(b, 'Bestellungen')[1], 5);
-  assert.strictEqual(zeile(b, 'Bestellungen mit ≥ 2 3DS-Fehlschlägen')[1], 2);
+  assert.strictEqual(zeile(b, 'Bestellungen mit 2 oder mehr 3DS-Fehlschlägen')[1], 2);
   assert.strictEqual(zeile(b, 'Mehrfach gescheiterte Bestellungen (Anteil)')[1], (2 / 5) * 100);
   assert.strictEqual(zeile(b, 'Mehrfach gescheitert und am Ende bezahlt')[1], (1 / 2) * 100);
 });
@@ -747,10 +747,13 @@ test('PDF: Titelblock wird Dokumentkopf, seine Prosa ein Abschnitt "Grundlagen"'
   assert.strictEqual(p.kopfzeilen[0], 'Bericht: Gescheiterte Zahlungsversuche mit 3-D Secure');
   assert.strictEqual(p.tabellen[0].titel, 'Grundlagen');
   assert.strictEqual(p.tabellen[0].nurHinweis, true);
-  // Der erste Sachabschnitt beginnt auf einer frischen Seite.
+  // KEIN erzwungener Umbruch - auch nicht vor dem ersten Sachabschnitt: die
+  // Seite hat nur ein Kapitel, und ein Umbruch hier verschenkte Seite 1 an
+  // Titelblock und "Grundlagen" allein. Alle Abschnitte laufen ueber den
+  // Platzcheck in reportingPdfSchreiben.
   assert.strictEqual(p.tabellen[1].titel, 'Kennzahlen');
-  assert.strictEqual(p.tabellen[1].seitenumbruchDavor, true);
-  assert.strictEqual(p.tabellen[2].seitenumbruchDavor, false);
+  assert.ok(p.tabellen.every(t => t.seitenumbruchDavor === false),
+    'die 3DS-Seite setzt keinen erzwungenen Seitenumbruch');
 });
 
 test('PDF: die Zellen sind FERTIGE Strings, mit dem Format ihrer Zelle', () => {

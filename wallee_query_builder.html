@@ -8693,7 +8693,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     kachel('Wiederholer (Transaktionen)', k.wiederholerAnteil, 'pct');
     kachel('Am Ende doch bezahlt (Transaktionen)', k.amEndeBezahltAnteil, 'pct');
     kachel('Bestellungen', m.bestellungen.gesamt, zaehler);
-    kachel('Bestellungen mit ≥ 2 3DS-Fehlschlägen', m.bestellungen.mehrfach, zaehler);
+    kachel('Bestellungen mit 2 oder mehr 3DS-Fehlschlägen', m.bestellungen.mehrfach, zaehler);
     kachel('Mehrfach gescheiterte Bestellungen (Anteil)', m.bestellungen.mehrfachAnteil, 'pct');
     kachel('Mehrfach gescheitert und am Ende bezahlt', m.bestellungen.mehrfachBezahltAnteil, 'pct');
     m.waehrungen.forEach(w => kachel('Betroffenes Volumen', w.betrag, 'betrag', w.waehrung));
@@ -9133,7 +9133,6 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   function reportingTdsPdfBloecke(modell, optionen) {
     const kopfzeilen = [];
     const tabellen = [];
-    let erste = true;
     reportingTdsExportBloecke(modell, optionen).forEach(b => {
       if (!b.kanal) {
         // Der Titelblock wird zur Kopfzeile des Dokuments, seine Prosa haengt
@@ -9146,11 +9145,14 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         }
         return;
       }
-      // Ein Seitenumbruch nur vor dem ERSTEN Abschnitt (die Seite hat nur ein
-      // Kapitel); die uebrigen laufen wie im Aggregat mit dem Platzcheck in
-      // reportingPdfSchreiben.
-      tabellen.push(reportingPdfTabelle(reportingTdsPdfSicht(b), b.titel, erste));
-      erste = false;
+      // KEIN erzwungener Seitenumbruch - auch nicht vor dem ersten Abschnitt.
+      // Die Seite hat nur ein Kapitel, es gibt also nichts abzugrenzen; ein
+      // Umbruch hier liess Seite 1 mit Titelblock und "Grundlagen" zu vier
+      // Fuenfteln leer stehen, bei einem Bericht von drei bis vier Seiten.
+      // Alle Abschnitte laufen deshalb ueber den Platzcheck in
+      // reportingPdfSchreiben, der genau dann umbricht, wenn der Titel sonst
+      // verwaist am Seitenende stuende.
+      tabellen.push(reportingPdfTabelle(reportingTdsPdfSicht(b), b.titel, false));
     });
     return { titel: '3DS-FAILURES / 3-D SECURE FAILURE REPORT', kopfzeilen, tabellen };
   }
