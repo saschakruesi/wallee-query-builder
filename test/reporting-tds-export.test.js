@@ -373,6 +373,20 @@ test('"Kein Wallet" und "Unbekannt" sind zwei verschiedene Aussagen', () => {
   assert.notStrictEqual(B.reportingLabel('-'), B.reportingLabel(B.REPORTING_UNBEKANNT));
 });
 
+test('Der Wallet-Hinweis nennt die andere Grundgesamtheit des Aggregat-Blocks', () => {
+  // Dieselbe Achse bedeutet in den zwei Panels desselben Modus Verschiedenes:
+  // das Aggregat wirft '-' und UNKNOWN weg (es misst "wie viel laeuft ueber
+  // ein Wallet"), diese Liste fuehrt beide als eigene Eimer. Beides ist
+  // begruendet - aber ohne den Halbsatz haelt der Leser die Differenz zwischen
+  // den zwei Tabellen fuer einen Fehler.
+  const h = block(bloecke(), 'Wallet').hinweis;
+  assert.match(h, /Anders als der Wallet-Block des Reporting-Reports/);
+  assert.match(h, /nur Versuche MIT Wallet/);
+  // Und ohne Ortsangabe: der Hinweis steht auch im eigenen PDF und in der
+  // eigenen Excel-Mappe, wo der Reporting-Report nicht danebensteht.
+  assert.doesNotMatch(h, /darüber/);
+});
+
 test('Kein Block traegt einen rohen Eimer-Schluessel', () => {
   const schluessel = []
     .concat(B.REPORTING_TDS_GRUENDE, B.REPORTING_TDS_DAUER, B.REPORTING_TDS_BETRAG, ['-'])
