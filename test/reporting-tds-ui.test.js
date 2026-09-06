@@ -189,6 +189,52 @@ test('Wird das Aggregat neu gebaut, zieht das 3DS-Modell mit', () => {
   assert.doesNotMatch(el('reportingTdsOutput').innerHTML, /Anteil an allen gescheiterten/);
 });
 
+// --- Ein Aggregat aus einem anderen Schnitt ist kein Nenner ---------------
+
+test('filterGleich vergleicht Zeitraum UND Spaces', () => {
+  const { app } = starte();
+  const f = { start: 'a', end: 'b', spaces: ['1', '2'] };
+  assert.strictEqual(app.filterGleich(f, { start: 'a', end: 'b', spaces: ['1', '2'] }), true);
+  assert.strictEqual(app.filterGleich(f, { start: 'x', end: 'b', spaces: ['1', '2'] }), false);
+  assert.strictEqual(app.filterGleich(f, { start: 'a', end: 'x', spaces: ['1', '2'] }), false);
+  assert.strictEqual(app.filterGleich(f, { start: 'a', end: 'b', spaces: ['1'] }), false);
+  assert.strictEqual(app.filterGleich(f, { start: 'a', end: 'b', spaces: ['2', '1'] }), false);
+  // Ein fehlender Merker ist nie gleich - sonst gaelte "noch nichts geladen"
+  // als Uebereinstimmung.
+  assert.strictEqual(app.filterGleich(f, null), false);
+  assert.strictEqual(app.filterGleich(null, f), false);
+});
+
+test('Zwei Importe aus verschiedenen Zeitraeumen ergeben keine Anteils-Kacheln', () => {
+  // Der Fall, den der API-Lauf ausschliesst, der CSV-Import aber nicht: jeder
+  // Import haelt den Stand des Pickers zum Zeitpunkt seines Imports fest.
+  // Ohne den Abgleich stuende dort "Juli-Fehlschlaege / August-Fehlschlaege" -
+  // ein plausibel aussehender Prozentwert ueber einer Liste, zu der er nicht
+  // gehoert.
+  const { app, el } = starte({ wallee_query_builder_v6: REPORTING() });
+  app.ingestReportingCsv(AGG_CSV);                     // Juli
+  const st = app.getState();
+  st.startDate = '2026-08-01';
+  st.endDate = '2026-09-01';
+  assert.strictEqual(app.ingestReportingTdsCsv(TDS_CSV), true);   // August
+
+  assert.strictEqual(app.reportingTdsModellAktuell().kpi.hatAggregat, false);
+  assert.doesNotMatch(el('reportingTdsOutput').innerHTML, /Anteil an allen gescheiterten/);
+});
+
+test('Auch verschiedene Spaces trennen die beiden Importe', () => {
+  const { app } = starte({ wallee_query_builder_v6: REPORTING({
+    spaces: [
+      { id: '90001', label: '', selected: true },
+      { id: '90002', label: '', selected: false },
+    ],
+  }) });
+  app.ingestReportingCsv(AGG_CSV);
+  app.getState().spaces[1].selected = true;            // eine Space mehr
+  assert.strictEqual(app.ingestReportingTdsCsv(TDS_CSV), true);
+  assert.strictEqual(app.reportingTdsModellAktuell().kpi.hatAggregat, false);
+});
+
 test('Das Haendler-Land baut auch das 3DS-Modell neu', () => {
   // Das Land steckt nur im Aggregat-Modell - aber ueber dessen Neubau haengt
   // der Nenner der 3DS-Kacheln daran.
@@ -335,6 +381,25 @@ test('Die Zeilentabelle wird auf dem Bildschirm gedeckelt und sagt es', () => {
   assert.match(html, /Vollständige Liste im Excel\/CSV/);
 });
 
+test('Die <details>-Beschriftung nennt die Gesamtzahl, nicht die gedeckelte', () => {
+  // Sonst stuende "Tabelle (500 Zeilen)" ueber einem Hinweis, der von "den
+  // ersten 500 von 520" spricht - wer nur das Summary liest, haelt 500 fuer
+  // die Gesamtzahl.
+  const deckel = loadBuilders().REPORTING_TDS_SCREEN_ZEILEN;
+  const { app, el } = starte({ wallee_query_builder_v6: REPORTING() });
+  app.ingestReportingTdsCsv(vieleZeilen(deckel + 20));
+  const html = el('reportingTdsOutput').innerHTML;
+  assert.match(html, /<summary>Tabelle \(500 von 520 Zeilen\)<\/summary>/);
+  assert.doesNotMatch(html, /<summary>Tabelle \(500 Zeilen\)<\/summary>/);
+});
+
+test('Ohne Deckel nennt die Beschriftung schlicht die Zeilenzahl', () => {
+  // Gegenprobe: die Doppelangabe darf nicht zum Dauerzustand werden.
+  const { app, el } = starte({ wallee_query_builder_v6: REPORTING() });
+  app.ingestReportingTdsCsv(vieleZeilen(25));
+  assert.match(el('reportingTdsOutput').innerHTML, /<summary>Tabelle \(25 Zeilen\)<\/summary>/);
+});
+
 test('Unterhalb des Deckels steht kein Hinweis', () => {
   // Gegenprobe: sonst waere der Hinweis ein Dauerzustand.
   const { app, el } = starte({ wallee_query_builder_v6: REPORTING() });
@@ -461,6 +526,10 @@ function textAntwort(status, text) {
 
 // zweiterSubmit: was die ZWEITE /submit-Anfrage beantwortet (null = wie die
 // erste). So laesst sich ein Fehlschlag genau der 3DS-Abfrage nachstellen.
+// fehlerAbSubmit: ab der wievielten /submit-Anfrage es schiefgeht - fuer die
+// Tests, die ZWEI Laeufe hintereinander brauchen (Token 3 und 4).
+// erstesResultText: was der Result-Abruf des AGGREGATS liefert; damit laesst
+// sich ein gescheiterter Aggregat-Ingest bei geglueckter 3DS-Abfrage bauen.
 function router(opt) {
   const o = opt || {};
   let submits = 0;
@@ -473,6 +542,9 @@ function router(opt) {
       submits++;
       sqls.push(JSON.parse(req.body).sql);
       if (submits === 2 && o.zweiterSubmit) return o.zweiterSubmit;
+      if (o.fehlerAbSubmit && submits >= o.fehlerAbSubmit) {
+        return jsonAntwort(500, { fehler: 'Analytics kaputt' });
+      }
       return jsonAntwort(201, { queryToken: 'tok-' + submits });
     }
     if (u.includes('/status/')) return jsonAntwort(200, { status: 'SUCCESS' });
@@ -481,7 +553,12 @@ function router(opt) {
       if (token === 'tok-2' && o.zweitesResultStatus) {
         return textAntwort(o.zweitesResultStatus, '');
       }
-      return textAntwort(200, token === 'tok-2' ? TDS_CSV : AGG_CSV);
+      if (token === 'tok-1' && o.erstesResultText != null) {
+        return textAntwort(200, o.erstesResultText);
+      }
+      // Ungerade Token sind die Aggregat-Abfragen, gerade die 3DS-Abfragen.
+      const tds = Number(token.slice(4)) % 2 === 0;
+      return textAntwort(200, tds ? TDS_CSV : AGG_CSV);
     }
     if (u.includes('/query/') && m === 'DELETE') return jsonAntwort(200, { ok: true });
     return jsonAntwort(404, { ok: false, fehler: 'unbekannt' });
@@ -518,19 +595,43 @@ test('Submit im Reporting-Modus setzt beide Abfragen ab und befuellt beide Panel
   assert.ok(aktiv(el('reportingTdsSection')));
 });
 
+// Aus einem SQL herausgeloest, was den Schnitt ausmacht: das Zeitfenster und
+// der Space-Filter. Beides steht in den beiden Queries mehrfach (CTEs), deshalb
+// als Menge - verglichen wird, WAS gefiltert wird, nicht wie oft.
+const einmalig = arr => Array.from(new Set(arr)).sort();
+const zeitfenster = sql => einmalig(sql.match(/TIMESTAMP '[^']+'/g) || []);
+const spaceFilter = sql => einmalig(sql.match(/ca\.spaceid (?:=|IN) [^\n]+/g) || []);
+
 test('Beide Abfragen sehen denselben Zeitraum und dieselben Spaces', async () => {
-  const { el, rt } = starteApi({ reportingChannel: 'ECOM' });
+  // Gemessen werden BEIDE SQL gegeneinander, nicht nur das zweite gegen den
+  // State: submitUndReport nimmt das SQL der ersten Abfrage aus dem Kopierfeld,
+  // also muss generate() es dort erst hineinschreiben. Stuende dort ein
+  // Platzhalter, belegte der Test nur, dass die 3DS-Query den State sieht.
+  const { app, el, rt } = starteApi({
+    reportingChannel: 'ECOM',
+    spaces: [
+      { id: '90001', label: '', selected: true },
+      { id: '90002', label: '', selected: true },
+      { id: '90003', label: '', selected: false },
+    ],
+  });
   await ruhe();
-  el('sqlOutput').textContent = 'SELECT 1';
+  app.generate();
+  assert.match(el('sqlOutput').textContent, /chargeattempt/,
+    'generate() muss die Aggregat-Query ins Kopierfeld schreiben');
   el('submitBtn').dispatch('click');
   await ruhe();
 
-  // Der Zeitraum stammt aus derselben Quelle wie das SQL im Kopierfeld; hier
-  // wird er an der zweiten Query nachgemessen (die erste ist im Test ein
-  // Platzhalter, weil submitUndReport das SQL aus dem Feld nimmt).
-  assert.match(rt.sqls[1], /2026-07-01 00:00:00/);
-  assert.match(rt.sqls[1], /2026-08-01 00:00:00/);
-  assert.match(rt.sqls[1], /ca\.spaceid = 90001/);
+  assert.strictEqual(rt.sqls.length, 2, 'Erst mit zwei Queries gibt es etwas zu vergleichen');
+  assert.deepStrictEqual(zeitfenster(rt.sqls[1]), zeitfenster(rt.sqls[0]),
+    'Beide Abfragen tragen dasselbe Zeitfenster');
+  assert.deepStrictEqual(spaceFilter(rt.sqls[1]), spaceFilter(rt.sqls[0]),
+    'Beide Abfragen tragen denselben Space-Filter');
+  // Und die Werte selbst, damit der Vergleich nicht auch bei zwei leeren
+  // Mengen gruen waere.
+  assert.deepStrictEqual(zeitfenster(rt.sqls[0]),
+    ["TIMESTAMP '2026-07-01 00:00:00'", "TIMESTAMP '2026-08-01 00:00:00'"]);
+  assert.deepStrictEqual(spaceFilter(rt.sqls[0]), ['ca.spaceid IN (90001, 90002)']);
 });
 
 test('Bei Kanal POS bleibt es bei einer Abfrage', async () => {
@@ -614,4 +715,112 @@ test('Die zweite Abfrage schreibt einen eigenen Verlaufseintrag mit eigenem Toke
   assert.strictEqual(agg.token, 'tok-1');
   assert.strictEqual(tds.account, '', 'Der Account-Override gilt hier nicht');
   assert.strictEqual(tds.filterSummary, '3DS-Failures · E-Commerce');
+});
+
+// --- Laufgrenzen: kein Stand des Vorlaufs ueberlebt einen neuen -----------
+
+test('Ein neuer Lauf raeumt die 3DS-Seite des vorigen weg', async () => {
+  // Nach einem Beide-Lauf auf Kanal POS wechseln: die zweite Abfrage wird
+  // korrekt nicht abgesetzt - aber ohne Reset bliebe die E-Com-Liste des
+  // Vorlaufs sichtbar stehen, unter einem Report, in dem es sie gar nicht
+  // geben kann.
+  const { app, el, rt } = starteApi({ reportingChannel: 'BOTH' });
+  await ruhe();
+  app.generate();
+  el('submitBtn').dispatch('click');
+  await ruhe();
+  assert.ok(app.reportingTdsModellAktuell(), 'Vorlauf: die 3DS-Seite steht');
+
+  el('reportingChannelPos').checked = true;
+  el('reportingChannelPos').dispatch('change');
+  el('submitBtn').dispatch('click');
+  await ruhe();
+
+  assert.strictEqual(rt.submits(), 3, 'Zwei Aggregat-Abfragen, eine 3DS-Abfrage');
+  assert.strictEqual(app.reportingTdsModellAktuell(), null);
+  assert.strictEqual(el('reportingTdsStatus').textContent, '',
+    'Auch die Statuszeile wird geleert - sonst stuende die Meldung des Vorlaufs '
+    + 'unter einem POS-Report, in dem gar keine 3DS-Abfrage vorgesehen ist');
+  assert.ok(!aktiv(el('reportingTdsSection')));
+});
+
+test('Scheitert die zweite Abfrage, bleibt keine Liste des alten Zeitraums stehen', async () => {
+  // Der teuerste Fall: neuer Zeitraum, Aggregat kommt durch, 3DS-Abfrage
+  // scheitert. Ohne Reset stuende die Juli-Liste dauerhaft unter dem
+  // August-Report - und ihre Anteils-Kacheln rechneten Juli-Fehlschlaege gegen
+  // den August-Nenner.
+  const { app, el } = starteApi({ reportingChannel: 'BOTH' }, { fehlerAbSubmit: 4 });
+  await ruhe();
+  app.generate();
+  el('submitBtn').dispatch('click');
+  await ruhe();
+  assert.ok(app.reportingTdsModellAktuell(), 'Vorlauf: die Juli-Liste steht');
+
+  const st = app.getState();
+  st.startDate = '2026-08-01';
+  st.endDate = '2026-09-01';
+  app.generate();
+  el('submitBtn').dispatch('click');
+  await ruhe();
+
+  assert.strictEqual(app.reportingTdsModellAktuell(), null);
+  assert.ok(app.reportingModellAktuell(), 'Der Aggregat-Report des neuen Laufs steht');
+  assert.strictEqual(el('reportingTdsStatus').dataset.art, 'fehler',
+    'Und die Statuszeile sagt, dass die Liste diesmal fehlt');
+});
+
+// --- Die Abschlussmeldung: drei Zustaende ---------------------------------
+
+test('Die Abschlussmeldung kennt drei Zustaende', () => {
+  // Die zweite Abfrage beschreibt die Fortschrittszeile als LETZTE. Haette sie
+  // nur ihr eigenes Ergebnis im Blick, ueberschriebe ihr Erfolg die
+  // Fehlermeldung des Aggregat-Ingests.
+  const { app } = starte();
+  const m = (a, t) => plain(app.reportingAbschlussMeldung(a, t));
+
+  assert.strictEqual(m(true, true).art, 'erfolg');
+  assert.match(m(true, true).text, /Reporting-Report und 3DS-Failures erstellt/);
+
+  assert.strictEqual(m(true, false).art, 'fehler');
+  assert.match(m(true, false).text, /3DS-Liste konnte nicht geladen werden/);
+  assert.match(m(true, false).text, /unberührt/);
+
+  assert.strictEqual(m(false, true).art, 'fehler');
+  assert.match(m(false, true).text, /3DS-Failures stehen/);
+  assert.doesNotMatch(m(false, true).text, /unberührt/,
+    'Der Reporting-Report steht ja gerade nicht');
+
+  assert.strictEqual(m(false, false).art, 'fehler');
+  assert.match(m(false, false).text, /Weder der Reporting-Report noch die 3DS-Liste/);
+});
+
+test('Der Nachsatz einer 3DS-Fehlermeldung behauptet keinen Report, den es nicht gibt', () => {
+  // Spiegelbild der Abschlussmeldung: derselbe Satz steht im Zeitueberschreitungs-
+  // Hinweis und im catch der zweiten Abfrage.
+  const { app } = starte();
+  assert.match(app.reportingTdsNachsatz(true), /oben ist davon unberührt/);
+  assert.match(app.reportingTdsNachsatz(false), /fehlt ebenfalls/);
+  assert.doesNotMatch(app.reportingTdsNachsatz(false), /unberührt/);
+});
+
+test('Ein Erfolg der zweiten Abfrage ueberschreibt die Fehlermeldung der ersten nicht', async () => {
+  // Der Aggregat-Ingest scheitert an fehlenden Pflichtspalten, die 3DS-Liste
+  // kommt sauber zurueck. Ohne die Auswertung des Rueckgabewerts von
+  // holeErgebnisInBericht stuende danach "Reporting-Report und 3DS-Failures
+  // erstellt" in Gruen - waehrend es den Reporting-Report gar nicht gibt.
+  const { app, el } = starteApi({ reportingChannel: 'BOTH' },
+    { erstesResultText: 'block,anzahl_attempts\nDIM,1\n' });
+  await ruhe();
+  app.generate();
+  el('submitBtn').dispatch('click');
+  await ruhe();
+
+  assert.strictEqual(app.reportingModellAktuell(), null, 'Der Aggregat-Report fehlt');
+  assert.ok(app.reportingTdsModellAktuell(), 'Die 3DS-Liste steht');
+  const zeile = el('submitFortschrittText').textContent;
+  assert.doesNotMatch(zeile, /Reporting-Report und 3DS-Failures erstellt/);
+  assert.match(zeile, /3DS-Failures stehen/);
+  assert.ok(el('submitFortschritt').classList.contains('fehler'),
+    'und zwar in Rot, nicht in Gruen');
+  assert.ok(!el('submitFortschritt').classList.contains('erfolg'));
 });

@@ -223,6 +223,24 @@ const EXPORTED = [
   // ein Test liest ihn aus DERSELBEN Quelle wie der Code.
   'reportingTdsQueryNoetig',
   'abfrageFilter',
+  // filterGleich() entscheidet, ob das Aggregat als Nenner der beiden
+  // Anteils-Kacheln taugt: nur wenn es DENSELBEN Schnitt sieht wie die
+  // Zeilenliste. Reine Funktion, deshalb hier - der Fall, den sie abfaengt
+  // (zwei Ingests aus verschiedenen Laeufen), laesst sich am Modell allein
+  // nicht ansehen.
+  //
+  // reportingAbschlussMeldung() ist die zweite reine Regel dieser Verdrahtung:
+  // die zweite Abfrage beschreibt die Fortschrittszeile als LETZTE und darf
+  // dabei die Fehlermeldung der ersten nicht ueberschreiben.
+  //
+  // generate() kommt mit, damit ein Test das SQL der ERSTEN Abfrage so
+  // erzeugt, wie der Submit-Knopf es vorfindet (er nimmt es aus dem
+  // Kopierfeld) - sonst liesse sich nicht messen, dass BEIDE Queries denselben
+  // Schnitt tragen.
+  'filterGleich',
+  'reportingAbschlussMeldung',
+  'reportingTdsNachsatz',
+  'generate',
   'ingestReportingTdsCsv',
   'uebergibReportingTdsCsv',
   'renderReportingTdsReport',

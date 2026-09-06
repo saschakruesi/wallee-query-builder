@@ -38,6 +38,10 @@ function stubElement() {
 }
 
 const downloads = [];
+// Die erzeugten <a>-Elemente: nur an ihnen stehen Dateiname und der Klick, die
+// downloadDatei() setzt. Der Blob allein sagt nichts darueber, wie die Datei
+// beim Nutzer heisst.
+const anker = [];
 
 const sandbox = {
   console, setTimeout, clearTimeout, Buffer, Uint8Array, Date, Math, JSON,
@@ -52,7 +56,11 @@ const sandbox = {
     getElementById: () => stubElement(),
     querySelector: () => stubElement(),
     querySelectorAll: () => [],
-    createElement: () => stubElement(),
+    createElement: (tag) => {
+      const el = stubElement();
+      if (String(tag).toLowerCase() === 'a') anker.push(el);
+      return el;
+    },
     createRange: () => ({ selectNodeContents() {} }),
     addEventListener() {},
     body: stubElement(),
@@ -76,7 +84,11 @@ vm.runInContext(
   '\n;globalThis.__x.exportReportingXlsx = exportReportingXlsx;' +
   '\n;globalThis.__x.exportReportingTdsXlsx = exportReportingTdsXlsx;' +
   '\n;globalThis.__x.ingestReportingCsv = ingestReportingCsv;' +
-  '\n;globalThis.__x.ingestReportingTdsCsv = ingestReportingTdsCsv;',
+  '\n;globalThis.__x.ingestReportingTdsCsv = ingestReportingTdsCsv;' +
+  '\n;globalThis.__x.exportReportingTdsCsv = exportReportingTdsCsv;' +
+  '\n;globalThis.__x.buildReportingTdsCsv = buildReportingTdsCsv;' +
+  '\n;globalThis.__x.reportingTdsModellAktuell = reportingTdsModellAktuell;' +
+  '\n;globalThis.__x.reportingTdsExportOptionen = reportingTdsExportOptionen;',
   sandbox, { filename: 'app-logic.js' },
 );
 
@@ -318,4 +330,40 @@ test('XLSX-Export: die Reporting-Mappe traegt die 3DS-Liste NICHT mit', async ()
   const wb = await exportiere(() => X.exportReportingXlsx());
   assert.strictEqual(wb.SheetNames.indexOf('3DS-Failures'), -1,
     'Die weitergabefaehige Aggregat-Mappe darf die Zeilenliste nicht enthalten');
+});
+
+// --- Der CSV-Knopf ---------------------------------------------------------
+// Geprueft ist bisher buildReportingTdsCsv direkt; hier der Knopfpfad
+// daneben - Modell-Guard, Dateiname, MIME-Typ und downloadDatei(). Dieselbe
+// Naht wie fuer Excel darueber, mit demselben downloads-Rekorder.
+
+test('CSV-Export: Dateiname, MIME-Typ und der Bericht aus der Blockquelle', async () => {
+  assert.strictEqual(X.ingestReportingTdsCsv(FIXTURE), true);
+  downloads.length = 0;
+  anker.length = 0;
+  X.exportReportingTdsCsv();
+
+  assert.strictEqual(downloads.length, 1, 'Export muss genau eine Datei erzeugen');
+  assert.strictEqual(downloads[0].type, 'text/csv;charset=utf-8');
+  assert.strictEqual(anker.length, 1);
+  assert.match(anker[0].download, /^3ds-failures_\d{4}-\d{2}-\d{2}\.csv$/);
+  // Der BOM steht in der Datei - ohne ihn zeigt Excel Umlaute falsch an.
+  const bytes = new Uint8Array(await downloads[0].arrayBuffer());
+  assert.deepStrictEqual(Array.from(bytes.slice(0, 3)), [0xef, 0xbb, 0xbf], 'UTF-8-BOM fehlt');
+  // Der CSV-Knopf liefert den BERICHT, nicht das Rohergebnis (bewusste
+  // Abweichung von SPEC 5, wie beim Aggregat) - also genau dieselben Bloecke.
+  // Blob.text() dekodiert als UTF-8 und schluckt den BOM dabei; er ist oben
+  // schon an den Bytes nachgewiesen.
+  const text = await downloads[0].text();
+  assert.strictEqual(text, X.buildReportingTdsCsv(
+    X.reportingTdsModellAktuell(), X.reportingTdsExportOptionen()).replace(/^\ufeff/, ''));
+});
+
+test('CSV-Export: ohne Modell entsteht keine Datei', () => {
+  // Der Guard am Knopf. Ohne ihn liefe buildReportingTdsCsv auf null - und der
+  // Nutzer bekaeme statt einer Fehlermeldung eine Ausnahme in der Konsole.
+  assert.strictEqual(X.ingestReportingTdsCsv('weder;Kopf;noch;Zeilen'), false);
+  downloads.length = 0;
+  X.exportReportingTdsCsv();
+  assert.strictEqual(downloads.length, 0);
 });

@@ -8960,6 +8960,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       kopf: behalten.map(c => block.kopf[c]),
       zeilen: quelle.map(z => behalten.map(c => z[c])),
       hinweis: block.hinweis || '',
+      // Die Zeilenzahl VOR dem Deckel bleibt am Block haengen: die
+      // <details>-Beschriftung nennt sonst die gedeckelte Zahl und liest sich
+      // wie die Gesamtzahl (siehe reportingBlockHtml).
+      zeilenGesamt: block.zeilen.length,
     });
     // zellFormate wird MITGEFILTERT, sonst zeigte reportingZellFormat() nach
     // dem Entfernen einer Spalte auf die falsche Zelle. Heute traegt kein
@@ -9730,6 +9734,16 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // beiden Abfragen den Picker einzeln, rechnete die 3DS-Seite ihre Anteile
     // gegen die Grundgesamtheit eines anderen Zeitraums. Siehe abfrageFilter().
     const filter = abfrageFilter();
+    // Ein neuer Lauf raeumt die 3DS-Seite des vorigen weg, BEVOR die erste
+    // Anfrage rausgeht. Ohne das ueberlebte sie jeden Laufwechsel: nach einem
+    // Wechsel auf Kanal POS bliebe die E-Com-Liste des Vorlaufs stehen, und
+    // scheiterte die zweite Abfrage nach einem Zeitraumwechsel, bliebe die
+    // Liste des alten Zeitraums dauerhaft unter dem neuen Report.
+    if (state.mode === 'reporting') reportingTdsZuruecksetzen();
+    // Ob der Aggregat-Report am Ende steht - die Abschlussmeldung braucht es,
+    // sonst ueberschriebe ein Erfolg der zweiten Abfrage die Fehlermeldung der
+    // ersten (siehe reportingAbschlussMeldung).
+    let aggregatOk = false;
 
     try {
       const lauf = await absetzenUndWarten(sql, account);
@@ -9753,7 +9767,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       if (state.mode === 'terminal') {
         await holeErgebnisInReport(token, account);
       } else if (BERICHT_INGEST[state.mode]) {
-        await holeErgebnisInBericht(state.mode, token, account, filter);
+        aggregatOk = await holeErgebnisInBericht(state.mode, token, account, filter);
       } else {
         zeigeFortschritt('Fertig — Ergebnis unten im Verlauf als CSV oder Excel herunterladen.', 'erfolg');
       }
@@ -9766,7 +9780,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       if (apiLauf && !apiLauf.abgebrochen
           && state.mode === 'reporting'
           && reportingTdsQueryNoetig(state.reportingChannel)) {
-        await reportingTdsAbfragen(filter, account);
+        await reportingTdsAbfragen(filter, account, aggregatOk);
       }
     } catch (e) {
       zeigeFortschritt('Die Ausführung ist fehlgeschlagen. Läuft der Proxy noch?', 'fehler');
@@ -10723,6 +10737,26 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     };
   }
 
+  // Sehen zwei Ingests denselben Schnitt? Verglichen wird die FESTGEHALTENE
+  // Form { start, end, spaces } der beiden Zeitraum-Merker, nicht der aktuelle
+  // Stand des Pickers - der kann sich zwischen zwei Ingests beliebig oft
+  // geaendert haben.
+  //
+  // Warum es das braucht: das Aggregat ist der Nenner der beiden
+  // Anteils-Kacheln der 3DS-Seite. Die zwei Ingests laufen nacheinander und
+  // koennen aus verschiedenen Laeufen stammen - ein neuer Aggregat-Lauf, dessen
+  // 3DS-Abfrage danach scheitert, oder zwei von Hand importierte CSV aus
+  // verschiedenen Monaten. Ohne diesen Abgleich stuende dort "Juli-Fehlschlaege
+  // / August-Fehlschlaege": ein plausibel aussehender Prozentwert ueber einer
+  // Liste, zu der er nicht gehoert.
+  function filterGleich(a, b) {
+    if (!a || !b) return false;
+    const sa = a.spaces || [];
+    const sb = b.spaces || [];
+    return a.start === b.start && a.end === b.end
+      && sa.length === sb.length && sa.every((v, i) => v === sb[i]);
+  }
+
   function generate() {
     const { start, end, spaceIds } = abfrageFilter();
     let sql;
@@ -11165,8 +11199,17 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // Verlauf und Stunden tragen keine Kuchen), waere aber kein Widerspruch.
     const kuchen = reportingKuchenHtml(block);
     const balken = block.typ === 'balken' ? reportingBalkenHtml(block) : '';
+    // block.zeilenGesamt traegt die Zeilenzahl VOR einem Deckel (siehe
+    // reportingTdsSicht). Ohne sie naennte das Summary die gedeckelte Zahl -
+    // "Tabelle (500 Zeilen)" ueber einem Hinweis, der von "den ersten 500 von
+    // 520" spricht; wer nur das Summary liest, haelt 500 fuer die Gesamtzahl.
+    const gesamt = typeof block.zeilenGesamt === 'number'
+      ? block.zeilenGesamt : block.zeilen.length;
+    const beschriftung = gesamt > block.zeilen.length
+      ? `Tabelle (${formatIntCH(block.zeilen.length)} von ${formatIntCH(gesamt)} Zeilen)`
+      : `Tabelle (${formatIntCH(gesamt)} Zeilen)`;
     const tabelle = block.zeilen.length > REPORTING_TABELLE_OFFEN
-      ? `<details><summary>Tabelle (${formatIntCH(block.zeilen.length)} Zeilen)</summary>`
+      ? `<details><summary>${beschriftung}</summary>`
         + `${reportingTabelleHtml(block)}</details>`
       : reportingTabelleHtml(block);
     return titel + kuchen + balken + tabelle + hinweis;
@@ -11580,12 +11623,34 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
 
   function reportingTdsModellNeuBauen() {
     if (!reportingTdsRohzeilen) return;
+    // Das Aggregat nur durchreichen, wenn es DENSELBEN Schnitt sieht wie die
+    // Zeilenliste (filterGleich). Sonst entfallen die beiden Anteils-Kacheln
+    // und stehen auf "—" - eine fehlende Zahl ist ehrlicher als eine, die
+    // gegen einen fremden Nenner gerechnet ist. Betrifft zwei Wege, die beide
+    // vorkommen: ein neuer Aggregat-Lauf, dessen 3DS-Abfrage danach scheitert,
+    // und zwei von Hand importierte CSV aus verschiedenen Zeitraeumen.
+    const passend = filterGleich(reportingTdsZeitraum, reportingZeitraum);
     reportingTdsModell = buildReportingTdsModel(reportingTdsRohzeilen, {
-      aggregat: reportingAggregatEcom(),
+      aggregat: passend ? reportingAggregatEcom() : null,
       failureReasons: reportingFailureNachgeladen,
     });
     renderReportingTdsReport();
     aktualisiereReportingTdsPanel();
+  }
+
+  // Alles wegraeumen, was ein frueherer Lauf hinterlassen hat: Modell, Zeilen,
+  // Schnitt und Statuszeile. Ohne diesen Schritt ueberlebte die 3DS-Seite
+  // JEDEN Laufwechsel - beim Umschalten auf Kanal POS bliebe die E-Com-Liste
+  // des Vorlaufs sichtbar, obwohl dort gar keine 3DS-Abfrage vorgesehen ist,
+  // und die elf Setzer der Statuszeile haetten kein Gegenstueck: "Die
+  // 3DS-Abfrage ist fehlgeschlagen" stuende spaeter unter einem POS-Report.
+  function reportingTdsZuruecksetzen() {
+    reportingTdsModell = null;
+    reportingTdsRohzeilen = null;
+    reportingTdsZeitraum = { start: '', end: '', spaces: [] };
+    renderReportingTdsReport();
+    // Leert die Statuszeile UND blendet das Panel aus (kein Modell, kein Text).
+    reportingTdsZeigeStatus('', '');
   }
 
   // Der gemeinsame Kern: geparste Zeilen -> Modell -> Statuszeile -> Ansicht.
@@ -11663,20 +11728,59 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Wort: absetzenUndWarten schreibt waehrend des Laufs hinein, und ohne
   // Abschluss bliebe sie auf „3DS-Liste: Query läuft …" stehen, obwohl der
   // ganze Lauf durch ist.
-  async function reportingTdsAbfragen(filter, account) {
-    const ok = await reportingTdsLauf(filter, account);
+  // Die Abschlussmeldung des ganzen Reporting-Laufs. Drei Zustaende, weil die
+  // beiden Abfragen unabhaengig voneinander scheitern koennen - und weil die
+  // zweite die Fortschrittszeile als LETZTE beschreibt: haette sie nur ihr
+  // eigenes Ergebnis im Blick, ueberschriebe ein Erfolg der 3DS-Liste die
+  // Fehlermeldung des Aggregat-Ingests (fehlende Pflichtspalten, Parserfehler,
+  // toter Result-Abruf) mit "Reporting-Report und 3DS-Failures erstellt",
+  // waehrend der Reporting-Report gar nicht steht.
+  function reportingAbschlussMeldung(aggregatOk, tdsOk) {
+    if (aggregatOk && tdsOk) {
+      return { text: 'Fertig — Reporting-Report und 3DS-Failures erstellt.', art: 'erfolg' };
+    }
+    if (aggregatOk) {
+      return {
+        text: 'Die 3DS-Liste konnte nicht geladen werden — Einzelheiten im Abschnitt '
+          + '„3DS-Failures". Der Reporting-Report oben ist davon unberührt.',
+        art: 'fehler',
+      };
+    }
+    if (tdsOk) {
+      return {
+        text: 'Die 3DS-Failures stehen — der Reporting-Report darüber konnte nicht '
+          + 'gebildet werden. Einzelheiten in seiner Statuszeile.',
+        art: 'fehler',
+      };
+    }
+    return {
+      text: 'Weder der Reporting-Report noch die 3DS-Liste konnten gebildet werden — '
+        + 'Einzelheiten stehen in den Statuszeilen der beiden Abschnitte.',
+      art: 'fehler',
+    };
+  }
+
+  // Der Nachsatz jeder 3DS-Fehlermeldung. Spiegelbild von
+  // reportingAbschlussMeldung: "Der Reporting-Report oben ist davon unberührt"
+  // darf nur dastehen, wenn er tatsaechlich steht - sonst verweist die Meldung
+  // den Leser auf einen Report, den es nicht gibt.
+  function reportingTdsNachsatz(aggregatOk) {
+    return aggregatOk
+      ? 'Der Reporting-Report oben ist davon unberührt.'
+      : 'Der Reporting-Report oben fehlt ebenfalls — Einzelheiten in seiner Statuszeile.';
+  }
+
+  async function reportingTdsAbfragen(filter, account, aggregatOk) {
+    const ok = await reportingTdsLauf(filter, account, aggregatOk);
     // Nach einem Abbruch nicht dazwischenfunken: brichSubmitAb() hat dort
     // bereits „Abgebrochen." gesetzt, und das ist die richtige Auskunft.
     if (apiLauf && apiLauf.abgebrochen) return false;
-    zeigeFortschritt(ok
-      ? 'Fertig — Reporting-Report und 3DS-Failures erstellt.'
-      : 'Die 3DS-Liste konnte nicht geladen werden — Einzelheiten im Abschnitt '
-        + '„3DS-Failures". Der Reporting-Report oben ist davon unberührt.',
-      ok ? 'erfolg' : 'fehler');
+    const meldung = reportingAbschlussMeldung(aggregatOk, ok);
+    zeigeFortschritt(meldung.text, meldung.art);
     return ok;
   }
 
-  async function reportingTdsLauf(filter, account) {
+  async function reportingTdsLauf(filter, account, aggregatOk) {
     try {
       reportingTdsZeigeStatus('3DS-Liste wird abgefragt …', '');
       const sql = buildReportingTdsQuery({
@@ -11684,8 +11788,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       });
       const lauf = await absetzenUndWarten(sql, account, {
         praefix: '3DS-Liste: ',
-        zeitHinweis: 'Der Reporting-Report oben ist davon unberührt; für die 3DS-Liste '
-          + 'bitte den Zeitraum eingrenzen und neu absetzen.',
+        zeitHinweis: reportingTdsNachsatz(aggregatOk) + ' Für die 3DS-Liste bitte den '
+          + 'Zeitraum eingrenzen und neu absetzen.',
       });
       if (lauf.abgebrochen) {
         reportingTdsZeigeStatus('3DS-Abfrage abgebrochen.', 'fehler');
@@ -11713,8 +11817,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       if (!r.ok) { reportingTdsZeigeStatus(r.fehler, 'fehler'); return false; }
       return ingestReportingTdsCsv(r.text, filter);
     } catch (e) {
-      reportingTdsZeigeStatus('Die 3DS-Abfrage ist fehlgeschlagen. Der Reporting-Report '
-        + 'oben bleibt davon unberührt.', 'fehler');
+      reportingTdsZeigeStatus(
+        'Die 3DS-Abfrage ist fehlgeschlagen. ' + reportingTdsNachsatz(aggregatOk), 'fehler');
       return false;
     }
   }
