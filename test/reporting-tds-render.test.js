@@ -21,7 +21,23 @@ const path = require('node:path');
 const { loadBuilders, plain } = require('./harness');
 const { makeDocument } = require('./dom-stub');
 
-const B = loadBuilders({ document: makeDocument() });
+// Das Dokument bleibt greifbar, und jeder Knoten, den die App beim Laden
+// aufloest, wird mitgeschrieben: der letzte Test dieser Datei haelt sie danach
+// gegen einen Schnappschuss. Anders liesse sich "die Ausgabe schreibt nicht ins
+// DOM" gar nicht messen - die App holt ihre Elemente EINMAL beim Laden in
+// Konstanten (wallee_query_builder.html, ab „const spaceSection = …"), ein
+// spaeterer Schreibzugriff geht also ueber diese Referenzen und nie mehr ueber
+// document.getElementById.
+const DOC = makeDocument();
+const KNOTEN = [];
+const echtesGetElementById = DOC.getElementById.bind(DOC);
+DOC.getElementById = id => {
+  const el = echtesGetElementById(id);
+  if (!KNOTEN.includes(el)) KNOTEN.push(el);
+  return el;
+};
+
+const B = loadBuilders({ document: DOC });
 
 const FIXTURE = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'reporting-tds-beispiel.csv'), 'utf8');
@@ -203,9 +219,48 @@ test('Zelltexte werden escaped - auch neben einer Link-Zelle', () => {
   assert.notStrictEqual(abschnitt.indexOf('rel="noopener"'), -1);
 });
 
-test('Der Ausgabe-Aufruf fasst kein DOM an - er gibt nur Markup zurueck', () => {
-  // Reine Funktion: zweimal aufgerufen kommt zweimal dasselbe heraus, und es
-  // gibt keinen Zustand dazwischen.
+test('Die Ausgabe schreibt nicht ins DOM - sie gibt nur Markup zurueck', () => {
+  // Der Test hiess frueher „fasst kein DOM an" und belegte nur Idempotenz -
+  // die haette auch eine Funktion, die brav in ein Element hineinschreibt.
+  // Gemessen wird jetzt zweierlei:
+  //   1. waehrend des Aufrufs holt sich niemand ein Element vom Dokument, und
+  //   2. kein Knoten, den die App beim Laden aufgeloest hat, hat sich
+  //      veraendert.
+  // Was von aussen NICHT messbar ist: ein LESEN ueber eine Referenz, die
+  // schon beim Laden in einer Konstante steckt. Deshalb heisst der Test jetzt
+  // „schreibt nicht ins DOM" statt „fasst kein DOM an" - das ist, was er
+  // zeigt. Zusammen mit der Idempotenz unten reicht es fuer die Zusage, auf
+  // die es ankommt: dieselbe Blockliste ergibt dasselbe Markup, egal in
+  // welchem Zustand die Seite ist.
   const m = modell();
-  assert.strictEqual(plain(html(m)), plain(html(m)));
+  assert.ok(KNOTEN.length > 10, `nur ${KNOTEN.length} Knoten - der Schnappschuss prueft nichts`);
+  const schnappschuss = () => KNOTEN.map(el => [
+    el.innerHTML, el.textContent, el.className, el.value, el.children.length,
+    JSON.stringify(el.attributes), JSON.stringify(el.dataset),
+  ].join(' '));
+  const vorher = schnappschuss();
+
+  const beruehrt = [];
+  const echt = {};
+  ['getElementById', 'querySelector', 'querySelectorAll', 'createElement'].forEach(name => {
+    echt[name] = DOC[name];
+    DOC[name] = function (...args) {
+      beruehrt.push(`${name}(${args.join(', ')})`);
+      return echt[name].apply(DOC, args);
+    };
+  });
+  let markup;
+  try {
+    markup = html(m);
+  } finally {
+    Object.keys(echt).forEach(name => { DOC[name] = echt[name]; });
+  }
+
+  assert.deepStrictEqual(beruehrt, [],
+    `Dokument-Zugriffe waehrend der Ausgabe: ${beruehrt.join(' · ')}`);
+  assert.deepStrictEqual(schnappschuss(), vorher, 'die Ausgabe hat einen Knoten veraendert');
+  // Der Aufbau ist nicht leer - sonst waeren beide Nullmessungen wertlos.
+  assert.ok(markup.length > 1000, `nur ${markup.length} Zeichen Markup`);
+  // Und weiterhin idempotent: zweimal aufgerufen kommt zweimal dasselbe heraus.
+  assert.strictEqual(plain(markup), plain(html(m)));
 });

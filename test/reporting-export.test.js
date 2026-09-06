@@ -508,6 +508,23 @@ test('E6: die PAN-Quelle steht durchgehend in einer Sprache', () => {
   assert.ok(namen.includes('Unbekannt'));
 });
 
+test('E6: besteht die PAN-Quelle nur aus „Unbekannt“, entfaellt der Block', () => {
+  // Die Regel gab es hier schon, aber als Inline-Ausdruck; seit der Durchsicht
+  // zu Task 4c laeuft sie ueber denselben Helfer wie die sieben offenen Listen
+  // der 3DS-Failure-Seite (tdsListeHatAussage). Zwei Formulierungen derselben
+  // Regel liefen mit der Zeit auseinander - dann saehe der eine Bericht bei
+  // gleicher Datenlage anders aus als der andere. Der Test haelt das Verhalten
+  // fest, damit die Zusammenlegung eine bleibt.
+  const { reportingExportBloecke } = loadBuilders();
+  const m = fixturModell();
+  m.kanaele.ECOM.panTypes = [{
+    panType: 'UNKNOWN', attempts: 400, anteilAttempts: 100, successRate: 0,
+  }];
+  const b = plain(reportingExportBloecke(m, {}));
+  assert.ok(!b.some(x => x.titel === 'E-Com · PAN-Quelle'),
+    'eine Tabelle mit der einzigen Zeile „Unbekannt 100 %“ sagt nichts');
+});
+
 // --- Fixture ----------------------------------------------------------------
 
 test('Fixture: alle drei Kanaele, Titelblock nennt Zeitraum und Spaces', () => {

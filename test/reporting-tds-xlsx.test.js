@@ -237,11 +237,36 @@ test('XLSX: kein Blatt traegt eine Zeile aus block.kuchen', () => {
   assert.ok(mitKuchen.length >= 3, `nur ${mitKuchen.length} Bloecke mit Kuchen`);
 
   const { wb } = schreibeUndLies(m);
+  const zeilen = blattZeilen(wb, '3DS-Failures');
   const zellen = [];
   wb.SheetNames.forEach(name => {
     blattZeilen(wb, name).forEach(z => z.forEach(w => zellen.push(String(w == null ? '' : w))));
   });
-  mitKuchen.forEach(b => b.kuchen.forEach(k => {
-    assert.ok(!zellen.includes(k.titel), `Kuchen-Titel "${k.titel}" steht in der Mappe`);
-  }));
+
+  mitKuchen.forEach(b => {
+    b.kuchen.forEach(k => {
+      // Titel und Farbschluessel sind die beiden Werte, die NUR der Kuchen
+      // fuehrt - eine mitgeschriebene Legende braechte sie mit.
+      assert.ok(!zellen.includes(k.titel), `Kuchen-Titel "${k.titel}" steht in der Mappe`);
+      k.segmente.forEach(s => assert.ok(!zellen.includes(String(s.farbe)),
+        `Farbschluessel "${s.farbe}" steht in der Mappe`));
+    });
+
+    // Der Teil, der bei einem echten Fehler braeche. Segment-LABEL und -WERT
+    // stehen sehr wohl im Blatt - sie SIND die Zeilen der Tabelle darunter,
+    // ein Vergleich auf sie allein waere deshalb immer gruen. Geprueft wird
+    // stattdessen der Abschnitt selbst: zwischen Spaltenkopf und Hinweiszeile
+    // steht genau die Zeilenliste des Blocks, Zeile fuer Zeile und in ihrer
+    // Reihenfolge. Jede zusaetzlich geschriebene Segmentzeile faellt hier auf,
+    // auch wenn ihr Label fuer sich genommen unauffaellig aussieht.
+    const t = titelZeile(zeilen, b.titel);
+    const daten = zeilen.slice(t + 2, t + 2 + b.zeilen.length);
+    assert.strictEqual(daten.length, b.zeilen.length, `Abschnitt "${b.titel}" zu kurz`);
+    daten.forEach((z, i) => assert.strictEqual(String(z[0] == null ? '' : z[0]),
+      String(b.zeilen[i][0]), `Abschnitt "${b.titel}", Zeile ${i}`));
+    // Direkt danach folgt der Hinweis des Blocks - und nicht noch ein Segment.
+    const danach = zeilen[t + 2 + b.zeilen.length] || [];
+    assert.strictEqual(String(danach[0] == null ? '' : danach[0]), b.hinweis,
+      `nach den Zeilen von "${b.titel}" steht etwas anderes als sein Hinweis`);
+  });
 });

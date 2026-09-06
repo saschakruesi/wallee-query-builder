@@ -225,6 +225,55 @@ test('Am Limit steht "mindestens" in der Ausgabe, im Block aber die rohe Zahl', 
   // an den Kacheln, denn beide werden einzeln gelesen.
   assert.match(block(liste, '3DS-Failures').hinweis, /Höchstzahl von 20’000 Zeilen/);
   assert.match(b.hinweis, /20’000 Zeilen abgeschnitten/);
+  // Und der Vorbehalt fuer die PROZENTE muss an diesem Block stehen, nicht
+  // nur im Titelblock: sechs der Kacheln sind Anteile, und "Untergrenze"
+  // gilt fuer sie gerade NICHT.
+  assert.match(b.hinweis, /Prozentwerte/);
+  assert.match(b.hinweis, /keine Untergrenzen, sondern Schätzungen/);
+});
+
+test('Am Limit nennt der Kachel-Hinweis die Anteile ans Aggregat als zu klein', () => {
+  // "Anteil an allen gescheiterten Versuchen" ist gekappter Zaehler ueber
+  // vollem Aggregat-Nenner - systematisch zu klein, kein Rundungsrauschen.
+  // Ohne Aggregat gibt es die beiden Kacheln nicht, dann darf der Satz auch
+  // nicht dastehen.
+  const mitAggregat = modell({ aggregat: AGGREGAT });
+  mitAggregat.abgeschnitten = true;
+  assert.match(block(B.reportingTdsExportBloecke(mitAggregat, {}), 'Kennzahlen').hinweis,
+    /systematisch zu klein/);
+
+  const ohneAggregat = modell();
+  ohneAggregat.abgeschnitten = true;
+  assert.doesNotMatch(block(B.reportingTdsExportBloecke(ohneAggregat, {}), 'Kennzahlen').hinweis,
+    /systematisch zu klein/);
+});
+
+test('Sind alle Zeitstempel unlesbar, nennt der Kachel-Block die verlorenen Zeilen', () => {
+  // Der Fall, den die Bloecke Verlauf und Stunden selbst nicht melden koennen:
+  // sie entstehen nur mit Daten. Ist JEDES created_on unlesbar, entfallen
+  // beide - und ohne diesen Nachtrag stuende die Zahl der nicht
+  // einsortierbaren Zeilen nirgends. Der Bericht saehe vollstaendig aus.
+  // Hier mit der echten Fixture nachgestellt: dieselben acht Zeilen, das
+  // Datum in einer Schreibweise, die der Parser nicht deutet.
+  const kaputt = FIXTURE.replace(
+    /"(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})\.000"/g, '"$3/$2/$1 $4"');
+  const r = B.parseReportingTdsCsv(kaputt);
+  assert.strictEqual(r.error, null);
+  const m = B.buildReportingTdsModel(r.rows, {});
+  // Vorbedingung: acht Zeilen sind da, aber keine einzige hat einen Tag.
+  assert.strictEqual(m.kpi.failures, 8);
+  assert.strictEqual(m.kpi.ohneTag, 8);
+  assert.strictEqual(m.kpi.ohneStunde, 8);
+
+  const liste = B.reportingTdsExportBloecke(m, {});
+  const titel = liste.map(b => b.titel);
+  assert.strictEqual(titel.includes('Verlauf'), false);
+  assert.strictEqual(titel.includes('Stunden'), false);
+  // Und trotzdem steht die Zahl in der Ausgabe - im Kachel-Block, bei den
+  // uebrigen Verlustkanaelen.
+  const hinweis = block(liste, 'Kennzahlen').hinweis;
+  assert.match(hinweis, /8 Zeilen ohne brauchbares Datum/);
+  assert.match(hinweis, /8 Zeilen ohne brauchbare Stunde/);
 });
 
 test('Ohne Limit-Treffer bleibt es beim gewoehnlichen Zaehler-Format', () => {
@@ -596,6 +645,16 @@ test('Die Link-Spalte heisst in CSV und Excel dashboard_url, auf dem Bildschirm 
   const text = { label: 'Brand', format: 'text' };
   assert.strictEqual(B.reportingKopfLabel(text, true), 'Brand');
   assert.strictEqual(B.reportingKopfLabel(text, false), 'Brand');
+  // Die Nachschlagetabelle wird ueber hasOwnProperty gelesen, wie
+  // reportingLabel und reportingFailureEintrag daneben: eine blosse
+  // Property-Lesung faende die geerbten Namen des Prototyps, und eine Spalte
+  // mit dem Format 'toString' bekaeme eine FUNKTION als Spaltenkopf.
+  ['toString', 'constructor', 'valueOf', '__proto__'].forEach(format => {
+    const erbe = { label: 'Geerbt', format };
+    assert.strictEqual(B.reportingKopfLabel(erbe, true), 'Geerbt', `Format "${format}"`);
+  });
+  // Und eine Spalte ganz ohne Format bleibt ebenfalls bei ihrem Namen.
+  assert.strictEqual(B.reportingKopfLabel({ label: 'Ohne' }, true), 'Ohne');
 });
 
 // --- CSV ---------------------------------------------------------------------

@@ -7038,7 +7038,12 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // bekommt die Behandlung automatisch.
   const REPORTING_MASCHINEN_KOPF = { link: 'dashboard_url' };
   function reportingKopfLabel(spalte, maschinell) {
-    if (maschinell && REPORTING_MASCHINEN_KOPF[spalte.format]) {
+    // hasOwnProperty wie bei reportingLabel/reportingFailureEintrag: eine
+    // blosse Property-Lesung faende auch die geerbten Namen des Prototyps,
+    // und eine Spalte mit format 'toString' bekaeme eine FUNKTION als
+    // Spaltenkopf. Heute nicht erreichbar - aber die Ausnahme von der
+    // Hausregel faellt auf, und die Regel kostet nichts.
+    if (maschinell && Object.prototype.hasOwnProperty.call(REPORTING_MASCHINEN_KOPF, spalte.format)) {
       return REPORTING_MASCHINEN_KOPF[spalte.format];
     }
     return spalte.label;
@@ -7417,6 +7422,22 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     })]);
   }
 
+  // Hat eine offene Liste ueberhaupt etwas zu sagen? Leer heisst: das Merkmal
+  // kommt nicht vor. Besteht sie NUR aus "Unbekannt", ist das zwar eine
+  // Messung ("der Connector schreibt das Label nicht"), als Tabelle sagt sie
+  // aber nichts, was der fehlende Block nicht auch sagt. Die FESTEN
+  // Eimersaetze fallen nicht darunter: dass es keinen Timeout gab, ist eine
+  // Aussage, und ihre Zeile bleibt stehen.
+  //
+  // Steht hier oben, weil BEIDE Berichte die Regel brauchen: der PAN-Quelle-
+  // Block des Aggregats hatte sie als Inline-Ausdruck, die 3DS-Failure-Seite
+  // an sieben Stellen. Zwei Formulierungen derselben Regel laufen mit der
+  // Zeit auseinander, und dann sagt der eine Bericht bei gleicher Datenlage
+  // etwas anderes als der andere.
+  function tdsListeHatAussage(liste, feld) {
+    return liste.some(e => e[feld] !== REPORTING_UNBEKANNT);
+  }
+
   // Ein Block-Satz fuer genau einen Kanal. Die Reihenfolge ist fest (Task 4):
   // Kacheln, Zahlungsmittel, Wallets, Kartentyp, Kartenherkunft, Laender,
   // P1 bzw. E1/E2, Ablehngruende, Ablehncodes, E3/E4, PAN-Quelle, Betraege,
@@ -7744,7 +7765,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // Nur, wenn ueberhaupt ein Token-Label vorkommt: eine Tabelle mit der
     // einzigen Zeile "Unbekannt 100 %" sagt nichts, was nicht schon im
     // fehlenden Block staende.
-    if (kanal === 'ECOM' && kanalModell.panTypes.some(p => p.panType !== REPORTING_UNBEKANNT)) {
+    if (kanal === 'ECOM' && tdsListeHatAussage(kanalModell.panTypes, 'panType')) {
       const panBlock = reportingBlock(kanal, t('PAN-Quelle'), [
         reportingSpalte('PAN-Quelle'), reportingSpalte('Attempts', 'zahl'),
         reportingSpalte('Anteil %', 'pct'), reportingSpalte('Erfolg %', 'pct'),
@@ -8470,17 +8491,6 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return s.indexOf(TDS_DASHBOARD_BASIS) === 0 ? s : '';
   }
 
-  // Hat eine offene Liste ueberhaupt etwas zu sagen? Leer heisst: das Merkmal
-  // kommt nicht vor. Besteht sie NUR aus "Unbekannt", ist das zwar eine
-  // Messung ("der Connector schreibt das Label nicht"), als Tabelle sagt sie
-  // aber nichts, was der fehlende Block nicht auch sagt - dieselbe
-  // Ueberlegung wie beim PAN-Quelle-Block des Aggregats. Die FESTEN
-  // Eimersaetze fallen nicht darunter: dass es keinen Timeout gab, ist eine
-  // Aussage, und ihre Zeile bleibt stehen.
-  function tdsListeHatAussage(liste, feld) {
-    return liste.some(e => e[feld] !== REPORTING_UNBEKANNT);
-  }
-
   function reportingTdsExportBloecke(modell, optionen) {
     const opt = optionen || {};
     // Das leere Modell kommt aus der Modellfunktion selbst, nicht aus einem
@@ -8594,9 +8604,36 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       kachelHinweis += ` ${formatIntCH(m.bestellungen.ohneBestellzaehler)} Zeilen tragen eine `
         + 'Bestellnummer, aber keine Bestell-Zähler und sind ebenfalls nicht gruppierbar.';
     }
+    // ohneTag/ohneStunde stehen ausserdem in den Hinweisen der Bloecke Verlauf
+    // und Stunden - aber NUR dort, und die beiden Bloecke entstehen bloss,
+    // wenn sie Daten haben. Sind alle Zeitstempel unlesbar, sind beide Listen
+    // leer, beide Bloecke entfallen, und die Zahl der nicht einsortierbaren
+    // Zeilen stuende nirgends: der Bericht saehe vollstaendig aus, es fehlten
+    // kommentarlos zwei Achsen. Deshalb gehoeren die Zaehler hierher, zu den
+    // uebrigen Verlustkanaelen - der Kachel-Block entfaellt nie.
+    if (k.ohneTag > 0) {
+      kachelHinweis += ` ${formatIntCH(k.ohneTag)} Zeilen ohne brauchbares Datum stehen in `
+        + 'keiner Tagesachse.';
+    }
+    if (k.ohneStunde > 0) {
+      kachelHinweis += ` ${formatIntCH(k.ohneStunde)} Zeilen ohne brauchbare Stunde stehen in `
+        + 'keiner Stundenachse.';
+    }
     if (m.abgeschnitten) {
+      // Der Vorbehalt gehoert an DIESEN Block, nicht nur in den Titelblock:
+      // hier stehen die Prozentzahlen. "Untergrenze" gilt zudem nur fuer die
+      // Zaehler - die Anteile sind keine Untergrenzen, sondern Schaetzungen,
+      // und "Anteil an allen gescheiterten Versuchen" ist sogar systematisch
+      // ZU KLEIN (gekappter Zaehler ueber vollem Aggregat-Nenner), also kein
+      // Rundungsrauschen, das man uebersehen duerfte.
       kachelHinweis += ` Die Liste ist bei ${formatIntCH(m.limit)} Zeilen abgeschnitten; die `
-        + 'Zählwerte sind Untergrenzen.';
+        + 'Zählwerte sind Untergrenzen. Die Prozentwerte und die Beträge beziehen sich auf '
+        + 'die geladenen Zeilen — sie sind keine Untergrenzen, sondern Schätzungen.';
+      if (k.hatAggregat) {
+        kachelHinweis += ' Die beiden Anteile an den Zahlen des Aggregats fallen dabei '
+          + 'systematisch zu klein aus, weil nur ihr Zähler gekappt ist, ihr Nenner aber '
+          + 'vollständig bleibt.';
+      }
     }
     bloecke.push(reportingBlock(REPORTING_TDS_KANAL, 'Kennzahlen',
       [reportingSpalte('Kennzahl'),
