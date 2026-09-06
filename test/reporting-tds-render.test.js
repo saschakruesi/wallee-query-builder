@@ -237,7 +237,7 @@ test('Die Ausgabe schreibt nicht ins DOM - sie gibt nur Markup zurueck', () => {
   const schnappschuss = () => KNOTEN.map(el => [
     el.innerHTML, el.textContent, el.className, el.value, el.children.length,
     JSON.stringify(el.attributes), JSON.stringify(el.dataset),
-  ].join(' '));
+  ].join('\0'));
   const vorher = schnappschuss();
 
   const beruehrt = [];

@@ -694,6 +694,27 @@ test('Gleicher Zeitstempel: die Reihenfolge ist trotzdem bestimmt', () => {
   assert.deepStrictEqual(modell(gleich).zeilen.map(z => z.attemptId), ['a3', 'a2', 'a1']);
 });
 
+test('Gleicher Zeitstempel: der Tie-Break sortiert numerisch wie die Query', () => {
+  // Die Query sortiert `attempt_id DESC`, und die IDs sind bigint - '10' steht
+  // dort VOR '9'. Ein String-Vergleich drehte das um, und die Zeilenliste auf
+  // dem Bildschirm stuende anders da als das Roh-CSV, das aus derselben
+  // Abfrage stammt. Die Stellenzahl ist dabei der Punkt: '8000010' und
+  // '8000009' unterscheiden sich lexikografisch richtig, '9' und '10' nicht.
+  const ids = ['9', '10', '8000009', '8000010'];
+  const gleich = ids.map(id => zeile({
+    attemptId: id, transactionId: 't' + id, createdOn: '2026-07-04 20:11:03.000',
+  }));
+  assert.deepStrictEqual(modell(gleich).zeilen.map(z => z.attemptId),
+    ['8000010', '8000009', '10', '9']);
+  // Eine ID, die keine reine Ziffernfolge ist, soll es nicht geben (die Spalte
+  // ist bigint) - sie darf aber nichts umwerfen. idCmp stellt sie hinter die
+  // Zahlen, in der absteigenden Liste hier also nach vorn.
+  const gemischt = ['7', 'a', '12'].map(id => zeile({
+    attemptId: id, transactionId: 't' + id, createdOn: '2026-07-04 20:11:03.000',
+  }));
+  assert.deepStrictEqual(modell(gemischt).zeilen.map(z => z.attemptId), ['a', '12', '7']);
+});
+
 test('Zeilen mit unlesbarem Zeitstempel stehen am Ende, nicht mittendrin', () => {
   // Sie sind nicht "aelter", sie sind unbekannt - in die Mitte gerutscht
   // sortierten sie sich zwischen Tage, zu denen sie nichts sagen.

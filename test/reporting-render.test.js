@@ -933,6 +933,41 @@ test('Farben: feste Kategorien fest, offene Listen der Reihe nach, Grau extra', 
     ['tuerkis', 'grau', 'orange']);
 });
 
+// Die Farbsuche laeuft ueber den ANGEZEIGTEN TEXT (reportingKuchenFesteFarbe),
+// nicht ueber den Modell-Schluessel. Ein neues Label, das wortgleich mit einem
+// Katalognamen ist, faerbt damit rueckwirkend einen Kuchen eines ANDEREN
+// Berichts um. Genau das ist in Iteration 2 passiert: die 3DS-Eimer
+// TDS_FAILURE/TDS_TIMEOUT heissen wie die Ablehngruende 1568360440179 und
+// 1568360434240, und die Farbfolge des Aggregat-K8-Kuchens verschob sich
+// gegenueber v5.12.1. Die beiden Tests unten sind das, was gefehlt hat: einer
+// haelt die Folge fuer genau diese Namen fest, der andere verbietet die
+// Kollision fuer jedes kuenftige Label.
+test('K8-Kuchen: die Ablehngruende bleiben eine offene Liste und rotieren', () => {
+  const { app } = starte();
+  const f = labels => plain(app.reportingKuchenFarben(labels));
+  // Die Namen stehen so im K8-Block des Aggregats - aus dem eingebetteten
+  // Katalog, nicht aus einem 3DS-Eimersatz.
+  assert.deepStrictEqual(
+    f(['3-D Secure Failure', 'Transaction declined', '3-D Secure Timeout']),
+    ['tuerkis', 'orange', 'schwarz'],
+    'K8 ist eine offene Liste: erste Zeile tuerkis, danach der Reihe nach');
+  // Und die Reihenfolge entscheidet, nicht der Name: waere eine feste Farbe
+  // hinterlegt, bliebe „3-D Secure Failure“ auch an zweiter Stelle tuerkis.
+  assert.deepStrictEqual(
+    f(['Transaction declined', '3-D Secure Failure']), ['tuerkis', 'orange']);
+});
+
+test('Kein festes Kuchen-Label kollidiert mit einem Katalognamen', () => {
+  const { app } = starte();
+  const namen = new Set(Object.values(plain(app.FAILURE_REASONS)).map(e => e[0]));
+  Object.keys(plain(app.REPORTING_KUCHEN_FARBE)).forEach(k => {
+    const label = app.reportingLabel(k);
+    assert.strictEqual(namen.has(label), false,
+      `„${label}“ (${k}) ist zugleich ein Katalogname - eine feste Farbe hier `
+      + 'faerbt den Ablehngrund-Kuchen des Aggregats um');
+  });
+});
+
 test('Die Farb-Whitelist fuehrt zu jedem Schluessel beide Darstellungen', () => {
   const { app } = starte();
   const farben = plain(app.SVG_KUCHEN_FARBEN);

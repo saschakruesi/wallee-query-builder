@@ -769,6 +769,28 @@ test('Scheitert die zweite Abfrage, bleibt keine Liste des alten Zeitraums stehe
     'Und die Statuszeile sagt, dass die Liste diesmal fehlt');
 });
 
+test('Auch ein Token-Abruf raeumt die 3DS-Seite des Vorlaufs weg', async () => {
+  // Der Token-Abruf holt IMMER nur das Aggregat - eine zweite Abfrage setzt er
+  // nicht ab. Ohne Reset stuende die Liste des Vorlaufs unter einem frisch
+  // geladenen Report, mit dem sie nichts zu tun hat.
+  const { app, el, rt } = starteApi({ reportingChannel: 'BOTH' });
+  await ruhe();
+  app.generate();
+  el('submitBtn').dispatch('click');
+  await ruhe();
+  assert.ok(app.reportingTdsModellAktuell(), 'Vorlauf: die 3DS-Seite steht');
+
+  el('tokenInput').value = 'tok-1';
+  el('tokenAbrufBtn').dispatch('click');
+  await ruhe();
+
+  assert.strictEqual(rt.submits(), 2, 'Der Token-Abruf setzt keine Abfrage ab');
+  assert.ok(app.reportingModellAktuell(), 'Das Aggregat ist neu geladen');
+  assert.strictEqual(app.reportingTdsModellAktuell(), null);
+  assert.strictEqual(el('reportingTdsStatus').textContent, '');
+  assert.ok(!aktiv(el('reportingTdsSection')));
+});
+
 // --- Die Abschlussmeldung: drei Zustaende ---------------------------------
 
 test('Die Abschlussmeldung kennt drei Zustaende', () => {

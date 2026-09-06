@@ -633,8 +633,11 @@
   .radio-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
   .radio-row label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 14px; }
   .radio-row input[type="radio"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
-  /* Bewusst nur auf die eine neue Statuszeile gemuenzt: die Statuszeilen von
-     Terminal- und Settlement-Report sollen sich nicht mit aendern. */
+  /* Bewusst nur auf die beiden Statuszeilen des Reporting-Modus gemuenzt
+     (Aggregat und 3DS-Seite): die Statuszeilen von Terminal- und
+     Settlement-Report sollen sich nicht mit aendern. Wer eine dritte ergaenzt,
+     traegt sie hier nach - ein Sammelselektor faerbte auch die beiden anderen
+     Reports um. */
   #reportingStatus[data-art="fehler"], #reportingTdsStatus[data-art="fehler"] { color: var(--danger); }
   #reportingStatus[data-art="erfolg"], #reportingTdsStatus[data-art="erfolg"] { color: var(--accent-dark); }
   .item-info {
@@ -1273,8 +1276,17 @@
            eigenen Panel darunter: jenes erscheint erst, wenn es etwas zu
            zeigen gibt (Modell oder Statuszeile) - der Import waere sonst der
            Weg zu einem Modell, den man nur mit einem Modell erreicht. Zwei
-           Abfragen, zwei Dateien, eine Import-Leiste. -->
-      <button class="btn" id="reportingTdsCsvImportBtn" title="Ergebnis-CSV der 3DS-Failure-Abfrage laden (Kopieren-Modus)">3DS-Liste importieren</button>
+           Abfragen, zwei Dateien, eine Import-Leiste.
+           ACHTUNG, anders als beim Aggregat-Import darueber: das SQL der
+           zweiten, zeilenweisen Abfrage steht NICHT im Kopier-Feld. Dort liegt
+           immer nur die Aggregat-Query - sqlOutput wird von Submit und
+           Kopieren-Button gelesen, ein zweites SQL darin braeche den Submit.
+           Die 3DS-Abfrage setzt die App im API-Modus selbst ab
+           (reportingTdsLauf); dieser Knopf laedt eine anderswo erzeugte Datei,
+           er ist im Kopieren-Modus also KEIN Weg zu einer eigenen 3DS-Query.
+           Ein eigenes SQL-Feld dafuer waere die grosse Variante, bewusst nicht
+           gebaut (CLAUDE.md, "Offene Punkte"). -->
+      <button class="btn" id="reportingTdsCsvImportBtn" title="Ergebnis-CSV der 3DS-Failure-Abfrage laden - die Abfrage selbst setzt die App im API-Modus ab">3DS-Liste importieren</button>
       <input type="file" id="reportingTdsCsvImport" accept=".csv,text/csv" class="hidden">
     </div>
 
@@ -4349,6 +4361,41 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // ihre Spalten kommen gemeinsam oder gar nicht. Fehlt eine, stammt das CSV
   // nicht aus dieser Query, und ein Report auf halben Spalten waere schlimmer
   // als eine klare Fehlermeldung.
+  //
+  // FUENF SPALTEN STEHEN NUR IM ROH-CSV, in keiner Ausgabe des Berichts. Sie
+  // werden abgefragt, geparst und mitgefuehrt, aber von keinem Block gelesen -
+  // das ist Absicht und hier offengelegt, damit niemand sie fuer eine
+  // vergessene Achse haelt:
+  //   response_code       Processor-Code des E-Com-Connectors. Im Aggregat
+  //                       (P6) ist er als Achse nicht tragfaehig - er stand
+  //                       dort zu 91.4 % auf UNKNOWN, weshalb der Block eine
+  //                       Schwelle hat. Fuer den Support ist er im Einzelfall
+  //                       trotzdem der praeziseste Hinweis.
+  //   funding             Debit/Kredit, card_category Business/Privat: beide
+  //   card_category       sind Achsen des AGGREGATS (K6, P1) und dort ueber
+  //                       alle Attempts gemessen. Sie hier ein zweites Mal,
+  //                       aber nur ueber 3DS-Fehlschlaege, aufzuschluesseln
+  //                       ergaebe zwei gleich benannte Verteilungen mit
+  //                       verschiedener Grundgesamtheit im selben Modus.
+  //   tds_version         Der Wert ist eine STATIC-VALUE-ID, kein Name
+  //                       (Map-Key staticValueContent, gemessen). Eine Achse
+  //                       daraus waere eine Tabelle roher IDs - genau das
+  //                       „#<id>“-Problem, das v5.12 beseitigt hat. Im
+  //                       Roh-CSV ist die ID brauchbar, weil der Support sie
+  //                       nachschlagen kann.
+  //   cryptogram_present  Ja/Nein zum Kryptogramm. Die Einordnung der Seite
+  //                       laeuft ueber tds_cavv, wie die des Aggregats. Ob
+  //                       beide Labels dasselbe sagen, ist NICHT gemessen -
+  //                       cryptogram_present ist im zweiten Haendler-Space
+  //                       aufgetaucht, CAVV im Referenz-Space. Solange das
+  //                       offen ist, waeren zwei Achsen zwei Wahrheiten; die
+  //                       Spalte steht im Roh-CSV, damit der Vergleich
+  //                       ueberhaupt gefuehrt werden kann.
+  // Sie bleiben trotzdem PFLICHT und werden nicht entfernt: das Roh-CSV ist
+  // ausdruecklich auch ein Werkzeug fuer den wallee-Support, und eine Spalte
+  // spaeter wieder hinzuzufuegen macht jedes vorher abgesetzte Token
+  // unparsbar - die summe_tip-Falle des Aggregats (CLAUDE.md, "Bewusste
+  // Abweichungen von dashboard/SPEC.md", Punkt 4).
   const REPORTING_TDS_PFLICHT = [
     'space_id', 'attempt_id', 'transaction_id', 'created_on', 'merchant_reference',
     'brand', 'wallet', 'waehrung', 'amount', 'failure_reason_id', 'response_code',
@@ -6090,10 +6137,13 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       if (a.ms === null && b.ms !== null) return 1;
       if (b.ms === null && a.ms !== null) return -1;
       if (a.ms !== null && b.ms !== null && a.ms !== b.ms) return b.ms - a.ms;
-      // Tie-Break allein fuer die Bestimmtheit der Reihenfolge, wie das
-      // ORDER BY der Query ihn ebenfalls traegt - ohne ihn zeigten zwei Laeufe
-      // derselben Daten verschiedene Reihenfolgen.
-      return strCmp(b.zeile.attemptId || '', a.zeile.attemptId || '');
+      // Tie-Break wie das ORDER BY der Query (attempt_id DESC) - ohne ihn
+      // zeigten zwei Laeufe derselben Daten verschiedene Reihenfolgen. Der
+      // Vergleich muss NUMERISCH sein wie in der Datenbank: mit strCmp stand
+      // Attempt '9' hinter '10', und die Zeilenliste auf dem Bildschirm war
+      // bei gleichem Zeitstempel anders sortiert als das Roh-CSV, das aus
+      // derselben Query stammt (siehe idCmp).
+      return idCmp(b.zeile.attemptId || '', a.zeile.attemptId || '');
     });
 
     return {
@@ -6280,6 +6330,28 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
 
   // Stabiler String-Vergleich (Valuta-Timestamps, Space-IDs) fuer sort().
   function strCmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+  // Vergleich zweier IDs so, wie die Datenbank sie sortiert: NUMERISCH. Die
+  // Analytics-IDs sind bigint, und `attempt_id DESC` im ORDER BY meint deshalb
+  // 10 nach 9, waehrend strCmp '10' VOR '9' stellte - der Bildschirm zeigte
+  // bei gleichem Zeitstempel eine andere Reihenfolge als das Roh-CSV daneben.
+  // Verglichen wird ueber die Stellenzahl und erst dann zeichenweise: das ist
+  // fuer Ziffernfolgen exakt und kommt ohne Number() aus, das bei einer
+  // 19-stelligen ID Stellen verloere. Alles, was nicht aus reinen Ziffern
+  // besteht (soll es nicht geben, ist aber kein Grund zu werfen), faellt auf
+  // den String-Vergleich zurueck und sortiert hinter die Zahlen.
+  function idCmp(a, b) {
+    const sa = String(a == null ? '' : a).trim();
+    const sb = String(b == null ? '' : b).trim();
+    const za = /^\d+$/.test(sa);
+    const zb = /^\d+$/.test(sb);
+    if (za && zb) {
+      const na = sa.replace(/^0+(?=\d)/, '');
+      const nb = sb.replace(/^0+(?=\d)/, '');
+      return na.length - nb.length || strCmp(na, nb);
+    }
+    if (za !== zb) return za ? -1 : 1;
+    return strCmp(sa, sb);
+  }
   // n/a-Bucket sortiert immer zuletzt, sonst lexikografisch.
   function spaceCmp(a, b) {
     return (a === SETTLEMENT_UNASSIGNED) - (b === SETTLEMENT_UNASSIGNED) || strCmp(a, b);
@@ -7208,14 +7280,23 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     WALLET_CRYPTOGRAM: 'schwarz', NOT_REQUESTED: 'tuerkisHell',
     END_USER: 'tuerkis', TEMPORARY: 'orange', CONFIGURATION: 'schwarz',
     INTERNAL: 'tuerkisHell', DEVELOPER: 'orangeHell',
-    // Die beiden festen Eimersaetze der 3DS-Failure-Seite. Sie stehen hier
-    // aus demselben Grund wie die uebrigen: ein fester Satz soll in jedem
-    // Report dieselbe Farbe tragen, sonst bedeutete Orange im Dauer-Kuchen
-    // etwas anderes als im Einordnungs-Kuchen daneben. UNBEKANNT fehlt
-    // bewusst - es ist immer Grau (siehe reportingKuchenIstGrau).
-    TDS_FAILURE: 'tuerkis', TDS_TIMEOUT: 'orange', ANDERER_GRUND: 'schwarz',
+    // Die Dauer-Eimer der 3DS-Failure-Seite (§3.5). UNBEKANNT fehlt bewusst -
+    // es ist immer Grau (siehe reportingKuchenIstGrau).
     UNTER_10S: 'tuerkis', S10_60: 'orange', MIN1_5: 'schwarz',
     UEBER_5MIN: 'tuerkisHell',
+    // NICHT hier stehen die drei Eimer der Grund-Achse (TDS_FAILURE,
+    // TDS_TIMEOUT, ANDERER_GRUND), obwohl sie ein ebenso fester Satz sind.
+    // Grund: die Suche laeuft ueber den ANGEZEIGTEN TEXT (siehe
+    // reportingKuchenFesteFarbe), und „3-D Secure Failure“/„3-D Secure
+    // Timeout“ sind wortgleich die Katalognamen der Ablehngruende
+    // 1568360440179/1568360434240. Der K8-Kuchen des AGGREGATS schreibt genau
+    // diese Namen in seine Segment-Spalte - ein Eintrag hier faerbte damit
+    // rueckwirkend einen Kuchen eines anderen Berichts um (gemessen an
+    // v5.12.1, deshalb wieder entfernt). Der Einordnungs-Kuchen rotiert
+    // stattdessen durch die Reihe; bei drei Eimern ist das folgenlos.
+    // Wer hier eine Zeile ergaenzt, prueft zuerst den Waechter-Test
+    // „kein Label kollidiert mit einem Katalognamen“ in
+    // test/reporting-render.test.js.
   };
 
   // Segmente unter diesem Anteil (Prozent) werden zu "Uebrige" zusammengefasst.
@@ -8616,29 +8697,60 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     kachel('Mehrfach gescheitert und am Ende bezahlt', m.bestellungen.mehrfachBezahltAnteil, 'pct');
     m.waehrungen.forEach(w => kachel('Betroffenes Volumen', w.betrag, 'betrag', w.waehrung));
 
+    // Am Limit ist auch die PROSA eine Untergrenze. Ohne das schriebe der
+    // Hinweis „die 20’000 Fehlschläge“ als exakte Zahl, waehrend die Kachel
+    // direkt darueber dieselbe Zahl als „mindestens 20’000“ ausweist - zwei
+    // Aussagen ueber denselben Wert, von denen eine falsch ist. Derselbe
+    // Vorbehalt wie beim Kachel-Format (zaehler), an EINER Stelle, damit die
+    // beiden nicht auseinanderlaufen. Gilt nur fuer die aus der LISTE
+    // gezaehlten Werte; die Nenner aus dem Aggregat sind vollstaendig und
+    // bleiben exakt (genau deshalb faellt der Anteil zu klein aus, siehe
+    // unten).
+    const zahlText = n => (m.abgeschnitten ? 'mindestens ' : '') + formatIntCH(n);
     let kachelHinweis = 'Wiederholer und „am Ende doch bezahlt“ zählen TRANSAKTIONEN, nicht '
-      + `Zeilen: die ${formatIntCH(k.failures)} Fehlschläge verteilen sich auf `
-      + `${formatIntCH(k.transaktionen)} Transaktionen, und über Zeilen gerechnet stiege der `
+      + `Zeilen: die ${zahlText(k.failures)} Fehlschläge verteilen sich auf `
+      + `${zahlText(k.transaktionen)} Transaktionen, und über Zeilen gerechnet stiege der `
       + 'Wiederholer-Anteil allein dadurch, dass es Wiederholer gibt.';
     if (k.hatAggregat) {
       kachelHinweis += ` „Anteil an allen gescheiterten Versuchen“ setzt die `
-        + `${formatIntCH(k.failures)} Zeilen ins Verhältnis zu den `
+        + `${zahlText(k.failures)} Zeilen ins Verhältnis zu den `
         + `${formatIntCH(k.basisFailed)} gescheiterten Versuchen des E-Commerce-Kanals. `
         // Der Punkt, den die Ausgabe benennen MUSS: andere Grundgesamtheit,
         // anderer Zaehler. Ohne diesen Satz liest sich die Kachel wie ein
         // Anteil der Zeile darueber - und in einem kleinen Space kann sie
         // dabei rechnerisch groesser sein als der Anteil an allen FAILED.
         + '„Anteil an Versuchen mit 3DS-Anforderung“ hat eine ANDERE Grundgesamtheit: '
-        + `gezählt werden die ${formatIntCH(k.mitTdsStart)} Zeilen mit gestartetem `
+        + `gezählt werden die ${zahlText(k.mitTdsStart)} Zeilen mit gestartetem `
         + `3DS-Prozess von ${formatIntCH(k.basisTdsAngefordert)} Karten-Versuchen mit `
-        + `3DS-Anforderung — nicht alle ${formatIntCH(k.failures)} 3DS-Failures. Ein Versuch `
+        + `3DS-Anforderung — nicht die 3DS-Failures insgesamt (${zahlText(k.failures)}). `
+        + 'Ein Versuch '
         + 'mit dem Grund „3-D Secure Failure“, dessen Connector kein Start-Label schrieb, '
-        + 'steht in der Liste, aber in keiner der beiden Zahlen dieser Kachel.';
+        + 'steht in der Liste, aber in keiner der beiden Zahlen dieser Kachel. '
+        // Der zweite Grund, warum die beiden Zahlen nicht exakt zusammenfallen
+        // (siehe tdsAggregatNenner): Zaehler ueber alle Marken, Nenner nur
+        // ueber KARTEN_BRANDS. Der Kommentar im Modell nannte ihn, die Ausgabe
+        // nicht - und ein Wert ueber 100 % ohne Erklaerung sieht wie ein
+        // Rechenfehler aus.
+        + 'Der Zähler zählt zudem jede Marke, der Nenner stammt aus den 3DS-Eimern des '
+        + 'Aggregats und umfasst nur Marken mit Karten-Labels: trägt eine Marke ausserhalb '
+        + 'dieser Liste solche Labels, steht sie im Zähler und fehlt im Nenner — der Anteil '
+        + 'kann dadurch rechnerisch über 100 % steigen.';
     } else {
       kachelHinweis += ' Die beiden Anteils-Kacheln („an allen gescheiterten Versuchen“, '
         + '„an Versuchen mit 3DS-Anforderung“) fehlen, solange kein Aggregat-Ergebnis '
         + 'desselben Zeitraums vorliegt — ihre Nenner stehen nicht in dieser Liste.';
     }
+    // §3.8 nennt neben der Kachel auch den Betrag, der durch die Wiederholung
+    // NICHT verloren ist. Er steht nicht da, und der Grund stand bisher nur im
+    // Modell-Kommentar (siehe bestellungen.mehrfachBezahltAnteil) - also nur
+    // fuer den Leser des Quelltexts. Wer die Kachel liest, soll erfahren,
+    // warum die naheliegende Zahl daneben fehlt, statt sie sich aus dem
+    // "Betroffenen Volumen" selbst zusammenzurechnen (das waere genau die
+    // Doppelzaehlung).
+    kachelHinweis += ' Zu den mehrfach gescheiterten Bestellungen steht bewusst kein Betrag: '
+      + 'jeder gescheiterte Versuch trägt den vollen Betrag der Bestellung erneut, und der '
+      + 'Bestellwert selbst steht in keiner Spalte — eine Summe über diese Zeilen zählte '
+      + 'denselben Warenkorb je Wiederholung noch einmal.';
     if (k.ohneTransaktion > 0) {
       kachelHinweis += ` ${formatIntCH(k.ohneTransaktion)} Zeilen ohne Transaktions-ID stehen `
         + 'in keiner der Transaktions-Kennzahlen.';
@@ -8808,7 +8920,16 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       bloecke.push(listeBlock('Wallet', 'Wallet', m.wallets, 'wallet',
         '„Kein Wallet“ ist eine Messung — der Versuch lief ohne Wallet — und etwas anderes '
         + 'als „Unbekannt“, wo schlicht kein Wert steht. Wallets liegen quer zu den '
-        + 'Zahlungsmitteln (Apple Pay auf Visa).', false));
+        // Dieselbe Achse, zwei Grundgesamtheiten im SELBEN Modus: der
+        // Wallet-Block des Aggregats laesst '-' und UNKNOWN weg (er misst
+        // "wie viel laeuft ueber ein Wallet"), diese Liste fuehrt beide als
+        // eigene Eimer (sie misst "woran scheitert 3DS"). Beides ist richtig,
+        // aber wer die zwei Tabellen nebeneinander legt, haelt die Differenz
+        // sonst fuer einen Fehler.
+        + 'Zahlungsmitteln (Apple Pay auf Visa). Anders als der Wallet-Block des '
+        + 'Reporting-Reports darüber führt diese Liste „Kein Wallet“ und „Unbekannt“ als '
+        + 'eigene Zeilen mit — dort zählen nur Versuche MIT Wallet, hier alle Zeilen der '
+        + '3DS-Liste.', false));
     }
 
     if (tdsListeHatAussage(m.laender, 'land')) {
@@ -9960,6 +10081,15 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       // Terminal-Report-Pfad und wuerde dort mit "Pflichtspalten fehlen"
       // scheitern.
       if (BERICHT_INGEST[state.mode]) {
+        // Wie beim Submit (siehe dort): ein neu geladenes Aggregat raeumt die
+        // 3DS-Seite des Vorlaufs weg. Der Token-Abruf holt IMMER nur das
+        // Aggregat - ein 3DS-Token gehoert nicht in dieses Feld, es faende hier
+        // die Pflichtspalten des Aggregats nicht. Ohne das Zuruecksetzen
+        // stuende die Liste des Vorlaufs unter einem frisch geladenen Report;
+        // falsche Zahlen entstehen dabei zwar keine (filterGleich laesst die
+        // Anteils-Kacheln verschwinden, der Titelblock traegt seinen eigenen
+        // alten Zeitraum), aber zwei Zeitraeume uebereinander sind verwirrend.
+        if (state.mode === 'reporting') reportingTdsZuruecksetzen();
         // Der Filter kommt aus derselben Quelle wie beim Submit; hier gibt es
         // nur eine Abfrage, aber der Kopf des Reports soll denselben Zeitraum
         // ausweisen wie dort.

@@ -197,7 +197,21 @@ test('Die Kachel mit abweichender Grundgesamtheit benennt sie - mit beiden Zahle
   // 8 Zeilen mit Startzeitpunkt von 400 Karten-Versuchen mit 3DS-Anforderung.
   assert.match(b.hinweis, /8 Zeilen mit gestartetem\s+3DS-Prozess von 400 Karten-Versuchen/);
   // Und ausdruecklich: NICHT die Zahl darueber.
-  assert.match(b.hinweis, /nicht alle 8 3DS-Failures/);
+  assert.match(b.hinweis, /nicht die 3DS-Failures insgesamt \(8\)/);
+  // Der zweite Grund, warum die beiden Zahlen nicht zusammenfallen: der
+  // Zaehler zaehlt jede Marke, der Nenner nur Marken mit Karten-Labels
+  // (KARTEN_BRANDS). Der Anteil kann dadurch ueber 100 % steigen - ohne
+  // Erklaerung liest sich das wie ein Rechenfehler.
+  assert.match(b.hinweis, /über 100 % steigen/);
+});
+
+test('Der Kachel-Hinweis sagt, warum zu den Bestellungen kein Betrag steht', () => {
+  // §3.8 nennt "der Betrag, der nicht verloren ist" als Ziel der Kachel. Er
+  // ist aus diesen Zeilen ohne Doppelzaehlung nicht bildbar; das stand bisher
+  // nur im Modell-Kommentar, also nur fuer den Leser des Quelltexts.
+  const b = block(bloecke(), 'Kennzahlen');
+  assert.match(b.hinweis, /kein Betrag/);
+  assert.match(b.hinweis, /trägt den vollen Betrag der Bestellung erneut/);
 });
 
 test('Ohne Aggregat fehlen beide Anteils-Kacheln - und der Hinweis sagt warum', () => {
@@ -230,6 +244,27 @@ test('Am Limit steht "mindestens" in der Ausgabe, im Block aber die rohe Zahl', 
   // gilt fuer sie gerade NICHT.
   assert.match(b.hinweis, /Prozentwerte/);
   assert.match(b.hinweis, /keine Untergrenzen, sondern Schätzungen/);
+});
+
+test('Am Limit ist auch die Prosa eine Untergrenze, nicht nur die Kachel', () => {
+  // Der Widerspruch, den es zu vermeiden gilt: die Kachel weist "mindestens
+  // 8" aus, waehrend der Hinweis darunter "die 8 Fehlschläge" schreibt - zwei
+  // Aussagen ueber denselben Wert, von denen eine falsch ist. Die Nenner aus
+  // dem AGGREGAT sind davon ausgenommen: die Liste ist gekappt, das Aggregat
+  // nicht.
+  const m = modell({ aggregat: AGGREGAT });
+  m.abgeschnitten = true;
+  const hinweis = block(B.reportingTdsExportBloecke(m, {}), 'Kennzahlen').hinweis;
+  assert.match(hinweis, /die mindestens 8 Fehlschläge/);
+  assert.match(hinweis, /mindestens 7 Transaktionen/);
+  assert.match(hinweis, /nicht die 3DS-Failures insgesamt \(mindestens 8\)/);
+  assert.match(hinweis, /zu den 200 gescheiterten Versuchen/,
+    'der Nenner aus dem Aggregat bleibt exakt');
+
+  // Und ohne Limit steht nirgends ein "mindestens" in dieser Prosa.
+  const voll = block(bloecke({ aggregat: AGGREGAT }), 'Kennzahlen').hinweis;
+  assert.match(voll, /die 8 Fehlschläge/);
+  assert.doesNotMatch(voll, /mindestens/);
 });
 
 test('Am Limit nennt der Kachel-Hinweis die Anteile ans Aggregat als zu klein', () => {
