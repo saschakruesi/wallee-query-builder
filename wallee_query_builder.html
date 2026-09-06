@@ -2701,7 +2701,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
   // Ob ein Terminal zur Space mit dieser ID gehoert. Primaer ueber das beim
   // Sync/Import gesetzte spaceId-Feld; als Rueckfall der fuehrende ID-Teil des
-  // Anzeige-Tags ("83954 · Zürich"), damit auch Terminals zugeordnet werden, die
+  // Anzeige-Tags ("90004 · Zürich"), damit auch Terminals zugeordnet werden, die
   // vor der Einfuehrung von spaceId synchronisiert wurden. Rein, harness-getestet.
   function terminalGehoertZuSpace(t, spaceId) {
     const ziel = String(spaceId == null ? '' : spaceId).trim();
@@ -6412,7 +6412,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // --- 2. Settlement-IDs je (Space, Valuta-Timestamp), seq pro Space -----
     // Aufsteigend nach Valutazeitpunkt (SPEC 2.3); mehrere Auszahlungen pro
     // Space und Tag bleiben getrennte Settlements.
-    const SEP = ' ';
+    const SEP = '\0';
     const keyPaare = [...new Set(settled.map(r => r.spaceId + SEP + r.valuedate))]
       .map(k => { const i = k.indexOf(SEP); return { spaceId: k.slice(0, i), valuedate: k.slice(i + 1) }; })
       .sort((a, b) => strCmp(a.spaceId, b.spaceId) || strCmp(a.valuedate, b.valuedate));

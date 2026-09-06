@@ -51,9 +51,9 @@ test('mergeSyncTerminals: Duplikate in neu werden per identifier entschaerft, le
 
 test('mergeSyncTerminals: space wird gesetzt und bei bestehenden aktualisiert', () => {
   // neu: space landet am neuen Eintrag
-  const r1 = X.mergeSyncTerminals([], [{ identifier: '9', name: 'T9', space: '83954 · Zürich' }]);
+  const r1 = X.mergeSyncTerminals([], [{ identifier: '9', name: 'T9', space: '90004 · Zürich' }]);
   assert.deepStrictEqual(plain(r1.liste), [
-    { id: '9', label: 'T9', selected: true, space: '83954 · Zürich', spaceId: '' },
+    { id: '9', label: 'T9', selected: true, space: '90004 · Zürich', spaceId: '' },
   ]);
   // bestehend ohne space -> bekommt space, zaehlt als aktualisiert
   const r2 = X.mergeSyncTerminals([{ id: '9', label: 'T9', selected: false }],

@@ -192,7 +192,8 @@ Trinkgeld, Retries und Stosszeiten?
   herunterladen und im Report-Panel über **„CSV importieren"** laden.
 - **Grenzen:** Chargebacks und Disputes gibt es in der wallee Analytics nicht (keine
   Tabelle dafür), ebenso wenig eine IC++-Aufschlüsselung der Gebühren; ein Liability Shift
-  wird nicht ausgewiesen, weil das Label fehlt. Die Karten-Attribute (Issuer-Land,
+  wird nicht ausgewiesen — das Label existiert, ist aber connectorabhängig und fehlt in den
+  Referenz-Spaces der Konstanten. Die Karten-Attribute (Issuer-Land,
   Kartentyp, 3DS) stammen aus Labels, die der **Connector** schreibt — bei einem anderen
   Acquirer können andere Label-IDs vorkommen; die betroffenen Kennzahlen stehen dann auf
   „Unbekannt", der Report wird nicht falsch, aber blind.

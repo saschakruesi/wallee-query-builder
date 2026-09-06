@@ -239,8 +239,8 @@ einzeln gewählte Space greift) — sie ist der verlässliche Schlüssel für di
 (Checkbox oder Zeile, ebenso „Alle auswählen"/„Auswahl löschen" der Space-Liste) wählt die
 Terminals dieser Space **unten** automatisch mit an bzw. ab — `setzeAuswahlFuerSpace(terminals,
 spaceId, selected)` über `terminalGehoertZuSpace(t, spaceId)`. Letzteres matcht primär über
-`t.spaceId`, mit **Rückfall auf den führenden ID-Teil des Anzeige-Tags** („83954 · Zürich" →
-`83954`), damit auch vor v5.7 synchronisierte Terminals ohne erneuten Sync zugeordnet werden.
+`t.spaceId`, mit **Rückfall auf den führenden ID-Teil des Anzeige-Tags** („90004 · Zürich" →
+`90004`), damit auch vor v5.7 synchronisierte Terminals ohne erneuten Sync zugeordnet werden.
 Terminals **anderer** Spaces und solche **ohne** Space-Tag bleiben unberührt. Das in v5.6
 eingeführte Filterfeld unter der Liste wurde damit wieder **entfernt** — die Auswahl läuft
 bewusst über den Space-Klick statt über manuelles Filtern; `renderTerminals()` zeigt wieder
