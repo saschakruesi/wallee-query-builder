@@ -378,24 +378,24 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
   // nachgerechnet (Decimal-Summe der Spalten), nicht vom Parser uebernommen.
   // Zugleich die Basislinie fuer das Modell in Task 3.
   const summe = (liste, feld) => liste.reduce((a, z) => a + z[feld], 0);
-  assert.strictEqual(summe(r.rows.dim, 'betrag'), 3828364000000);        // 38'283.64
+  assert.strictEqual(summe(r.rows.dim, 'betrag'), 3846327000000);        // 38'463.27
   assert.strictEqual(summe(r.rows.dim, 'betragFailed'), 298879000000);   //  2'988.79
-  assert.strictEqual(summe(r.rows.dim, 'refund'), 65394000000);          //    653.94
+  assert.strictEqual(summe(r.rows.dim, 'refund'), 67922000000);          //    679.22
   // Trinkgeld gibt es nur am POS und nur an erfolgreichen Attempts (Task 4b);
   // die uebrigen Summen sind unveraendert, weil der Generator dafuer einen
   // eigenen PRNG-Strom benutzt.
   assert.strictEqual(summe(r.rows.dim, 'tip'), 152607000000);            //  1'526.07
-  assert.strictEqual(summe(r.rows.dim, 'attempts'), 1861);
+  assert.strictEqual(summe(r.rows.dim, 'attempts'), 1872);
   // DIM und TIME zaehlen in der echten Query dasselbe att-CTE, nur anders
   // gruppiert - ihre Summen muessen sich decken. Die Fixture leitet den
   // TIME-Block deshalb aus dem DIM-Block ab; ohne diese Zusicherung zeigte der
   // Report in den Kacheln eine andere Erfolgsquote als im Verlauf darunter.
-  assert.strictEqual(summe(r.rows.time, 'attempts'), 1861);
-  assert.strictEqual(summe(r.rows.time, 'betrag'), 3828364000000);       // 38'283.64
+  assert.strictEqual(summe(r.rows.time, 'attempts'), 1872);
+  assert.strictEqual(summe(r.rows.time, 'betrag'), 3846327000000);       // 38'463.27
   // CONV wird seit dem Referenzlauf ebenfalls aus dem DIM-Block abgeleitet
   // (siehe den Invarianten-Test unten), nicht mehr von Hand gesetzt.
-  assert.strictEqual(summe(r.rows.conv, 'txMitAttempt'), 1833);
-  assert.strictEqual(summe(r.rows.conv, 'txErfolgreich'), 1763);
+  assert.strictEqual(summe(r.rows.conv, 'txMitAttempt'), 1844);
+  assert.strictEqual(summe(r.rows.conv, 'txErfolgreich'), 1774);
 
   // Die Faelle, die die Fixture bewusst abdeckt (siehe
   // test/fixtures/generate-reporting-beispiel.mjs).
@@ -414,6 +414,12 @@ test('parseReportingCsv: Fixture parst fehlerfrei und die Zeilensummen stimmen',
   assert.ok(r.rows.dim.some(z => z.tdsStarted === true && z.tdsCavv === true));
   assert.ok(r.rows.dim.some(z => z.tdsStarted === true && z.tdsCavv === false));
   assert.ok(r.rows.dim.some(z => z.tdsStarted === false && z.eci !== 'UNKNOWN'));
+  // Und der Fall, den die Fixture bis v5.12.0 nicht kannte, weil ihn niemand
+  // fuer moeglich hielt: gestartet, kein CAVV - und trotzdem autorisiert
+  // (gemessen 2026-09-04 am zweiten Haendler-Space, SPEC-ITERATION-2 §3.6).
+  assert.ok(r.rows.dim.some(z => z.tdsStarted === true && z.tdsCavv === false
+    && z.attemptState === 'SUCCESSFUL'),
+  'erfolgreicher Attempt ohne CAVV fehlt');
 
   // SPEC 7: PENDING gehoert in die Kacheln als "offen" und aus allen Quoten
   // heraus - beide Betragsspalten sind dort NULL, also 0.
@@ -715,8 +721,12 @@ test('K7/K9: Ø-Betrag und Refund-Quote je Waehrung, nie gemischt', () => {
 test('klassifiziereTds unterscheidet die vier Auspraegungen', () => {
   const { klassifiziereTds } = loadBuilders();
   assert.strictEqual(klassifiziereTds({ started: true, cavv: true }), 'AUTHENTICATED');
-  assert.strictEqual(klassifiziereTds({ started: true, cavv: false }), 'FAILED_OR_ABANDONED');
-  assert.strictEqual(klassifiziereTds({ started: true, cavv: null }), 'FAILED_OR_ABANDONED');
+  // Gestartet ohne CAVV heisst genau das und nichts weiter. Bis v5.12.0 hiess
+  // der Eimer FAILED_OR_ABANDONED und behauptete damit einen Ausgang, den die
+  // Daten nicht hergeben - am zweiten Haendler-Space wurden 16.8 % seines
+  // Inhalts autorisiert (SPEC-ITERATION-2 §3.6).
+  assert.strictEqual(klassifiziereTds({ started: true, cavv: false }), 'STARTED_NO_CAVV');
+  assert.strictEqual(klassifiziereTds({ started: true, cavv: null }), 'STARTED_NO_CAVV');
   assert.strictEqual(klassifiziereTds({ started: false, eci: '07' }), 'WALLET_CRYPTOGRAM');
   assert.strictEqual(klassifiziereTds({ started: false, eci: 'UNKNOWN' }), 'NOT_REQUESTED');
   assert.strictEqual(klassifiziereTds({ started: false, eci: '' }), 'NOT_REQUESTED');
@@ -725,20 +735,63 @@ test('klassifiziereTds unterscheidet die vier Auspraegungen', () => {
   assert.strictEqual(klassifiziereTds({ started: true, cavv: true, eci: '05' }), 'AUTHENTICATED');
 });
 
-test('E1: 3DS-Akzeptanz 70.0 % und Angefordert-Anteil 66.7 %', () => {
+// Der Test, den SPEC-ITERATION-2 §3.6 verlangt - formuliert ueber die ABSICHT
+// und nicht ueber den heutigen Namen: kein Eimer, dessen Bezeichnung ein
+// Scheitern behauptet, darf einen erfolgreichen Attempt enthalten. Wer den
+// Eimer spaeter wieder "Fehlgeschlagen" nennt (oder einen neuen mit einem
+// solchen Namen anlegt), faellt hier auf, ohne dass jemand den Test anpassen
+// muesste.
+const SCHEITERN_IM_NAMEN = /FAIL|ABANDON|CANCEL|DECLINE|TIMEOUT|REJECT/i;
+test('Kein Eimer, dessen Name Scheitern behauptet, traegt erfolgreiche Attempts', () => {
+  const m = modell({ dim: [
+    // Genau der gemessene Fall: 3DS gestartet, kein CAVV - und trotzdem
+    // autorisiert.
+    dimZeile({ channel: 'ECOM', attempts: 4, tdsStarted: true, tdsCavv: false }),
+    dimZeile({ channel: 'ECOM', attempts: 6, attemptState: 'FAILED', tdsStarted: true, tdsCavv: false }),
+    dimZeile({ channel: 'ECOM', attempts: 5, tdsStarted: true, tdsCavv: true }),
+  ] });
+  const gruppen = m.kanaele.ECOM.tds.gruppen;
+  // Der Fall existiert ueberhaupt - sonst waere die Zusicherung unten leer.
+  assert.ok(gruppen.some(g => g.erfolgreich > 0 && g.fehlgeschlagen > 0),
+    'Testfall traegt keinen Eimer mit erfolgreichen UND gescheiterten Attempts');
+  gruppen.forEach(g => {
+    if (!SCHEITERN_IM_NAMEN.test(g.schluessel)) return;
+    assert.strictEqual(g.erfolgreich, 0,
+      `Eimer ${g.schluessel} behauptet Scheitern, traegt aber ${g.erfolgreich} erfolgreiche Attempts`);
+  });
+});
+
+test('E1: Akzeptanz und Angefordert-Anteil haben verschiedene Nenner', () => {
   const m = modell({ dim: [
     dimZeile({ channel: 'ECOM', attempts: 7, tdsStarted: true, tdsCavv: true, eci: '05' }),
-    dimZeile({ channel: 'ECOM', attempts: 3, tdsStarted: true, tdsCavv: false }),
+    dimZeile({ channel: 'ECOM', attempts: 8, attemptState: 'FAILED', tdsStarted: true, tdsCavv: false }),
+    dimZeile({ channel: 'ECOM', attempts: 2, tdsStarted: true, tdsCavv: false }),
     dimZeile({ channel: 'ECOM', attempts: 2, tdsStarted: false, eci: '07' }),
     dimZeile({ channel: 'ECOM', attempts: 3, tdsStarted: false }),
   ] });
   const tds = m.kanaele.ECOM.tds;
-  assert.strictEqual(tds.basis, 15);
-  assert.strictEqual(tds.akzeptanz, 70);
-  assert.strictEqual(Math.round(tds.angefordertAnteil * 10) / 10, 66.7);
-  assert.strictEqual(Math.round(tds.walletAnteil * 1000) / 1000, 13.333);
+  // Von Hand: 7 authentifiziert, 10 gestartet ohne CAVV (davon 2 autorisiert),
+  // 2 Wallet-Kryptogramm, 3 nicht angefordert = 22 Karten-Attempts.
+  assert.strictEqual(tds.basis, 22);
+  assert.strictEqual(tds.gestartetOhneCavv, 10);
+  assert.strictEqual(tds.gestartetOhneCavvErfolgreich, 2);
+  // Akzeptanz: 7 / (7 + 10 - 2) = 7/15. Die zwei autorisierten Versuche
+  // gehoeren nicht in den Ablehn-Nenner einer Kennzahl namens "3DS-Akzeptanz"
+  // (Entscheid des Auftraggebers, SPEC-ITERATION-2 §3.6). Mit dem alten Nenner
+  // 7/17 stuenden hier 41.176 % - die beiden Zahlen sind weit genug
+  // auseinander, dass ein Rueckfall auffiele.
+  assert.strictEqual(Math.round(tds.akzeptanz * 1000) / 1000, 46.667);
+  // Angefordert-Anteil: (7 + 10) / 22 = 17/22, OHNE Abzug - angefordert wurde
+  // in jedem der zehn Versuche, unabhaengig vom Ausgang. Der Wert darf sich
+  // durch die Aenderung an der Akzeptanz NICHT mitbewegen.
+  assert.strictEqual(Math.round(tds.angefordertAnteil * 1000) / 1000, 77.273);
+  assert.strictEqual(Math.round(tds.walletAnteil * 1000) / 1000, 9.091);
   assert.deepStrictEqual(plain(tds.gruppen.map(g => [g.schluessel, g.attempts])),
-    [['AUTHENTICATED', 7], ['FAILED_OR_ABANDONED', 3], ['WALLET_CRYPTOGRAM', 2], ['NOT_REQUESTED', 3]]);
+    [['AUTHENTICATED', 7], ['STARTED_NO_CAVV', 10], ['WALLET_CRYPTOGRAM', 2], ['NOT_REQUESTED', 3]]);
+  // Die vier Eimer summieren restlos auf die Karten-Attempts - der Grund,
+  // warum es bei VIER bleibt und die autorisierten Versuche keinen fuenften
+  // bekommen (sie waeren eine Teilmenge des zweiten, kein eigener Zustand).
+  assert.strictEqual(tds.gruppen.reduce((a, g) => a + g.attempts, 0), tds.basis);
 });
 
 test('E2: Success Rate je 3DS-Status', () => {
@@ -746,11 +799,16 @@ test('E2: Success Rate je 3DS-Status', () => {
     dimZeile({ channel: 'ECOM', attempts: 8, tdsStarted: true, tdsCavv: true }),
     dimZeile({ channel: 'ECOM', attempts: 2, attemptState: 'FAILED', tdsStarted: true, tdsCavv: true }),
     dimZeile({ channel: 'ECOM', attempts: 5, attemptState: 'FAILED', tdsStarted: true, tdsCavv: false }),
+    dimZeile({ channel: 'ECOM', attempts: 1, tdsStarted: true, tdsCavv: false }),
   ] });
   const nach = {};
   m.kanaele.ECOM.tds.gruppen.forEach(g => { nach[g.schluessel] = g.successRate; });
   assert.strictEqual(nach.AUTHENTICATED, 80);
-  assert.strictEqual(nach.FAILED_OR_ABANDONED, 0);
+  // Genau diese Zahl ist der Zweck des Eimers: eine Erfolgsquote, die auffaellt
+  // und auffallen SOLL (1 von 6 = 16.7 %, an den Referenzdaten 16.8 %). Ein
+  // eigener fuenfter Eimer fuer die autorisierten Versuche haette hier 100 %
+  // und daneben 0 % stehen lassen - zwei Tautologien statt einer Messung.
+  assert.strictEqual(Math.round(nach.STARTED_NO_CAVV * 10) / 10, 16.7);
   assert.strictEqual(nach.NOT_REQUESTED, null);
 });
 
@@ -1190,7 +1248,7 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   const summeDim = p.rows.dim.reduce((a, z) => a + z.attempts, 0);
   const summeKanal = m.kanalListe.reduce((a, k) => a + m.kanaele[k].kpi.attempts, 0);
   assert.strictEqual(summeKanal, summeDim);
-  assert.strictEqual(summeDim, 1861);
+  assert.strictEqual(summeDim, 1872);
 
   const pos = m.kanaele.POS;
   assert.strictEqual(pos.kpi.attempts, 1403);
@@ -1216,8 +1274,8 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
 
   const ecom = m.kanaele.ECOM;
   assert.strictEqual(ecom.kpi.offen, 9);
-  assert.strictEqual(ecom.kpi.attempts, 446);
-  assert.strictEqual(ecom.kpi.abgeschlossen, 437);
+  assert.strictEqual(ecom.kpi.attempts, 457);
+  assert.strictEqual(ecom.kpi.abgeschlossen, 448);
   // Die Quoten lassen PENDING draussen, die Anteile decken alles ab. Geprueft
   // wird das auf den ZAEHLERN exakt - dort ist es eine echte Zusicherung; die
   // Prozentsumme darf davon um Gleitkomma-Epsilon abweichen, weil das Modell
@@ -1238,6 +1296,17 @@ test('Modell ueber die Fixture: Struktur, Summen und Kanaltrennung', () => {
   assert.strictEqual(
     ecom.tds.gruppen.find(g => g.schluessel === 'NOT_REQUESTED').attempts, 7);
   assert.ok(ecom.brands.some(b => b.brand === 'PostFinance Card'));
+  // Der Fall aus SPEC-ITERATION-2 §3.6, von Hand aus den DIM-Zeilen: 276
+  // authentifiziert (212 + 64), 71 gestartet ohne CAVV (41 + 19 gescheitert,
+  // 11 trotzdem autorisiert), 88 Wallet-Kryptogramm, 7 nicht angefordert.
+  assert.strictEqual(ecom.tds.basis, 442);
+  assert.strictEqual(ecom.tds.gestartetOhneCavv, 71);
+  assert.strictEqual(ecom.tds.gestartetOhneCavvErfolgreich, 11);
+  // 276 / (276 + 71 - 11) = 276/336. Mit dem Nenner vor v5.12.1 (276/347)
+  // stuenden hier 79.539 % - der Unterschied ist an der Fixture messbar.
+  assert.strictEqual(Math.round(ecom.tds.akzeptanz * 1000) / 1000, 82.143);
+  // (276 + 71) / 442, OHNE Abzug - siehe die Nenner-Begruendung im Modell.
+  assert.strictEqual(Math.round(ecom.tds.angefordertAnteil * 1000) / 1000, 78.507);
 
   // Alle drei Kanaele bekommen denselben, lueckenlosen Tagesbereich.
   m.kanalListe.forEach(k => {

@@ -182,6 +182,25 @@ test('XLSX: der Hinweis eines Blocks geht nicht verloren', async () => {
   assert.match(flach, /Quoten zählen nur Versuche mit Endzustand/);
 });
 
+// Die vierte der vier Ausgaben fuer die Zeile aus §3.6 (Bildschirm, CSV und
+// PDF stehen in test/reporting-render.test.js). Sie steht hier, weil nur diese
+// Datei den XLSX-Vendor laedt.
+test('XLSX: «trotzdem autorisiert» steht als Zaehler, nicht als Prozentwert', async () => {
+  const { wb } = await exportiereUndLies();
+  const ws = wb.Sheets['E-Com'];
+  const zeilen = blattZeilen(wb, 'E-Com');
+  const t = titelZeile(zeilen, 'E-Com · 3DS-Akzeptanz');
+  const i = zeilen.slice(t).findIndex(z => z[0] === '3DS gestartet ohne CAVV, trotzdem autorisiert');
+  assert.notStrictEqual(i, -1, 'Zeile fehlt im E-Com-Blatt');
+  const zelle = ws[XLSX.utils.encode_cell({ r: t + i, c: 1 })];
+  // 11 erfolgreiche Attempts der Fixture - als Ganzzahl mit Zaehlerformat.
+  // Ein 0.0"%" hier hiesse, dass die Ausgabe das Spaltenformat 'gemischt'
+  // nicht ueber reportingZellFormat aufloest.
+  assert.strictEqual(zelle.t, 'n');
+  assert.strictEqual(zelle.v, 11);
+  assert.strictEqual(zelle.z, '#,##0');
+});
+
 test('XLSX: kein Blatt traegt eine Zeile aus block.kuchen', async () => {
   // §2.2: "Excel: kein Kuchen (SheetJS-Community kann keine Charts); die
   // Tabelle traegt die Prozente." Bis hierher stand diese Zusicherung nur im

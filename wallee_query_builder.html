@@ -4013,7 +4013,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
   const REPORTING_HERKUNFT  = ['DOMESTIC', 'INTRA', 'INTER', 'UNKNOWN'];
   const REPORTING_KARTENTYP = ['BUSINESS', 'PRIVATE', 'UNKNOWN'];
   const REPORTING_FUNDING   = ['CREDIT', 'DEBIT', 'UNKNOWN'];
-  const REPORTING_TDS       = ['AUTHENTICATED', 'FAILED_OR_ABANDONED', 'WALLET_CRYPTOGRAM', 'NOT_REQUESTED'];
+  // STARTED_NO_CAVV hiess bis v5.12.0 FAILED_OR_ABANDONED. Der alte Name war
+  // eine Aussage ueber den AUSGANG, die die Daten nicht hergeben - siehe
+  // klassifiziereTds().
+  const REPORTING_TDS       = ['AUTHENTICATED', 'STARTED_NO_CAVV', 'WALLET_CRYPTOGRAM', 'NOT_REQUESTED'];
 
   // Haendler-Land, falls keines gesetzt ist (SPEC 6.1). Ohne ein gueltiges
   // Haendler-Land gibt es kein "Inland", und die ganze Herkunfts-Kennzahl
@@ -4320,11 +4323,25 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
 
   // 3DS-Status aus den drei Rohfeldern (SPEC 3.1). Der Connector schreibt kein
   // Authenticated-/Status-Label, der Status ist deshalb eine Ableitung:
-  // gestartet und CAVV da = authentisiert; gestartet ohne CAVV = abgebrochen
-  // oder gescheitert; nicht gestartet, aber mit ECI = Wallet-Kryptogramm
-  // (Apple/Google Pay bringen ihr eigenes, ohne 3DS-Challenge).
+  // gestartet und CAVV da = authentisiert; gestartet ohne CAVV = 3DS lief an,
+  // ein Kryptogramm kam nicht zurueck; nicht gestartet, aber mit ECI =
+  // Wallet-Kryptogramm (Apple/Google Pay bringen ihr eigenes, ohne Challenge).
+  //
+  // KORREKTUR 2026-09-04 (SPEC-ITERATION-2 §3.6): der zweite Eimer hiess
+  // FAILED_OR_ABANDONED - "fehlgeschlagen / abgebrochen". Das war falsch, und
+  // zwar gemessen: am zweiten Haendler-Space liegen darin 2'439 Attempts mit
+  // attempt_state = SUCCESSFUL, 16.8 % des Eimers. Sie wurden autorisiert,
+  // obwohl der Connector kein CAVV-Label schrieb. Cryptogram Present erklaert
+  // es nicht (20 der 2'439 tragen es). WAS es ist - Attempts-Flow,
+  // Frictionless ohne CAVV-Label, Autorisierung nach Soft Decline - laesst
+  // sich hier NICHT entscheiden: die EMVCo-Felder (Transaction Status, Status
+  // Reason, Challenge Cancel) kommen im Analytics-labels-Array gar nicht an
+  // (dieselbe Discovery, connectorabhaengig). Der Eimer bleibt also unscharf;
+  // er darf nur nicht mehr behaupten, sein Inhalt sei gescheitert. Deshalb
+  // STARTED_NO_CAVV - ein Name, der beschreibt, was gemessen wurde, statt
+  // einen Ausgang zu unterstellen.
   function klassifiziereTds({ started, cavv, eci } = {}) {
-    if (started === true) return cavv === true ? 'AUTHENTICATED' : 'FAILED_OR_ABANDONED';
+    if (started === true) return cavv === true ? 'AUTHENTICATED' : 'STARTED_NO_CAVV';
     const e = String(eci == null ? '' : eci).trim();
     if (e && e !== REPORTING_UNBEKANNT) return 'WALLET_CRYPTOGRAM';
     return 'NOT_REQUESTED';
@@ -4912,9 +4929,15 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       }));
 
     const tdsGruppen = reportingGruppen(tdsMap, REPORTING_TDS, kartenAttempts);
-    const tdsWert = s => (tdsGruppen.find(g => g.schluessel === s) || { attempts: 0 }).attempts;
+    const tdsGruppe = s => tdsGruppen.find(g => g.schluessel === s)
+      || { attempts: 0, erfolgreich: 0 };
+    const tdsWert = s => tdsGruppe(s).attempts;
     const tdsAuth = tdsWert('AUTHENTICATED');
-    const tdsFail = tdsWert('FAILED_OR_ABANDONED');
+    const tdsOhneCavv = tdsWert('STARTED_NO_CAVV');
+    // Die trotzdem autorisierten Versuche des Eimers (SPEC-ITERATION-2 §3.6).
+    // Die Zahl steht im DIM-Block ohnehin bereit - attempt_state ist eine
+    // Gruppierungsspalte -, sie wird hier nur benannt.
+    const tdsOhneCavvErfolgreich = tdsGruppe('STARTED_NO_CAVV').erfolgreich;
 
     return {
       kpi: Object.assign({ channel: kanal }, {
@@ -4961,8 +4984,26 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       tds: {
         basis: kartenAttempts,
         gruppen: tdsGruppen,
-        akzeptanz: reportingQuote(tdsAuth, tdsAuth + tdsFail),
-        angefordertAnteil: reportingQuote(tdsAuth + tdsFail, kartenAttempts),
+        gestartetOhneCavv: tdsOhneCavv,
+        gestartetOhneCavvErfolgreich: tdsOhneCavvErfolgreich,
+        // Zwei Quoten mit ZWEI verschiedenen Nennern - das ist Absicht und
+        // keine Ungenauigkeit, sie beantworten verschiedene Fragen:
+        //
+        // akzeptanz: "wie oft ging die angeforderte Authentifizierung durch?"
+        //   Die trotzdem autorisierten Versuche des STARTED_NO_CAVV-Eimers
+        //   gehoeren nicht in den Ablehn-Nenner einer Kennzahl, die
+        //   "3DS-Akzeptanz" heisst. Das ist ein ausdruecklicher ENTSCHEID des
+        //   Auftraggebers, keine Herleitung aus den Daten - die Daten sagen
+        //   nur, DASS diese Versuche autorisiert wurden, nicht, ob 3DS daran
+        //   beteiligt war. An den Referenzdaten des zweiten Haendler-Space
+        //   hebt der Abzug die Quote von 82.1 % auf 84.7 %.
+        // angefordertAnteil: "wie oft wurde 3DS ueberhaupt angefordert?"
+        //   Dort zaehlt der Eimer VOLLSTAENDIG mit, ohne Abzug: angefordert
+        //   wurde in jedem seiner Versuche, unabhaengig vom Ausgang. Ein
+        //   gemeinsamer Nenner fuer beide waere in einer der beiden Fragen die
+        //   falsche Antwort.
+        akzeptanz: reportingQuote(tdsAuth, tdsAuth + tdsOhneCavv - tdsOhneCavvErfolgreich),
+        angefordertAnteil: reportingQuote(tdsAuth + tdsOhneCavv, kartenAttempts),
         walletAnteil: reportingQuote(tdsWert('WALLET_CRYPTOGRAM'), kartenAttempts),
       },
       // Anteil je an ALLEN gescheiterten Attempts des Kanals, nicht an allen
@@ -5829,7 +5870,8 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     BUSINESS: 'Business', PRIVATE: 'Privat',
     CREDIT: 'Kredit', DEBIT: 'Debit',
     AUTHENTICATED: 'Authentifiziert',
-    FAILED_OR_ABANDONED: 'Fehlgeschlagen / abgebrochen',
+    // Beschreibt die Messung, nicht den Ausgang - siehe klassifiziereTds().
+    STARTED_NO_CAVV: '3DS gestartet, kein CAVV',
     WALLET_CRYPTOGRAM: 'Wallet-Kryptogramm',
     NOT_REQUESTED: 'Nicht angefordert',
     UNKNOWN: 'Unbekannt',
@@ -5988,7 +6030,7 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     DOMESTIC: 'tuerkis', INTRA: 'orange', INTER: 'schwarz',
     BUSINESS: 'tuerkis', PRIVATE: 'orange',
     DEBIT: 'tuerkis', CREDIT: 'orange',
-    AUTHENTICATED: 'tuerkis', FAILED_OR_ABANDONED: 'orange',
+    AUTHENTICATED: 'tuerkis', STARTED_NO_CAVV: 'orange',
     WALLET_CRYPTOGRAM: 'schwarz', NOT_REQUESTED: 'tuerkisHell',
     END_USER: 'tuerkis', TEMPORARY: 'orange', CONFIGURATION: 'schwarz',
     INTERNAL: 'tuerkisHell', DEVELOPER: 'orangeHell',
@@ -6390,16 +6432,33 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     }
     if (kanal === 'ECOM' && kanalModell.tds.basis > 0) {
       const tds = kanalModell.tds;
+      // Die Wert-Spalte mischt seit v5.12.1 Prozente und einen Zaehler und
+      // steht deshalb auf 'gemischt' - dasselbe Muster wie beim Kachel-Block:
+      // ein Spaltenformat, das sich rendern liesse, waere die Falle, in die
+      // laeuft, wer reportingZellFormat() vergisst (die absolute Zahl stuende
+      // dann als Prozentwert da).
       bloecke.push(reportingBlock(kanal, t('3DS-Akzeptanz'), [
-        reportingSpalte('Kennzahl'), reportingSpalte('Wert', 'pct'),
+        reportingSpalte('Kennzahl'), reportingSpalte('Wert', 'gemischt'),
       ], [
         ['3DS-Akzeptanz', tds.akzeptanz],
+        // Steht direkt unter der Akzeptanz, weil es genau die Versuche sind,
+        // die deren Nenner NICHT mehr enthaelt. Sie duerfen nicht bloss im
+        // Nenner verschwinden - genau das war der Fehler bis v5.12.0.
+        ['3DS gestartet ohne CAVV, trotzdem autorisiert', tds.gestartetOhneCavvErfolgreich],
         ['3DS angefordert (Anteil)', tds.angefordertAnteil],
         ['Wallet-Kryptogramm (Anteil)', tds.walletAnteil],
       ], 'tabelle',
-      `Grundlage: ${formatIntCH(tds.basis)} Karten-Attempts mit Endzustand. Die Akzeptanz `
-      + 'misst nur die tatsächlich angeforderten Authentifizierungen (authentifiziert gegen '
-      + 'fehlgeschlagen/abgebrochen). Ein Liability-Shift-Label liefert die API nicht.'));
+      `Grundlage: ${formatIntCH(tds.basis)} Karten-Attempts mit Endzustand. `
+      + '„3DS gestartet, kein CAVV“ heisst: die Authentifizierung lief an, der Connector '
+      + 'schrieb kein Kryptogramm — ein Teil davon wurde trotzdem autorisiert. Ob die '
+      + 'übrigen abgebrochen wurden oder fehlschlugen, lässt sich nicht trennen, weil die '
+      + 'EMVCo-Felder im Analytics-Export nicht ankommen (gemessen 2026-09-04, '
+      + 'connectorabhängig). Die Akzeptanz nimmt die trotzdem autorisierten Versuche aus '
+      + 'dem Nenner; der Angefordert-Anteil enthält sie weiterhin. Ein Liability-Shift-Label '
+      + 'liefert die API nicht.',
+      // zellFormate hat dieselbe Form wie zeilen; leere Eintraege fallen auf
+      // das Spaltenformat zurueck, das hier bewusst nicht renderbar ist.
+      [['text', 'pct'], ['text', 'zahl'], ['text', 'pct'], ['text', 'pct']]));
       bloecke.push(reportingGruppenBlock(kanal, t('3DS-Status'), 'Status',
         tds.gruppen, tds.basis, true,
         'Erfolgsquote je 3DS-Status (E2): zeigt, ob die Authentifizierung die Conversion drückt.'));

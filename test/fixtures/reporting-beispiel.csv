@@ -1,5 +1,5 @@
 "block","space_id","channel","brand","wallet","waehrung","attempt_state","failure_reason_id","auth_response_code","issuer_country","card_category","funding","pan_type","dcc","tds_started","tds_cavv","eci","tag","stunde","anzahl_attempts","summe_betrag","summe_betrag_failed","summe_refund","summe_tip","tx_mit_attempt","tx_erfolgreich"
-"CONV","90002","ECOM","Visa",,"CHF",,,,,,,,,,,,,,,,,,,"337","300"
+"CONV","90002","ECOM","Visa",,"CHF",,,,,,,,,,,,,,,,,,,"348","311"
 "CONV","90002","ECOM","Mastercard",,"EUR",,,,,,,,,,,,,,,,,,,"77","64"
 "CONV","90002","ECOM","UNKNOWN",,"CHF",,,,,,,,,,,,,,,,,,,"4","0"
 "CONV","90002","ECOM","PostFinance Card",,"CHF",,,,,,,,,,,,,,,,,,,"7","7"
@@ -13,6 +13,7 @@
 "DIM","90002","ECOM","Mastercard","-","EUR","SUCCESSFUL",,"SUCCESSFUL","DE","CLASSIC","CREDIT",,"false","true","true","02",,,"64","1299.36000000",,"189.45000000",,,
 "DIM","90002","ECOM","Visa","-","CHF","FAILED","1568360440179","AUTHORIZATION_DECLINED","CH","CLASSIC","CREDIT",,"false","true","false",,,,"41",,"1097.49000000",,,,
 "DIM","90002","ECOM","Mastercard","-","EUR","FAILED","1758896189449","SECURITY","FR","CLASSIC","CREDIT",,"false","true","false",,,,"19",,"572.31000000",,,,
+"DIM","90002","ECOM","Visa","-","CHF","SUCCESSFUL",,"SUCCESSFUL","CH","CLASSIC","CREDIT",,"false","true","false",,,,"11","179.63000000",,"25.28000000",,,
 "DIM","90002","ECOM","Visa","-","CHF","PENDING",,,"CH","CLASSIC","CREDIT",,"false","true","false",,,,"9",,,,,,
 "DIM","90002","ECOM","PostFinance Card","-","CHF","SUCCESSFUL",,"SUCCESSFUL",,,,,"false","false","false",,,,"7","222.49000000",,"18.32000000",,,
 "DIM","90002","ECOM","UNKNOWN","-","CHF","FAILED",,,,,,,"false","false","false",,,,"6",,"202.62000000",,,,
@@ -24,12 +25,12 @@
 "DIM","90001","POS","Mastercard","-","CHF","SUCCESSFUL",,"00","DE","CLASSIC","CREDIT",,"true","false","false",,,,"58","2072.17000000",,"0.00000000","50.72000000",,
 "DIM","90001","POS","Visa","-","CHF","SUCCESSFUL",,"00","CHE","CLASSIC","CREDIT",,"false","false","false",,,,"34","845.05000000",,"0.00000000",,,
 "DIM","90001","POS","Visa","-","CHF","FAILED","1579281555663","51","CH","CLASSIC","DEBIT",,"false","false","false",,,,"23",,"1116.37000000",,,,
-"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-02","19","87","1578.46000000",,,,,
-"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-01","19","85","1542.18000000",,,,,
-"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-01","8","47","852.73000000",,,,,
-"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-01","12","31","562.44000000",,,,,
-"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-02","12","30","544.30000000",,,,,
-"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-02","8","20","362.87000000",,,,,
+"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-02","19","91","1645.20000000",,,,,
+"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-01","19","88","1590.97000000",,,,,
+"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-01","8","49","885.88000000",,,,,
+"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-01","12","32","578.53000000",,,,,
+"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-02","12","31","560.45000000",,,,,
+"TIME","90002","ECOM","Visa",,"CHF","SUCCESSFUL",,,,,,,,,,,"2026-07-02","8","20","361.58000000",,,,,
 "TIME","90002","ECOM","Visa",,"CHF","FAILED",,,,,,,,,,,"2026-07-01","19","14",,,,,,
 "TIME","90002","ECOM","Mastercard",,"EUR","SUCCESSFUL",,,,,,,,,,,"2026-07-01","12","13","263.93000000",,,,,
 "TIME","90002","ECOM","Mastercard",,"EUR","SUCCESSFUL",,,,,,,,,,,"2026-07-02","12","13","263.93000000",,,,,

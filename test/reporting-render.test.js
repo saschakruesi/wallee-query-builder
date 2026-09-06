@@ -524,6 +524,59 @@ test('Die „Übrige“-Zeile ueberlebt CSV und PDF - vier Ausgaben, eine Quelle
   assert.ok(gruende.rows.some(r => r[0] === 'Übrige (2 Gründe)'), 'Sammelzeile fehlt im PDF');
 });
 
+// --- 3DS: die trotzdem autorisierten Versuche (v5.12.1, §3.6) ---------------
+
+// Der Kern des Fixes: die Zahl darf nicht bloss aus dem Akzeptanz-Nenner
+// verschwinden, sie muss ueberall SICHTBAR sein. Genau das war der Fehler bis
+// v5.12.0 - dort lief der Erfolg stumm in die Quote. Geprueft in allen vier
+// Ausgaben aus einer Quelle; XLSX steht in test/reporting-xlsx.test.js, weil
+// nur dort der Vendor geladen ist.
+const AUTORISIERT_ZEILE = '3DS gestartet ohne CAVV, trotzdem autorisiert';
+// Der Sollwert kommt aus der Fixture: 11 erfolgreiche Attempts mit
+// tds_started = true und tds_cavv = false (E-Com-Visa-Zeile, siehe
+// test/fixtures/generate-reporting-beispiel.mjs).
+const AUTORISIERT_N = 11;
+
+test('«trotzdem autorisiert» steht mit der richtigen Zahl auf dem Schirm', () => {
+  const { app, el } = mitFixture();
+  const abschnitt = blockAbschnitt(el('reportingReportOutput').innerHTML, 'E-Com · 3DS-Akzeptanz');
+  assert.ok(abschnitt.includes(AUTORISIERT_ZEILE), 'Zeile fehlt auf dem Schirm');
+  // Als ZAEHLER, nicht als Prozentwert: die Wert-Spalte des Blocks steht auf
+  // 'gemischt', das Format kommt je Zelle aus zellFormate. Ein '11.0 %' hier
+  // hiesse, dass jemand am Spaltenkopf statt an reportingZellFormat() liest.
+  assert.match(abschnitt, new RegExp(AUTORISIERT_ZEILE + '</td><td[^>]*>' + AUTORISIERT_N + '</td>'));
+  // Der Hinweis erklaert den Eimer und beide Nenner (§3.6 Punkt 3).
+  assert.match(abschnitt, /kein Kryptogramm/);
+  assert.match(abschnitt, /EMVCo-Felder im Analytics-Export nicht ankommen/);
+  assert.match(abschnitt, /nimmt die trotzdem autorisierten Versuche aus dem Nenner/);
+});
+
+test('«trotzdem autorisiert» steht in CSV und PDF', () => {
+  const { app } = mitFixture();
+  const modell = app.reportingModellAktuell();
+  const optionen = app.reportingExportOptionen();
+  const csv = app.buildReportingReportCsv(modell, optionen);
+  assert.ok(csv.includes(`${AUTORISIERT_ZEILE};${AUTORISIERT_N}`),
+    'Zeile fehlt im CSV oder traegt dort ein anderes Format');
+  const pdf = app.reportingPdfBloecke(modell, optionen);
+  const block = pdf.tabellen.find(t => /3DS-Akzeptanz$/.test(t.titel));
+  assert.ok(block, '3DS-Akzeptanz fehlt im PDF');
+  const zeile = block.rows.find(r => r[0] === AUTORISIERT_ZEILE);
+  assert.ok(zeile, 'Zeile fehlt im PDF');
+  assert.strictEqual(zeile[1], String(AUTORISIERT_N));
+});
+
+test('Der 3DS-Status-Eimer heisst nach der Messung, nicht nach einem Ausgang', () => {
+  const { app, el } = mitFixture();
+  const abschnitt = blockAbschnitt(el('reportingReportOutput').innerHTML, 'E-Com · 3DS-Status');
+  assert.ok(abschnitt.includes('3DS gestartet, kein CAVV'), 'neue Beschriftung fehlt');
+  // Und die Gegenprobe ueber die GANZE Ausgabe: die alte Beschriftung darf
+  // nirgends mehr stehen, auch nicht in einem Kuchen-Segment oder einem
+  // Hinweis. Sie behauptete einen Ausgang, den die Daten nicht hergeben.
+  assert.ok(!el('reportingReportOutput').innerHTML.includes('Fehlgeschlagen / abgebrochen'),
+    'die widerlegte Beschriftung ist zurueck');
+});
+
 // --- PDF-Bloecke -----------------------------------------------------------
 
 test('reportingPdfBloecke liefert Titel, Kopfzeilen und Tabellen', () => {

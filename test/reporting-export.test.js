@@ -584,7 +584,10 @@ const WERT_FORMAT = {
   'POS · Kennzahlen': 'gemischt',
   'E-Com · Kennzahlen': 'gemischt',
   'Andere · Kennzahlen': 'gemischt',
-  'E-Com · 3DS-Akzeptanz': 'pct',
+  // Seit v5.12.1 'gemischt': der Block fuehrt neben den drei Prozentwerten die
+  // ABSOLUTE Zahl der trotzdem autorisierten Versuche. Ein renderbares
+  // Spaltenformat waere hier die Falle - die Zahl stuende als Prozentwert da.
+  'E-Com · 3DS-Akzeptanz': 'gemischt',
 };
 
 test('Jede %-Spalte traegt format "pct" und jede pct-Spalte ein %-Label', () => {

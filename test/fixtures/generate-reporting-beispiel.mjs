@@ -225,6 +225,19 @@ const DIM_FAELLE = [
   // sonst alle nachfolgenden Betraege und damit saemtliche verankerten Summen.
   { space: SPACE_ECOM, channel: 'ECOM', brand: 'PostFinance Card', waehrung: 'CHF',
     state: 'SUCCESSFUL', arc: 'SUCCESSFUL', land: '', kat: '', funding: '', n: 7 },
+
+  // 3DS gestartet, kein CAVV - und trotzdem AUTORISIERT. Bis v5.12.0 hielt der
+  // Report diese Kombination fuer unmoeglich und nannte den Eimer
+  // "Fehlgeschlagen / abgebrochen"; die Discovery am zweiten Haendler-Space hat
+  // sie am 2026-09-04 gemessen (16.8 % des Eimers, SPEC-ITERATION-2 §3.6).
+  // Ohne diese Zeile enthielte die Fixture den Fall gar nicht, und die
+  // Zusicherung "kein erfolgreicher Attempt in einem Eimer, dessen Name
+  // Scheitern behauptet" liesse sich an ihr an nichts festmachen. Die ZAHL ist
+  // erfunden wie alles hier - gemessen ist nur, DASS es den Fall gibt.
+  // Ebenfalls als letzter Fall angehaengt, aus demselben Grund wie oben.
+  { space: SPACE_ECOM, channel: 'ECOM', brand: 'Visa', waehrung: 'CHF',
+    state: 'SUCCESSFUL', arc: 'SUCCESSFUL', land: 'CH', kat: 'CLASSIC',
+    funding: 'CREDIT', tds: true, cavv: false, n: 11 },
 ];
 
 DIM_FAELLE.forEach(f => {
