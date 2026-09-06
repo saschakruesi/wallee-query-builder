@@ -9643,10 +9643,16 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // darf den bereits stehenden Aggregat-Report nicht mitnehmen. Rueckgabe:
   // { ok, token, status, fehler, abgebrochen }.
   //
-  // `praefix` stellt den Fortschrittsmeldungen einen Namen voran, damit sich
-  // die zwei Laeufe im selben Feld unterscheiden lassen.
-  async function absetzenUndWarten(sql, account, praefix) {
-    const p = praefix || '';
+  // optionen.praefix stellt den Fortschrittsmeldungen einen Namen voran, damit
+  // sich die zwei Laeufe im selben Feld unterscheiden lassen.
+  // optionen.zeitHinweis ist der Satz nach einer Zeitueberschreitung. Er ist
+  // je Abfrage ein anderer und deshalb ein Parameter: „Vorhandenen Token
+  // abrufen" laedt in diesem Modus die AGGREGAT-Query - ein 3DS-Token
+  // scheiterte dort an den Pflichtspalten. Ein Hinweis, der ins Leere fuehrt,
+  // ist schlechter als keiner.
+  async function absetzenUndWarten(sql, account, optionen) {
+    const opt = optionen || {};
+    const p = opt.praefix || '';
     const leer = { ok: false, token: '', status: '', fehler: '', abgebrochen: false };
     zeigeFortschritt(p + 'Query wird übermittelt …');
     // Leer heisst: der im Proxy konfigurierte Account gilt - das Feld bleibt
@@ -9676,9 +9682,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     while (true) {
       if (apiLauf.abgebrochen) return Object.assign({}, leer, { token, abgebrochen: true });
       if (++versuche > apiPollConfig.maxVersuche) {
-        return Object.assign({}, leer, { token, fehler: p + 'Zeitüberschreitung – die Query läuft noch. '
-          + 'Der Token kann später unter „Vorhandenen Token abrufen" verwendet werden: '
-          + token });
+        const hinweis = opt.zeitHinweis
+          || ('Der Token kann später unter „Vorhandenen Token abrufen" verwendet werden: ' + token);
+        return Object.assign({}, leer,
+          { token, fehler: p + 'Zeitüberschreitung – die Query läuft noch. ' + hinweis });
       }
       const s = await proxyJson(mitAccount('/status/' + encodeURIComponent(token), account), 'GET');
       // Direkt nach dem Submit (v. a. der erste einer Sitzung) ist der Token bei
@@ -9725,7 +9732,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     const filter = abfrageFilter();
 
     try {
-      const lauf = await absetzenUndWarten(sql, account, '');
+      const lauf = await absetzenUndWarten(sql, account);
       if (lauf.abgebrochen) return;
       if (!lauf.ok) { zeigeFortschritt(lauf.fehler, 'fehler'); return; }
       const token = lauf.token;
@@ -11588,7 +11595,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Einstieg muesste dafuer ein leeres CSV erfunden werden, das der Parser
   // dann als Fehler zurueckwiese.
   function ingestReportingTdsZeilen(rows, unbrauchbar, filter) {
-    reportingTdsRohzeilen = rows;
+    // Immer ein Array: eine leere Liste ist ein gueltiges Ergebnis (HTTP 204),
+    // null waere eines, an dem der Modellneubau darunter vorbeiliefe und der
+    // erste Zugriff auf m.abgeschnitten wuerfe.
+    reportingTdsRohzeilen = Array.isArray(rows) ? rows : [];
     const f = filter || abfrageFilter();
     reportingTdsZeitraum = { start: f.start, end: f.end, spaces: f.spaceIds };
     reportingTdsModellNeuBauen();
@@ -11644,17 +11654,39 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return ok;
   }
 
-  // Die zweite Abfrage. Wirft nie und meldet ausschliesslich ueber die eigene
-  // Statuszeile: der Aggregat-Report steht zu diesem Zeitpunkt bereits, und
-  // ein Fehlschlag hier darf ihn nicht mitnehmen - Rueckfall statt Blockade,
-  // wie ueberall in dieser Anwendung.
+  // Die zweite Abfrage. Wirft nie. Einzelheiten meldet sie ueber die eigene
+  // Statuszeile - der Aggregat-Report steht zu diesem Zeitpunkt bereits, und
+  // ein Fehlschlag hier darf ihn nicht mitnehmen (Rueckfall statt Blockade,
+  // wie ueberall in dieser Anwendung).
+  //
+  // Die FORTSCHRITTSZEILE des Submits bekommt am Ende trotzdem das letzte
+  // Wort: absetzenUndWarten schreibt waehrend des Laufs hinein, und ohne
+  // Abschluss bliebe sie auf „3DS-Liste: Query läuft …" stehen, obwohl der
+  // ganze Lauf durch ist.
   async function reportingTdsAbfragen(filter, account) {
+    const ok = await reportingTdsLauf(filter, account);
+    // Nach einem Abbruch nicht dazwischenfunken: brichSubmitAb() hat dort
+    // bereits „Abgebrochen." gesetzt, und das ist die richtige Auskunft.
+    if (apiLauf && apiLauf.abgebrochen) return false;
+    zeigeFortschritt(ok
+      ? 'Fertig — Reporting-Report und 3DS-Failures erstellt.'
+      : 'Die 3DS-Liste konnte nicht geladen werden — Einzelheiten im Abschnitt '
+        + '„3DS-Failures". Der Reporting-Report oben ist davon unberührt.',
+      ok ? 'erfolg' : 'fehler');
+    return ok;
+  }
+
+  async function reportingTdsLauf(filter, account) {
     try {
       reportingTdsZeigeStatus('3DS-Liste wird abgefragt …', '');
       const sql = buildReportingTdsQuery({
         spaceIds: filter.spaceIds, start: filter.start, end: filter.end,
       });
-      const lauf = await absetzenUndWarten(sql, account, '3DS-Liste: ');
+      const lauf = await absetzenUndWarten(sql, account, {
+        praefix: '3DS-Liste: ',
+        zeitHinweis: 'Der Reporting-Report oben ist davon unberührt; für die 3DS-Liste '
+          + 'bitte den Zeitraum eingrenzen und neu absetzen.',
+      });
       if (lauf.abgebrochen) {
         reportingTdsZeigeStatus('3DS-Abfrage abgebrochen.', 'fehler');
         return false;

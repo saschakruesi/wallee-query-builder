@@ -546,6 +546,21 @@ test('Bei Kanal POS bleibt es bei einer Abfrage', async () => {
     'Und keine Seite, die "keine 3DS-Fehlschlaege" behauptet');
 });
 
+test('Die Fortschrittszeile bekommt nach der zweiten Abfrage einen Abschluss', async () => {
+  // absetzenUndWarten schreibt waehrend des Laufs in dieselbe Zeile. Ohne
+  // Abschluss bliebe sie auf der letzten Meldung der 3DS-Abfrage stehen -
+  // "3DS-Liste: Query wird uebermittelt ..." -, obwohl alles durch ist.
+  const { el } = starteApi({ reportingChannel: 'BOTH' });
+  await ruhe();
+  el('sqlOutput').textContent = 'SELECT 1';
+  el('submitBtn').dispatch('click');
+  await ruhe();
+
+  assert.match(el('submitFortschrittText').textContent,
+    /Reporting-Report und 3DS-Failures erstellt/);
+  assert.doesNotMatch(el('submitFortschrittText').textContent, /wird übermittelt|läuft …/);
+});
+
 test('Ein Fehlschlag der zweiten Abfrage laesst den Aggregat-Report stehen', async () => {
   const { app, el } = starteApi({ reportingChannel: 'BOTH' },
     { zweiterSubmit: jsonAntwort(500, { fehler: 'Analytics kaputt' }) });
@@ -561,6 +576,11 @@ test('Ein Fehlschlag der zweiten Abfrage laesst den Aggregat-Report stehen', asy
   // kommentarlos wegzulassen.
   assert.strictEqual(el('reportingTdsStatus').dataset.art, 'fehler');
   assert.match(el('reportingTdsStatus').textContent, /3DS-Liste/);
+  // Und die Fortschrittszeile sagt, WAS fehlgeschlagen ist und was steht -
+  // sonst laese sich "fehlgeschlagen" auf den ganzen Lauf beziehen.
+  assert.match(el('submitFortschrittText').textContent,
+    /3DS-Liste konnte nicht geladen werden/);
+  assert.match(el('submitFortschrittText').textContent, /unberührt/);
 });
 
 test('204 auf die zweite Abfrage ist eine Aussage, kein Fehler', async () => {
