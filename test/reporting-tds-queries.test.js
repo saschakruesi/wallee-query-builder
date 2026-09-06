@@ -322,7 +322,10 @@ test('Sortierung und Obergrenze aus der benannten Konstante', () => {
 test('Kein Trinkgeld-CTE und kein lineitem-Join', () => {
   // Die Seite zaehlt gescheiterte Versuche; Trinkgeld haengt an erfolgreichen
   // Transaktionen und haette hier nur Kosten.
+  // Bewusst auf die Konstrukte statt auf das blosse Wort "tip": ein Kommentar,
+  // der es erwaehnt, waere kein Fehler - ein Join darauf schon.
   const s = sql();
   assert.doesNotMatch(s, /lineitem/i);
-  assert.doesNotMatch(s, /tip/i);
+  assert.doesNotMatch(s, /\btip\b\s*(?:AS|ON|\.)/i);
+  assert.doesNotMatch(s, /tip_amount|tip_total/i);
 });

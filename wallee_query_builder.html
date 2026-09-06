@@ -3692,6 +3692,14 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     -- ALLE Attempts des Zeitraums im Kanal E-Commerce - ohne den FAILED-Filter.
     -- Das ist die Grundgesamtheit der Fensterfunktionen weiter unten; der
     -- FAILED-Filter steht erst in der aeusseren WHERE-Klausel, hinter ihnen.
+    --
+    -- Die Label-Ausdruecke laufen deshalb auch ueber die erfolgreichen Attempts,
+    -- obwohl nur die gescheiterten ausgegeben werden. Das ist der billigere von
+    -- zwei Wegen: die Alternative waere, hier nur die Zaehlspalten zu bilden und
+    -- fuer die Anzeigewerte ein zweites Mal auf chargeattempt zu joinen - also
+    -- ein zweiter Scan derselben Partitionen. Die Spalte ca.labels wird ohnehin
+    -- einmal gelesen; die Extraktion darauf ist reine Rechenzeit auf bereits
+    -- gelesenen Daten.
     SELECT
         ca.spaceid                                      AS space_id,
         ca.id                                           AS attempt_id,
@@ -3792,6 +3800,12 @@ bestell_fenster AS (
         -- Bestellung ueber Mitternacht. Der Abstand ist nie negativ, weil der
         -- Anker das Minimum ist - die abschneidende Ganzzahldivision ist damit
         -- dasselbe wie floor.
+        --
+        -- Der Preis dieser Naeherung, offen gesagt: zwei Versuche kurz vor und
+        -- kurz nach der 24-h-Grenze fallen in verschiedene Bloecke und zaehlen
+        -- als zwei Bestellungen. Das trifft nur Faelle, in denen der Kunde
+        -- ueber einen ganzen Tag hinweg an derselben Bestellung sitzt, und es
+        -- UNTERSCHAETZT die Wiederholer - es erfindet keine.
         date_diff('second', b.erster_versuch, a.created_on) / 86400 AS bestell_fenster_nr
     FROM att a
     LEFT JOIN bestellung b
