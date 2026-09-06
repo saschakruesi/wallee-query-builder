@@ -243,6 +243,28 @@ const EXPORTED = [
   'buildReportingReportCsv',
   'reportingPdfBloecke',
   'reportingPdfSchreiben',
+  // Blockschicht und Ausgaben der 3DS-Failure-Seite (Iteration 2, Task 4c).
+  // Vier Ausgaben aus EINER Blockquelle, wie beim Aggregat - deshalb steht
+  // reportingTdsExportBloecke ganz vorn und die drei Ausgaben daneben; der
+  // XLSX-Schreiber braucht den Vendor-Block und wird in
+  // test/reporting-tds-xlsx.test.js separat geladen.
+  //
+  // reportingKopfLabel und reportingLinkZiel sind die beiden Regeln, die sich
+  // NUR an sich selbst pruefen lassen: dass eine Link-Spalte in CSV/Excel
+  // dashboard_url heisst (§3.4), und dass eine Adresse ohne den geprueften
+  // Praefix gar kein Link wird. REPORTING_TDS_PDF_ZEILEN kommt mit, damit ein
+  // Test den Deckel aus DERSELBEN Quelle liest wie der Code.
+  'reportingTdsExportBloecke',
+  'reportingTdsBerichtHtml',
+  'buildReportingTdsCsv',
+  'reportingTdsPdfBloecke',
+  'reportingKopfLabel',
+  'reportingLinkZiel',
+  'REPORTING_TDS_KANAL',
+  'REPORTING_TDS_PDF_ZEILEN',
+  'REPORTING_TDS_LINK_TEXT',
+  'REPORTING_TOTAL_ZEILE',
+  'REPORTING_UNBEKANNT',
   // Naht auf die Ausgabe EINES Blocks - nur so laesst sich ein von Hand
   // gebauter Block mit zellFormate durch den Bildschirm-Pfad schicken
   // (reportingExportBloecke traegt zellFormate heute nur an den Kacheln).

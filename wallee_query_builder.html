@@ -5621,11 +5621,16 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // ins Leere fuehrt. Genau dafuer laesst der Parser die drei Schluessel roh
   // statt sie auf UNKNOWN zu ziehen.
   const TDS_ID_MUSTER = /^\d+$/;
+  // Als Konstante, weil die Ausgabeschicht sie ein zweites Mal braucht: sie
+  // macht aus einer Zelle nur dann ein <a href>, wenn die Adresse mit genau
+  // diesem Praefix beginnt (siehe reportingLinkZiel). Zwei Literale liefen
+  // auseinander, und die Pruefung ginge stumm ins Leere.
+  const TDS_DASHBOARD_BASIS = 'https://app-wallee.com/s/';
   function tdsDashboardUrl(spaceId, transactionId) {
     const s = String(spaceId == null ? '' : spaceId).trim();
     const t = String(transactionId == null ? '' : transactionId).trim();
     if (!TDS_ID_MUSTER.test(s) || !TDS_ID_MUSTER.test(t)) return '';
-    return 'https://app-wallee.com/s/' + s + '/payment/transaction/view/' + t;
+    return TDS_DASHBOARD_BASIS + s + '/payment/transaction/view/' + t;
   }
 
   // Die Dreiteilung der Grund-Achse (§3.2). Sie ist die Zeile, die erklaert,
@@ -6961,6 +6966,37 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     RETRY_NO: 'Nicht wiederholen',
     OTHER_METHOD: 'Anderes Zahlungsmittel',
     CONTACT_WALLEE: 'wallee kontaktieren',
+    // --- 3DS-Failure-Seite (SPEC-ITERATION-2 §3.5) ------------------------
+    // Einordnung der Grund-Achse (§3.2). Die dritte Zeile nennt beide
+    // Bedingungen, weil genau sie erklaert, warum eine Zeile ohne
+    // 3DS-Ablehngrund trotzdem in der Liste steht.
+    TDS_FAILURE: '3-D Secure Failure',
+    TDS_TIMEOUT: '3-D Secure Timeout',
+    ANDERER_GRUND: 'Anderer Grund, 3DS abgebrochen',
+    // Dauer bis zum Abbruch. Die Grenzen sind halboffen und gehoeren zum
+    // OBEREN Eimer (10 s steht in „10–60 s“) - die Beschriftung sagt das mit
+    // „<“ und „>“ ausdruecklich, damit niemand die Grenze doppelt liest.
+    UNTER_10S: '< 10 s',
+    S10_60: '10–60 s',
+    MIN1_5: '1–5 min',
+    UEBER_5MIN: '> 5 min',
+    // Betrags-Eimer: bewusst OHNE Waehrung im Namen - die Grenzen sind
+    // Waehrungsbetraege, und die Waehrung steht als eigene Spalte daneben.
+    UNTER_50: '< 50',
+    B50_200: '50–200',
+    B200_500: '200–500',
+    UEBER_500: '> 500',
+    // Zweiter Schluessel mit derselben Beschriftung wie UNKNOWN, und das ist
+    // Absicht: die 3DS-Eimersaetze sind deutsch benannt, die Aussage ist
+    // dieselbe. Der gleiche Text sorgt zugleich dafuer, dass
+    // reportingKuchenIstGrau() den Eimer als „unbekannt“ erkennt und ihm die
+    // graue Farbe gibt, ohne dass es dafuer eine zweite Regel braucht.
+    UNBEKANNT: 'Unbekannt',
+    // Der Wert, den buildReportingTdsQuery fuer „kein Wallet“ schreibt
+    // (COALESCE(wt.name['en-US'], '-')). Das ist eine MESSUNG und etwas
+    // anderes als UNKNOWN („kein Wert“) - nebeneinander in derselben Tabelle
+    // liest sich ein zweimal gleich beschrifteter Eimer wie ein Fehler.
+    '-': 'Kein Wallet',
   };
   function reportingLabel(schluessel) {
     const k = String(schluessel == null ? '' : schluessel);
@@ -6988,6 +7024,24 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     if (je && je[r] && je[r][c]) return je[r][c];
     const spalte = block.kopf[c];
     return spalte ? spalte.format : 'text';
+  }
+
+  // Spaltenname fuer die MASCHINENLESBAREN Ausgaben (CSV, Excel). Bisher gab
+  // es nur einen Namen je Spalte; die Link-Spalte der 3DS-Failure-Seite
+  // braucht zwei, und §3.4 sagt beide: auf dem Bildschirm heisst sie „Öffnen“
+  // (dort IST sie ein Knopf), in CSV und Excel steht die Adresse selbst in der
+  // Zelle und die Spalte heisst dashboard_url. Ein Kopf „Öffnen“ ueber einer
+  // URL-Spalte waere eine Aufforderung an eine Datei.
+  //
+  // Bewusst eine Regel am FORMAT und keine zweite Beschriftung je Spalte: so
+  // gibt es weiterhin genau eine Blockquelle, und eine kuenftige Link-Spalte
+  // bekommt die Behandlung automatisch.
+  const REPORTING_MASCHINEN_KOPF = { link: 'dashboard_url' };
+  function reportingKopfLabel(spalte, maschinell) {
+    if (maschinell && REPORTING_MASCHINEN_KOPF[spalte.format]) {
+      return REPORTING_MASCHINEN_KOPF[spalte.format];
+    }
+    return spalte.label;
   }
 
   // Eine Zeile je (Eintrag, Waehrung). Die waehrungsfreien Zellen stehen NUR in
@@ -7027,11 +7081,19 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   //
   // Bei genau EINEM uebrigen Eintrag entsteht die Zeile nicht: "Uebrige
   // (1 Grund)" braucht dieselbe Zeile wie der Grund selbst und sagt weniger.
-  function reportingUebrige(liste, nenner, schwelle) {
+  //
+  // feld benennt die Zaehlspalte der Eintraege: im Aggregat heisst sie
+  // attempts, in der 3DS-Failure-Liste anzahl. Der Rueckgabewert traegt die
+  // Summe trotzdem immer unter attempts - gezaehlt wird in beiden Faellen ein
+  // Zahlungsversuch, und zwei Namen fuer dieselbe Groesse waeren genau die
+  // Sorte Doppelbegriff, die dieser Code sonst vermeidet. uebrige.anzahl
+  // bleibt die Zahl der zusammengefassten EINTRAEGE, nicht ihre Summe.
+  function reportingUebrige(liste, nenner, schwelle, feld) {
     const max = schwelle || REPORTING_GRUENDE_MAX;
+    const spalte = feld || 'attempts';
     if (liste.length <= max + 1) return { liste, uebrige: null };
     const rest = liste.slice(max);
-    const attempts = rest.reduce((a, x) => a + x.attempts, 0);
+    const attempts = rest.reduce((a, x) => a + x[spalte], 0);
     return {
       liste: liste.slice(0, max),
       uebrige: { anzahl: rest.length, attempts, anteil: reportingAnteil(attempts, nenner) },
@@ -7101,6 +7163,14 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     WALLET_CRYPTOGRAM: 'schwarz', NOT_REQUESTED: 'tuerkisHell',
     END_USER: 'tuerkis', TEMPORARY: 'orange', CONFIGURATION: 'schwarz',
     INTERNAL: 'tuerkisHell', DEVELOPER: 'orangeHell',
+    // Die beiden festen Eimersaetze der 3DS-Failure-Seite. Sie stehen hier
+    // aus demselben Grund wie die uebrigen: ein fester Satz soll in jedem
+    // Report dieselbe Farbe tragen, sonst bedeutete Orange im Dauer-Kuchen
+    // etwas anderes als im Einordnungs-Kuchen daneben. UNBEKANNT fehlt
+    // bewusst - es ist immer Grau (siehe reportingKuchenIstGrau).
+    TDS_FAILURE: 'tuerkis', TDS_TIMEOUT: 'orange', ANDERER_GRUND: 'schwarz',
+    UNTER_10S: 'tuerkis', S10_60: 'orange', MIN1_5: 'schwarz',
+    UEBER_5MIN: 'tuerkisHell',
   };
 
   // Segmente unter diesem Anteil (Prozent) werden zu "Uebrige" zusammengefasst.
@@ -7906,6 +7976,11 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       if (format === 'betrag') return formatAmountCH(wert);
       if (format === 'pct') return formatProzentCH(wert) + ' %';
       if (format === 'faktor') return formatZahlCH(wert);
+      // Untergrenze statt Messwert: die 3DS-Failure-Liste hat ein LIMIT, und
+      // wenn sie es erreicht, ist jede Zaehlung daraus ein "mindestens n".
+      // Das Wort gehoert in die AUSGABE, nicht in den Block - dort steht
+      // weiterhin die rohe Zahl, mit der CSV und Excel rechnen koennen.
+      if (format === 'mindestens') return 'mindestens ' + formatIntCH(wert);
       // 'text' ist ein gueltiges Format UND der Vorgabewert: reportingSpalte()
       // setzt es, wenn keines angegeben ist, und reportingZellFormat() liefert
       // es fuer eine fehlende Kopfspalte. Eine Zahl darunter ist deshalb keine
@@ -7938,7 +8013,12 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // Zweig darunter wirklich nur unbekannte Formate faengt. 'text' ist dabei
     // der Vorgabewert von reportingSpalte()/reportingZellFormat(), keine
     // Fehlbedienung.
-    if (format === 'zahl' || format === 'text') return wert;
+    // 'mindestens' steht daneben, weil die Zelle in CSV und Excel eine ZAHL
+    // bleiben soll - dort wird gerechnet und sortiert. Dass sie eine
+    // Untergrenze ist, sagt der Hinweis des Blocks, den beide Ausgaben
+    // ebenfalls mitschreiben; ein String "mindestens 20’000" waere in einer
+    // Zahlenspalte der teurere Verlust.
+    if (format === 'zahl' || format === 'text' || format === 'mindestens') return wert;
     // Unbekanntes Format an einer Zahl: gleiche Lage wie in reportingZellText.
     // Eine LEERE Zelle taugt hier nicht als Fehlerzeichen - sie ist in
     // denselben Spalten schon vergeben (Fortsetzungszeile einer
@@ -8273,19 +8353,30 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Zeilen, Hinweis - Semikolon getrennt und mit BOM. Zahlen bleiben
   // maschinenlesbar (Punkt als Dezimaltrenner, keine Tausendertrennung),
   // sonst bricht der Import.
-  function buildReportingReportCsv(modell, optionen) {
+  function reportingBloeckeZuCsv(bloecke) {
     const zeilen = [];
-    reportingExportBloecke(modell, optionen).forEach((block, i) => {
+    bloecke.forEach((block, i) => {
       if (i > 0) zeilen.push('');
       zeilen.push(csvFeld(block.titel));
       if (block.kopf.length) {
-        zeilen.push(block.kopf.map(k => csvFeld(k.label)).join(';'));
+        zeilen.push(block.kopf.map(k => csvFeld(reportingKopfLabel(k, true))).join(';'));
         block.zeilen.forEach((r, ri) => zeilen.push(r.map((wert, c) =>
           csvFeld(reportingZellZahl(wert, reportingZellFormat(block, ri, c)))).join(';')));
       }
       if (block.hinweis) zeilen.push(csvFeld(block.hinweis));
     });
     return CSV_BOM + zeilen.join('\r\n') + '\r\n';
+  }
+
+  function buildReportingReportCsv(modell, optionen) {
+    return reportingBloeckeZuCsv(reportingExportBloecke(modell, optionen));
+  }
+
+  // Dieselbe Schreibweise fuer die 3DS-Failure-Seite - eine zweite
+  // CSV-Schleife waere eine zweite Gelegenheit, den Umweg ueber
+  // reportingZellFormat() zu vergessen.
+  function buildReportingTdsCsv(modell, optionen) {
+    return reportingBloeckeZuCsv(reportingTdsExportBloecke(modell, optionen));
   }
 
   // --- Reporting-Report: PDF-Layout ----------------------------------------
@@ -8340,6 +8431,469 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       tabellen.push(reportingPdfTabelle(b, neuerKanal ? `${kapitel}. ${b.titel}` : b.titel, neuerKanal));
     });
     return { titel: 'REPORTING-REPORT / MERCHANT KPI REPORT', kopfzeilen, tabellen };
+  }
+
+  // --- 3DS-Failures: Blockschicht (SPEC-ITERATION-2 §3.4/§3.5) -------------
+  // Gleiche Bauweise, gleiche Blockform und dieselben Helfer wie das Aggregat
+  // darueber: ein Block traegt { titel, kanal, kopf, zeilen, typ, hinweis,
+  // zellFormate?, kuchen? }, in den Zeilen stehen ROHWERTE (Betraege als
+  // 1e-8-Ganzzahlen, Prozente ungerundet, Dauer in Sekunden), und Bildschirm,
+  // CSV, Excel und PDF sitzen alle vier auf DIESER Liste auf. Deshalb ruft
+  // hier nichts formatAmountCH/formatProzentCH auf - ausser in den
+  // Hinweistexten, die Prosa sind.
+  //
+  // Der Titelblock traegt kanal '' und wird daran erkannt (dieselbe Konvention
+  // wie im Aggregat: er wird im PDF zur Dokumentkopfzeile). Alle uebrigen
+  // Bloecke tragen REPORTING_TDS_KANAL - die Seite kennt keine
+  // Kanal-Dimension, die Query filtert fest auf E-Commerce.
+  const REPORTING_TDS_KANAL = '3DS';
+
+  // Hoechstzahl Zeilen der Transaktionsliste IM PDF (§3.5 Punkt 4). Der Rest
+  // steht in Excel und CSV; 20'000 Zeilen waeren mehrere hundert Seiten, und
+  // ein PDF, das niemand oeffnen kann, ist keine Ausgabe.
+  const REPORTING_TDS_PDF_ZEILEN = 500;
+
+  // Beschriftung der Link-Zelle auf dem Bildschirm. In CSV und Excel heisst
+  // die Spalte dashboard_url (siehe reportingKopfLabel) und traegt die
+  // Adresse selbst.
+  const REPORTING_TDS_LINK_TEXT = 'Öffnen';
+
+  // Nur Adressen, die tdsDashboardUrl gebaut hat, werden zum Link. Das Modell
+  // setzt sie aus geprueften Ziffern zusammen (§3.4); die Pruefung hier ist die
+  // zweite Naht - ein href aus fremdem Text waere der Weg, ueber den ein
+  // 'javascript:'-Ziel ins Markup kaeme, und ein von Hand gebauter Block oder
+  // ein spaeterer Aufrufer kommt an dieser Stelle vorbei. Der leere String
+  // heisst "kein Link" und bleibt leer: ein <a href=""> zeigte auf die Seite
+  // selbst und saehe trotzdem aus wie ein Ziel.
+  function reportingLinkZiel(wert) {
+    const s = String(wert == null ? '' : wert);
+    return s.indexOf(TDS_DASHBOARD_BASIS) === 0 ? s : '';
+  }
+
+  // Hat eine offene Liste ueberhaupt etwas zu sagen? Leer heisst: das Merkmal
+  // kommt nicht vor. Besteht sie NUR aus "Unbekannt", ist das zwar eine
+  // Messung ("der Connector schreibt das Label nicht"), als Tabelle sagt sie
+  // aber nichts, was der fehlende Block nicht auch sagt - dieselbe
+  // Ueberlegung wie beim PAN-Quelle-Block des Aggregats. Die FESTEN
+  // Eimersaetze fallen nicht darunter: dass es keinen Timeout gab, ist eine
+  // Aussage, und ihre Zeile bleibt stehen.
+  function tdsListeHatAussage(liste, feld) {
+    return liste.some(e => e[feld] !== REPORTING_UNBEKANNT);
+  }
+
+  function reportingTdsExportBloecke(modell, optionen) {
+    const opt = optionen || {};
+    // Das leere Modell kommt aus der Modellfunktion selbst, nicht aus einem
+    // handgeschriebenen Literal daneben - so kann es nicht veralten, wenn das
+    // Modell ein Feld dazubekommt.
+    const m = (modell && modell.kpi) ? modell : buildReportingTdsModel([], {});
+    const k = m.kpi;
+    const zr = m.zeitraum;
+    const spaces = (Array.isArray(opt.spaces) && opt.spaces.length) ? opt.spaces : k.spaces;
+
+    const kopfZeilen = [
+      ['Bericht', 'Gescheiterte Zahlungsversuche mit 3-D Secure'],
+      ['Zeitraum (Auswahl)', reportingZeitraumText(opt.zeitraum) || '—'],
+      // Bewusst ohne formatIntCH, wie im Aggregat: das Schweizer
+      // Tausenderzeichen gehoert in die Ausgabe, nicht in eine Zelle.
+      ['Zeitraum (Daten)', zr.von
+        ? `${datumCH(zr.von)} – ${datumCH(zr.bis)} (${zr.tage} Tage)` : '—'],
+      ['Spaces', spaces.join(', ') || '—'],
+      ['Währungen', k.waehrungen.join(', ') || '—'],
+    ];
+    let kopfHinweis = 'Eine Zeile steht hier, wenn der Zahlungsversuch gescheitert ist und '
+      + 'entweder als Grund ein 3-D-Secure-Fehlschlag oder -Timeout eingetragen ist oder der '
+      + '3DS-Prozess ohne Kryptogramm abgebrochen wurde — beide Wege, damit weder ein '
+      + '„3-D Secure Failure“ ohne Start-Label noch ein abgebrochener Prozess mit anderem '
+      + 'Grund fehlt. Der Zeitraum bezieht sich auf den Zeitpunkt des Zahlungsversuchs, nicht '
+      + 'auf den Abschluss der Transaktion. Beträge werden je Währung geführt und nie addiert.';
+    if (m.abgeschnitten) {
+      kopfHinweis += ` Die Liste hat die Höchstzahl von ${formatIntCH(m.limit)} Zeilen erreicht: `
+        + 'alle Zählwerte sind Untergrenzen („mindestens“), und die Anteile beziehen sich auf '
+        + 'die geladenen Zeilen. Ein engerer Zeitraum liefert ein vollständiges Bild.';
+    }
+    const bloecke = [reportingBlock('', '3DS-Failures',
+      [reportingSpalte('Angabe'), reportingSpalte('Wert')], kopfZeilen, 'tabelle', kopfHinweis)];
+
+    if (!m.hatDaten) {
+      // Die eine Ausnahme von "ein Block ohne Grundlage entfaellt": dass es
+      // keinen einzigen 3DS-Fehlschlag gab, ist selbst die Aussage - und
+      // genau die Frage, mit der jemand diese Seite oeffnet.
+      bloecke.push(reportingBlock(REPORTING_TDS_KANAL, 'Keine Daten', [], [], 'tabelle',
+        'Im gewählten Zeitraum ist kein Zahlungsversuch mit 3-D Secure gescheitert.'));
+      return bloecke;
+    }
+
+    // --- Kacheln (§3.5 Punkt 1) -------------------------------------------
+    const kachelZeilen = [];
+    const kachelFormate = [];
+    const kachel = (label, wert, format, waehrung) => {
+      kachelZeilen.push([label, wert, waehrung || '']);
+      kachelFormate.push(['text', format, 'text']);
+    };
+    // Am Limit ist jede Zaehlung eine Untergrenze - die Ausgabe schreibt dann
+    // "mindestens n" statt einer Zahl, die wie eine Messung aussieht. Der
+    // Blockwert bleibt die rohe Zahl (siehe reportingZellText/-Zahl).
+    const zaehler = m.abgeschnitten ? 'mindestens' : 'zahl';
+    kachel('3DS-Failures gesamt', k.failures, zaehler);
+    kachel('Betroffene Transaktionen', k.transaktionen, zaehler);
+    if (k.hatAggregat) {
+      kachel('Anteil an allen gescheiterten Versuchen', k.anteilAnFailed, 'pct');
+      kachel('Anteil an Versuchen mit 3DS-Anforderung', k.anteilAnTdsAngefordert, 'pct');
+    }
+    kachel('Wiederholer (Transaktionen)', k.wiederholerAnteil, 'pct');
+    kachel('Am Ende doch bezahlt (Transaktionen)', k.amEndeBezahltAnteil, 'pct');
+    kachel('Bestellungen', m.bestellungen.gesamt, zaehler);
+    kachel('Bestellungen mit ≥ 2 3DS-Fehlschlägen', m.bestellungen.mehrfach, zaehler);
+    kachel('Mehrfach gescheiterte Bestellungen (Anteil)', m.bestellungen.mehrfachAnteil, 'pct');
+    kachel('Mehrfach gescheitert und am Ende bezahlt', m.bestellungen.mehrfachBezahltAnteil, 'pct');
+    m.waehrungen.forEach(w => kachel('Betroffenes Volumen', w.betrag, 'betrag', w.waehrung));
+
+    let kachelHinweis = 'Wiederholer und „am Ende doch bezahlt“ zählen TRANSAKTIONEN, nicht '
+      + `Zeilen: die ${formatIntCH(k.failures)} Fehlschläge verteilen sich auf `
+      + `${formatIntCH(k.transaktionen)} Transaktionen, und über Zeilen gerechnet stiege der `
+      + 'Wiederholer-Anteil allein dadurch, dass es Wiederholer gibt.';
+    if (k.hatAggregat) {
+      kachelHinweis += ` „Anteil an allen gescheiterten Versuchen“ setzt die `
+        + `${formatIntCH(k.failures)} Zeilen ins Verhältnis zu den `
+        + `${formatIntCH(k.basisFailed)} gescheiterten Versuchen des E-Commerce-Kanals. `
+        // Der Punkt, den die Ausgabe benennen MUSS: andere Grundgesamtheit,
+        // anderer Zaehler. Ohne diesen Satz liest sich die Kachel wie ein
+        // Anteil der Zeile darueber - und in einem kleinen Space kann sie
+        // dabei rechnerisch groesser sein als der Anteil an allen FAILED.
+        + '„Anteil an Versuchen mit 3DS-Anforderung“ hat eine ANDERE Grundgesamtheit: '
+        + `gezählt werden die ${formatIntCH(k.mitTdsStart)} Zeilen mit gestartetem `
+        + `3DS-Prozess von ${formatIntCH(k.basisTdsAngefordert)} Karten-Versuchen mit `
+        + `3DS-Anforderung — nicht alle ${formatIntCH(k.failures)} 3DS-Failures. Ein Versuch `
+        + 'mit dem Grund „3-D Secure Failure“, dessen Connector kein Start-Label schrieb, '
+        + 'steht in der Liste, aber in keiner der beiden Zahlen dieser Kachel.';
+    } else {
+      kachelHinweis += ' Die beiden Anteils-Kacheln („an allen gescheiterten Versuchen“, '
+        + '„an Versuchen mit 3DS-Anforderung“) fehlen, solange kein Aggregat-Ergebnis '
+        + 'desselben Zeitraums vorliegt — ihre Nenner stehen nicht in dieser Liste.';
+    }
+    if (k.ohneTransaktion > 0) {
+      kachelHinweis += ` ${formatIntCH(k.ohneTransaktion)} Zeilen ohne Transaktions-ID stehen `
+        + 'in keiner der Transaktions-Kennzahlen.';
+    }
+    if (m.bestellungen.ohneBestellnummer > 0) {
+      kachelHinweis += ` ${formatIntCH(m.bestellungen.ohneBestellnummer)} Zeilen tragen keine `
+        + 'Bestellnummer und zählen in keine Bestell-Kennzahl.';
+    }
+    // Bewusst ein eigener Satz und keine gemeinsame Zahl mit der Zeile davor:
+    // "ohne Bestellnummer" und "mit Bestellnummer, ohne Bestell-Zähler" sind
+    // verschiedene Aussagen, und eine gemeinsame Beschriftung widerspraeche
+    // der einen oder der anderen Zeile.
+    if (m.bestellungen.ohneBestellzaehler > 0) {
+      kachelHinweis += ` ${formatIntCH(m.bestellungen.ohneBestellzaehler)} Zeilen tragen eine `
+        + 'Bestellnummer, aber keine Bestell-Zähler und sind ebenfalls nicht gruppierbar.';
+    }
+    if (m.abgeschnitten) {
+      kachelHinweis += ` Die Liste ist bei ${formatIntCH(m.limit)} Zeilen abgeschnitten; die `
+        + 'Zählwerte sind Untergrenzen.';
+    }
+    bloecke.push(reportingBlock(REPORTING_TDS_KANAL, 'Kennzahlen',
+      [reportingSpalte('Kennzahl'),
+        // 'gemischt' wie im Aggregat: die Wert-Spalte fuehrt Zaehler,
+        // Prozente UND Betraege, das Format steht je Zelle in zellFormate.
+        // Ein renderbares Spaltenformat waere die Falle fuer den, der
+        // reportingZellFormat() vergisst.
+        reportingSpalte('Wert', 'gemischt'), reportingSpalte('Währung')],
+      kachelZeilen, 'kacheln', kachelHinweis, kachelFormate));
+
+    // --- Bausteine der Aufschluesselungen ---------------------------------
+    // Alle Aufschluesselungen dieser Seite haben dieselbe Form (Eimer/Wert,
+    // Versuche, Anteil), deshalb zwei Fabriken statt zwoelf gleicher Bloecke.
+    // "Versuche" und nicht "Attempts": jede Zeile IST ein gescheiterter
+    // Zahlungsversuch, und der deutsche Bericht braucht das englische Wort
+    // hier nicht.
+    const spalten = name => [reportingSpalte(name), reportingSpalte('Versuche', 'zahl'),
+      reportingSpalte('Anteil %', 'pct')];
+
+    // Fester Eimersatz: vollstaendig, mit Total-Zeile, Nullen eingeschlossen.
+    const eimerBlock = (titel, spaltenName, gruppen, basis, hinweis, mitKuchen) => {
+      const zeilen = gruppen.map(g => [reportingLabel(g.schluessel), g.anzahl, g.anteil]);
+      zeilen.push([REPORTING_TOTAL_ZEILE, basis, basis > 0 ? 100 : null]);
+      const block = reportingBlock(REPORTING_TDS_KANAL, titel,
+        spalten(spaltenName), zeilen, 'tabelle', hinweis);
+      return mitKuchen
+        ? reportingKuchenAnhaengen(block, [reportingKuchen(block, {
+          titel: `Anteil je ${spaltenName}`, wertSpalte: 1, anteilSpalte: 2, format: 'zahl' })])
+        : block;
+    };
+
+    // Offene Liste. Jeder Wert laeuft durch reportingLabel(): der uebersetzt
+    // die Eimer-Schluessel (Wallet '-' -> "Kein Wallet", UNKNOWN ->
+    // "Unbekannt") und laesst alles andere unveraendert. Ein Brand oder eine
+    // BIN steht damit so da, wie sie heisst - nur "UNKNOWN" bekommt in JEDER
+    // Tabelle dieselbe deutsche Beschriftung, statt dem Haendler einmal den
+    // Rohwert und einmal die Uebersetzung zu zeigen.
+    const listeBlock = (titel, spaltenName, liste, feld, hinweis, mitKuchen) => {
+      const block = reportingBlock(REPORTING_TDS_KANAL, titel, spalten(spaltenName),
+        liste.map(e => [reportingLabel(e[feld]), e.anzahl, e.anteil]), 'tabelle', hinweis);
+      return mitKuchen
+        ? reportingKuchenAnhaengen(block, [reportingKuchen(block, {
+          titel: `Anteil je ${spaltenName}`, wertSpalte: 1, anteilSpalte: 2, format: 'zahl' })])
+        : block;
+    };
+
+    // --- Ablehngrund (offen) und Einordnung (fest) -------------------------
+    // Wie K8 im Aggregat: vollstaendig statt Top-N, der Rest als Sammelzeile,
+    // damit die Anteile auf 100 % aufgehen.
+    const g = reportingUebrige(m.gruende, k.failures, undefined, 'anzahl');
+    const grundZeilen = g.liste.map(f => [f.name, f.id, f.anzahl, f.anteil,
+      reportingLabel(f.einordnung)]);
+    if (g.uebrige) {
+      grundZeilen.push([`Übrige (${formatIntCH(g.uebrige.anzahl)} Gründe)`, '',
+        g.uebrige.attempts, g.uebrige.anteil, '']);
+    }
+    const grundBlock = reportingBlock(REPORTING_TDS_KANAL, 'Ablehngründe', [
+      reportingSpalte('Grund'), reportingSpalte('ID'),
+      reportingSpalte('Versuche', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+      reportingSpalte('Einordnung'),
+    ], grundZeilen, 'tabelle',
+    'Der Ablehngrund aus dem wallee-Katalog, aufgelöst über den eingebetteten Namenskatalog; '
+    + 'eine ID, die auch er nicht kennt, steht als „#<id>“ da. Die Spalte „Einordnung“ sagt, '
+    + 'über welchen der beiden Wege die Zeile in diese Liste kam. '
+    + 'Der Kuchen fasst Segmente unter 2 % zu „Übrige“ zusammen; dieses Segment kann deshalb '
+    + 'mehr Gründe umfassen als die gleichnamige Zeile der Tabelle.');
+    bloecke.push(reportingKuchenAnhaengen(grundBlock, [reportingKuchen(grundBlock, {
+      titel: 'Anteil je Grund', wertSpalte: 2, anteilSpalte: 3, format: 'zahl' })]));
+
+    bloecke.push(eimerBlock('Einordnung', 'Einordnung', m.einordnung.gruppen,
+      m.einordnung.basis,
+      'Die Dreiteilung aus der Definition: die beiden benannten 3DS-Ablehngründe, und '
+      + 'daneben die Versuche, die über den zweiten Weg hereinkommen — 3DS gestartet, kein '
+      + 'Kryptogramm, ein anderer Ablehngrund. Jede Zeile zählt in genau einen Eimer, die '
+      + 'Summe ist deshalb die Zahl der 3DS-Failures.', true));
+
+    // --- Dauer bis zum Abbruch: die Kernachse dieser Seite -----------------
+    bloecke.push(eimerBlock('Dauer bis zum Abbruch', 'Dauer', m.dauer.gruppen, m.dauer.basis,
+      'Zeit zwischen dem Start und dem Ende des 3DS-Prozesses. Diese Achse ERSETZT die '
+      + 'Aufschlüsselung nach Challenge-Status und ACS: die dreizehn EMVCo-Felder kommen im '
+      + 'Analytics-Export gar nicht an (gemessen 2026-09-04 an einem zweiten Händler-Space, '
+      + 'connectorabhängig). Sie trennt „sofort abgebrochen“ — der Kunde hat kein Gerät oder '
+      + 'keine App zur Hand — von „Timeout“, ohne Connector-Details zu erfinden. Die Grenzen '
+      + 'sind halboffen und gehören zum oberen Eimer: 10 s steht in „10–60 s“. „Unbekannt“ '
+      + 'heisst, dass einer der beiden Zeitpunkte fehlt oder unlesbar ist — nicht, dass der '
+      + 'Abbruch sofort erfolgte.', true));
+
+    // --- Betrag je Waehrung -----------------------------------------------
+    // Die Eimergrenzen sind WAEHRUNGSBETRAEGE, deshalb je Waehrung ein eigener
+    // Satz und nie eine Zeile ueber Waehrungen hinweg (SPEC 2.7). Die Waehrung
+    // steht nur in der ersten Zeile ihrer Gruppe - dieselbe Konvention wie bei
+    // den Waehrungszeilen des Aggregats: leer heisst "gehoert zur Zeile
+    // darueber".
+    const betragZeilen = [];
+    m.betraege.forEach(b => {
+      b.gruppen.forEach((eimer, i) => betragZeilen.push([
+        i === 0 ? b.waehrung : '', reportingLabel(eimer.schluessel), eimer.anzahl, eimer.anteil]));
+      betragZeilen.push(['', REPORTING_TOTAL_ZEILE, b.basis, b.basis > 0 ? 100 : null]);
+    });
+    bloecke.push(reportingBlock(REPORTING_TDS_KANAL, 'Betrag je Währung', [
+      reportingSpalte('Währung'), reportingSpalte('Betragsklasse'),
+      reportingSpalte('Versuche', 'zahl'), reportingSpalte('Anteil %', 'pct'),
+    ], betragZeilen, 'tabelle',
+    `Die Klassengrenzen sind Beträge (${TDS_BETRAG_GRENZEN.join(' / ')}) in der jeweiligen `
+    + 'Währung und deshalb je Währung ein eigener Satz; über Währungen hinweg wird nie '
+    + 'summiert. Halboffen wie bei der Dauer: 50 zählt zu „50–200“. Die Anteile beziehen sich '
+    + 'auf die Versuche DIESER Währung und summieren je Währung auf 100 %.'));
+
+    // --- Die uebrigen Achsen ----------------------------------------------
+    bloecke.push(listeBlock('Zahlungsmittel', 'Brand', m.brands, 'brand',
+      'Anteil an allen 3DS-Failures. Ein einzelnes Zahlungsmittel mit auffällig hohem Anteil '
+      + 'deutet auf dessen Issuer-Seite, nicht auf den Checkout.', true));
+
+    if (tdsListeHatAussage(m.wallets, 'wallet')) {
+      bloecke.push(listeBlock('Wallet', 'Wallet', m.wallets, 'wallet',
+        '„Kein Wallet“ ist eine Messung — der Versuch lief ohne Wallet — und etwas anderes '
+        + 'als „Unbekannt“, wo schlicht kein Wert steht. Wallets liegen quer zu den '
+        + 'Zahlungsmitteln (Apple Pay auf Visa).', false));
+    }
+
+    if (tdsListeHatAussage(m.laender, 'land')) {
+      const top = reportingTop(m.laender,
+        'Ausgabeland der Karte (ISO-2), absteigend nach Anzahl. Häufen sich die Fehlschläge '
+        + 'auf einem Land, steht dahinter eher ein Issuer als der Checkout.');
+      bloecke.push(reportingBlock(REPORTING_TDS_KANAL, 'Issuer-Land', spalten('Land'),
+        top.liste.map(l => [reportingLabel(l.land), l.anzahl, l.anteil]), 'tabelle', top.hinweis));
+    }
+
+    if (tdsListeHatAussage(m.bins, 'bin')) {
+      const top = reportingTop(m.bins,
+        // Die ehrliche Antwort auf "konzentriert es sich auf einen bestimmten
+        // Herausgeber?" - weiter als bis zur Nummer kommt dieser Report nicht.
+        'Die BIN (Card Issuer Number) identifiziert den HERAUSGEBER der Karte, nicht die '
+        + 'Karte selbst. Einen Herausgebernamen führt wallee nirgends — dafür bräuchte es '
+        + 'eine BIN-Tabelle des Acquirers. Die Nummer ist damit die feinste Issuer-Achse, '
+        + 'die dieser Report bilden kann; wer den Namen braucht, schlägt sie beim Acquirer '
+        + 'nach.');
+      bloecke.push(reportingBlock(REPORTING_TDS_KANAL, 'BIN (Herausgeber)', spalten('BIN'),
+        top.liste.map(b => [reportingLabel(b.bin), b.anzahl, b.anteil]), 'tabelle', top.hinweis));
+    }
+
+    if (tdsListeHatAussage(m.panTypes, 'panType')) {
+      bloecke.push(listeBlock('PAN-Quelle', 'PAN-Quelle', m.panTypes, 'panType',
+        'Klartext-PAN gegen Device-Token (Apple/Google Pay) und Scheme-Token (Click to Pay). '
+        + 'Ein Scheme-Wert ohne deutschen Namen steht als Rohwert da — eine erfundene '
+        + 'Bezeichnung wäre schlechter.', true));
+    }
+
+    if (tdsListeHatAussage(m.eci, 'eci')) {
+      bloecke.push(listeBlock('ECI', 'ECI', m.eci, 'eci',
+        'Electronic Commerce Indicator des Kryptogramms. Er steht nur an Versuchen, die eines '
+        + 'mitbringen (Wallet- und Token-Versuche); „Unbekannt“ heisst hier, dass keines '
+        + 'vorlag.', false));
+    }
+
+    if (tdsListeHatAussage(m.retry, 'attemptRetry')) {
+      bloecke.push(listeBlock('Attempt Retry', 'Empfehlung', m.retry, 'attemptRetry',
+        // Der Unterschied zur kuratierten "Empfehlung" des Aggregat-Blocks
+        // K8: die hier kommt als Label vom Scheme mit, sie ist gemessen.
+        'Die vom Scheme MITGELIEFERTE Wiederholungs-Empfehlung (Label „Attempt Retry“) — '
+        + 'nicht die kuratierte Empfehlung des Ablehngrund-Blocks im Aggregat-Report. „Retry '
+        + 'Later“ heisst: derselbe Versuch kann später erfolgreich sein; „No Retry“: eine '
+        + 'Wiederholung führt zum selben Ergebnis.', false));
+    }
+
+    // --- Verlauf und Stunden (Balken wie im Aggregat) ---------------------
+    if (m.verlauf.some(v => v.anzahl > 0)) {
+      let hinweis = 'Tag des Zahlungsversuchs. Tage ohne Fehlschlag stehen mit 0 da — die 0 '
+        + 'ist gemessen, nicht unbekannt. Ein einzelner Ausschlag deutet eher auf einen '
+        + 'Issuer- oder ACS-Ausfall als auf den Checkout.';
+      if (zr.lueckenlos === false) {
+        hinweis += ' Der Zeitraum ist zu lang für eine lückenlose Tagesachse; aufgeführt sind '
+          + 'nur die Tage mit Daten.';
+      }
+      if (k.ohneTag > 0) {
+        hinweis += ` ${formatIntCH(k.ohneTag)} Zeilen ohne brauchbares Datum sind hier nicht `
+          + 'enthalten.';
+      }
+      bloecke.push(reportingBlock(REPORTING_TDS_KANAL, 'Verlauf',
+        [reportingSpalte('Tag'), reportingSpalte('Versuche', 'zahl')],
+        m.verlauf.map(v => [v.tag, v.anzahl]), 'balken', hinweis));
+    }
+
+    if (m.stunden.some(s => s.anzahl > 0)) {
+      let hinweis = 'Alle 24 Stunden stehen da, auch die leeren — eine fehlende Stunde wäre '
+        + 'von einer Stunde ohne Fehlschlag nicht zu unterscheiden. Die Stunde kommt aus dem '
+        + 'Zeitstempel selbst, ohne Zeitzonen-Umrechnung.';
+      if (k.ohneStunde > 0) {
+        hinweis += ` ${formatIntCH(k.ohneStunde)} Zeilen ohne brauchbare Stunde sind hier `
+          + 'nicht enthalten.';
+      }
+      bloecke.push(reportingBlock(REPORTING_TDS_KANAL, 'Stunden',
+        [reportingSpalte('Stunde', 'zahl'), reportingSpalte('Versuche', 'zahl')],
+        m.stunden.map(s => [s.stunde, s.anzahl]), 'balken', hinweis));
+    }
+
+    // --- Die Zeilentabelle (§3.5 Punkt 3) ---------------------------------
+    // Spaltenfolge wie in der Spec, mit EINER Ergaenzung: die Waehrung steht
+    // vor dem Betrag. Sie fehlt in der Aufzaehlung von §3.5, aber eine
+    // Betragszahl ohne ihre Einheit ist keine Aussage - und diese Liste kann
+    // Zeilen mehrerer Waehrungen tragen (SPEC 2.7 gilt hier genauso).
+    const zeilenBlock = reportingBlock(REPORTING_TDS_KANAL, 'Transaktionen', [
+      reportingSpalte('Datum'), reportingSpalte('Transaktion'), reportingSpalte('Referenz'),
+      reportingSpalte('Brand'), reportingSpalte('Wallet'), reportingSpalte('Währung'),
+      reportingSpalte('Betrag', 'betrag'), reportingSpalte('Grund'),
+      reportingSpalte('Dauer (s)', 'zahl'), reportingSpalte('Versuch'),
+      reportingSpalte('Endstand Tx'), reportingSpalte('Issuer-Land'),
+      reportingSpalte(REPORTING_TDS_LINK_TEXT, 'link'),
+    ], m.zeilen.map(z => [
+      z.createdOn, z.transactionId, z.merchantReference,
+      reportingLabel(z.brand), reportingLabel(z.wallet), reportingLabel(z.waehrung),
+      z.betrag, z.grundName,
+      // null heisst "keine Messung" und wird in der Ausgabe zum Strich - genau
+      // die Aussage, die der Dauer-Eimer "Unbekannt" daneben traegt.
+      z.dauerSekunden,
+      // Zwei Zaehler in einer Zelle, wie §3.5 die Spalte fuehrt ("Versuch
+      // n/m"). Das ist eine BESCHRIFTUNG, keine Messgroesse: nichts wird
+      // gerundet und nichts lokal formatiert, und wer die beiden Zahlen
+      // einzeln braucht, nimmt das Roh-CSV der Abfrage.
+      `${z.attemptNr}/${z.attemptsDerTransaktion}`,
+      // Der Transaktionszustand bleibt roh: er steht im wallee-Dashboard
+      // genauso da, und die Zeile daneben verlinkt genau dorthin.
+      z.transactionState, reportingLabel(z.issuerCountry),
+      z.dashboardUrl,
+    ]), 'tabelle',
+    'Neueste zuerst. „Versuch n/m“ ist die Nummer dieses Versuchs und die Gesamtzahl der '
+    + 'Versuche derselben Transaktion; „Endstand Tx“ ist der Zustand der Transaktion, wie ihn '
+    + 'auch das Dashboard zeigt (FULFILL/COMPLETED = am Ende doch bezahlt). Eine leere Dauer '
+    + 'heisst, dass einer der beiden 3DS-Zeitpunkte fehlt. Der Link öffnet die Transaktion im '
+    + 'wallee-Dashboard; in CSV und Excel steht er als Spalte „dashboard_url“, im PDF nicht — '
+    + 'dort ist die Transaktions-ID der Anker.');
+    bloecke.push(zeilenBlock);
+
+    return bloecke;
+  }
+
+  // --- 3DS-Failures: Bildschirm --------------------------------------------
+  // Dieselben Bloecke, derselbe Renderer wie das Aggregat - inklusive
+  // <details> ab REPORTING_TABELLE_OFFEN Zeilen, was genau die lange
+  // Transaktionsliste betrifft. Reine Funktion: sie gibt Markup zurueck und
+  // fasst kein DOM an; das Einhaengen ist Sache der Verdrahtung.
+  function reportingTdsBerichtHtml(modell, optionen) {
+    return reportingTdsExportBloecke(modell, optionen)
+      .map(b => reportingBlockHtml(b)).join('');
+  }
+
+  // --- 3DS-Failures: PDF-Layout --------------------------------------------
+  // Die PDF-Sicht eines Blocks: ohne Link-Spalten und mit gedeckelter
+  // Zeilenzahl. Beides sind Eigenschaften der AUSGABE, nicht des Blocks -
+  // deshalb hier und nicht in reportingTdsExportBloecke.
+  function reportingTdsPdfSicht(block) {
+    const behalten = [];
+    block.kopf.forEach((k, c) => { if (k.format !== 'link') behalten.push(c); });
+    const ohneLink = behalten.length < block.kopf.length;
+    const gekuerzt = block.zeilen.length > REPORTING_TDS_PDF_ZEILEN;
+    const quelle = gekuerzt ? block.zeilen.slice(0, REPORTING_TDS_PDF_ZEILEN) : block.zeilen;
+    const sicht = {
+      kopf: behalten.map(c => block.kopf[c]),
+      zeilen: quelle.map(z => behalten.map(c => z[c])),
+      kuchen: block.kuchen,
+      hinweis: block.hinweis || '',
+    };
+    // zellFormate wird MITGEFILTERT, sonst zeigte reportingZellFormat() nach
+    // dem Entfernen einer Spalte auf die falsche Zelle. Heute traegt kein
+    // Block mit Link-Spalte zellFormate - "heute" ist kein Zustand, auf den
+    // sich eine Ausgabe verlassen sollte.
+    if (block.zellFormate) {
+      sicht.zellFormate = block.zellFormate.map(r => (r ? behalten.map(c => r[c]) : r));
+    }
+    if (ohneLink) {
+      sicht.hinweis += ' Die Spalte mit dem Dashboard-Link steht nicht im PDF (zu lang für '
+        + 'die Seite) — sie ist in der Bildschirmansicht sowie in CSV und Excel enthalten.';
+    }
+    if (gekuerzt) {
+      sicht.hinweis += ` Im PDF stehen die ersten ${formatIntCH(REPORTING_TDS_PDF_ZEILEN)} von `
+        + `${formatIntCH(block.zeilen.length)} Zeilen. Vollständige Liste im Excel/CSV.`;
+    }
+    return sicht;
+  }
+
+  function reportingTdsPdfBloecke(modell, optionen) {
+    const kopfzeilen = [];
+    const tabellen = [];
+    let erste = true;
+    reportingTdsExportBloecke(modell, optionen).forEach(b => {
+      if (!b.kanal) {
+        // Der Titelblock wird zur Kopfzeile des Dokuments, seine Prosa haengt
+        // als eigener Abschnitt darunter - dieselbe Aufteilung wie im
+        // Aggregat-PDF.
+        b.zeilen.forEach(z => kopfzeilen.push(`${z[0]}: ${z[1]}`));
+        if (b.hinweis) {
+          tabellen.push(reportingPdfTabelle(
+            { kopf: [], zeilen: [], hinweis: b.hinweis }, 'Grundlagen', false));
+        }
+        return;
+      }
+      // Ein Seitenumbruch nur vor dem ERSTEN Abschnitt (die Seite hat nur ein
+      // Kapitel); die uebrigen laufen wie im Aggregat mit dem Platzcheck in
+      // reportingPdfSchreiben.
+      tabellen.push(reportingPdfTabelle(reportingTdsPdfSicht(b), b.titel, erste));
+      erste = false;
+    });
+    return { titel: '3DS-FAILURES / 3-D SECURE FAILURE REPORT', kopfzeilen, tabellen };
   }
 
   // --- Settlement-Report: Ansicht ------------------------------------------
@@ -10268,13 +10822,29 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // unter den 24 Stunden und ueber der laengsten Sachtabelle (Top-10 Laender).
   const REPORTING_TABELLE_OFFEN = 20;
 
+  // Der einzige Zelltyp, der Markup statt Text erzeugt (§3.4): der Link ins
+  // wallee-Dashboard. Das Ziel kommt ausschliesslich aus reportingLinkZiel()
+  // - eine Adresse, die nicht von tdsDashboardUrl stammt, wird gar kein Link.
+  // Ein leerer Wert erzeugt KEIN <a href="">: das zeigte auf die Seite selbst
+  // und saehe trotzdem aus wie ein Ziel.
+  function reportingLinkHtml(wert) {
+    const ziel = reportingLinkZiel(wert);
+    if (!ziel) return '';
+    return `<a href="${escapeHtml(ziel)}" target="_blank" rel="noopener">`
+      + `${escapeHtml(REPORTING_TDS_LINK_TEXT)}</a>`;
+  }
+
   function reportingTabelleHtml(block) {
+    // 'link' steht hier neben 'text': die Spalte traegt einen Knopf, keine
+    // Zahl - rechtsbuendig saehe sie wie eine Messgroesse aus.
+    const linksBuendig = f => f === 'text' || f === 'link';
     const kopf = block.kopf.map(k =>
-      `<th${k.format === 'text' ? '' : ' class="num"'}>${escapeHtml(k.label)}</th>`).join('');
+      `<th${linksBuendig(k.format) ? '' : ' class="num"'}>${escapeHtml(k.label)}</th>`).join('');
     const zeilen = block.zeilen.map((r, ri) => '<tr>' + r.map((wert, c) => {
       // reportingZellFormat statt kopf[c].format: die Kacheln mischen in ihrer
       // Wert-Spalte Zaehler, Prozente und Betraege.
       const format = reportingZellFormat(block, ri, c);
+      if (format === 'link') return `<td>${reportingLinkHtml(wert)}</td>`;
       return `<td${format === 'text' ? '' : ' class="num"'}>`
         + `${escapeHtml(reportingZellText(wert, format))}</td>`;
     }).join('') + '</tr>').join('');
@@ -10489,16 +11059,110 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Nachkommastelle und haengt das Prozentzeichen an, OHNE ihn wie das
   // eingebaute Format 0.0% mit 100 zu multiplizieren - die Bloecke fuehren
   // bereits Werte von 0 bis 100.
-  const REPORTING_XLSX_FORMAT = { betrag: '#,##0.00', zahl: '#,##0', pct: '0.0"%"', faktor: '0.00' };
+  const REPORTING_XLSX_FORMAT = {
+    betrag: '#,##0.00', zahl: '#,##0', pct: '0.0"%"', faktor: '0.00',
+    // Untergrenze: in der Zelle steht die Zahl (dort wird gerechnet), dass sie
+    // ein "mindestens" ist, sagt der Hinweis des Abschnitts darunter.
+    mindestens: '#,##0',
+  };
 
-  // Ein Blatt je Kanal, die Abschnitte darin untereinander gestapelt (Muster
-  // exportReportXlsx beim Terminal-Report), statt ein Blatt je Block: der
-  // Fixture-Bericht haette sonst 34 Tabs. Der kanaluebergreifende Titelblock
-  // bekommt sein eigenes, vorangestelltes Blatt.
+  // Ein Blatt aus einer Blockliste: die Abschnitte darin untereinander
+  // gestapelt (Muster exportReportXlsx beim Terminal-Report), statt ein Blatt
+  // je Block - der Fixture-Bericht haette sonst 34 Tabs.
+  //
+  // Eigene Funktion, seit die 3DS-Failure-Seite ein zweites Blatt derselben
+  // Bauart braucht: eine zweite Schleife waere eine zweite Gelegenheit,
+  // reportingZellFormat() zu vergessen oder ein Zahlformat auszulassen.
+  //
   // Kein Kuchen in Excel (§2.2): der eingebettete Vendor kann keine Charts,
   // und ein nachgebautes Bild waere ein dritter Vendor. block.kuchen wird hier
   // schlicht nicht gelesen - die Prozentspalten der Tabelle tragen dieselben
   // Zahlen, aus denen der Kuchen entsteht. Gleiches gilt fuer die CSV.
+  function reportingXlsxBlatt(wb, blattName, kopfTitel, bloecke, datum) {
+    const maxCols = Math.max(1, ...bloecke.map(b => b.kopf.length));
+    const aoa = [];
+    const stile = [];                 // { r, c, s, z } - nach aoa_to_sheet angewandt
+    const links = [];                 // { r, c, ziel } - Hyperlink-Zellen (§3.4)
+    const merges = [];
+    const spanne = r => merges.push({ s: { r, c: 0 }, e: { r, c: maxCols - 1 } });
+
+    aoa.push([kopfTitel]); spanne(0);
+    stile.push({ r: 0, c: 0, s: { font: { bold: true, sz: 14, color: { rgb: XLSX_FARBE.text } },
+      alignment: { horizontal: 'left', vertical: 'center' } } });
+    aoa.push([`Erstellt am ${datum}`]); spanne(1);
+    stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: '6B7A79' } } } });
+    aoa.push([]);
+    let r = 3;
+
+    bloecke.forEach(block => {
+      aoa.push([block.titel]); spanne(r);
+      stile.push({ r, c: 0, s: { font: { bold: true, sz: 12, color: { rgb: XLSX_FARBE.text } } } });
+      r++;
+      if (block.kopf.length) {
+        // reportingKopfLabel: eine Link-Spalte heisst hier dashboard_url und
+        // traegt die Adresse - "Öffnen" ueber einer URL waere eine
+        // Aufforderung an eine Tabelle.
+        aoa.push(block.kopf.map(k => reportingKopfLabel(k, true)));
+        for (let c = 0; c < block.kopf.length; c++) stile.push({ r, c, s: xlsxKopfStil() });
+        r++;
+        block.zeilen.forEach((zeile, i) => {
+          const zebra = i % 2 === 1;
+          aoa.push(zeile.map((wert, c) => reportingZellZahl(wert, reportingZellFormat(block, i, c))));
+          zeile.forEach((wert, c) => {
+            const zellFormat = reportingZellFormat(block, i, c);
+            const format = REPORTING_XLSX_FORMAT[zellFormat] || null;
+            stile.push({ r, c, s: xlsxZellStil(zebra, !!format, format), z: format });
+            if (zellFormat === 'link') {
+              const ziel = reportingLinkZiel(wert);
+              if (ziel) links.push({ r, c, ziel });
+            }
+          });
+          r++;
+        });
+      }
+      if (block.hinweis) {
+        aoa.push([block.hinweis]); spanne(r);
+        stile.push({ r, c: 0,
+          s: { font: { color: { rgb: XLSX_FARBE.text }, italic: true, sz: 9 } } });
+        r++;
+      }
+      aoa.push([]); r++;              // Leerzeile zwischen den Abschnitten
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!merges'] = merges;
+    stile.forEach(op => {
+      const zelle = ws[XLSX.utils.encode_cell({ r: op.r, c: op.c })];
+      if (!zelle) return;
+      if (op.s) zelle.s = op.s;
+      if (op.z && zelle.t === 'n') zelle.z = op.z;
+    });
+    // Hyperlink-Zellen zuletzt: der Zellwert bleibt die Adresse (so ist sie
+    // auch ohne Klick lesbar und exportierbar), .l macht sie in Excel
+    // anklickbar.
+    links.forEach(op => {
+      const zelle = ws[XLSX.utils.encode_cell({ r: op.r, c: op.c })];
+      if (zelle) zelle.l = { Target: op.ziel, Tooltip: 'Im wallee-Dashboard öffnen' };
+    });
+    ws['!cols'] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 26 : 15 }));
+    XLSX.utils.book_append_sheet(wb, ws, xlsxBlattName(blattName));
+    return ws;
+  }
+
+  // Das Blatt der 3DS-Failure-Seite. Es haengt sich an eine BESTEHENDE Mappe:
+  // so kann die Verdrahtung es entweder neben die Kanal-Blaetter des
+  // Reporting-Reports legen oder allein ausgeben, ohne dass es dafuer zwei
+  // Schreiber braucht.
+  const REPORTING_TDS_BLATT = '3DS-Failures';
+  function reportingTdsXlsxBlatt(wb, modell, optionen) {
+    const d = new Date();
+    return reportingXlsxBlatt(wb, REPORTING_TDS_BLATT, 'wallee — 3DS-Failures',
+      reportingTdsExportBloecke(modell, optionen),
+      `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`);
+  }
+
+  // Ein Blatt je Kanal; der kanaluebergreifende Titelblock bekommt sein
+  // eigenes, vorangestelltes Blatt.
   function exportReportingXlsx() {
     if (!reportingModell) return;
     const bloecke = reportingExportBloecke(reportingModell, reportingExportOptionen());
@@ -10515,58 +11179,9 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     });
 
     gruppen.forEach(gruppe => {
-      const maxCols = Math.max(1, ...gruppe.bloecke.map(b => b.kopf.length));
-      const aoa = [];
-      const stile = [];               // { r, c, s, z } - nach aoa_to_sheet angewandt
-      const merges = [];
-      const spanne = r => merges.push({ s: { r, c: 0 }, e: { r, c: maxCols - 1 } });
-
-      aoa.push(['wallee — Reporting-Report']); spanne(0);
-      stile.push({ r: 0, c: 0, s: { font: { bold: true, sz: 14, color: { rgb: XLSX_FARBE.text } },
-        alignment: { horizontal: 'left', vertical: 'center' } } });
-      aoa.push([`Erstellt am ${datum}`]); spanne(1);
-      stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: '6B7A79' } } } });
-      aoa.push([]);
-      let r = 3;
-
-      gruppe.bloecke.forEach(block => {
-        aoa.push([block.titel]); spanne(r);
-        stile.push({ r, c: 0, s: { font: { bold: true, sz: 12, color: { rgb: XLSX_FARBE.text } } } });
-        r++;
-        if (block.kopf.length) {
-          aoa.push(block.kopf.map(k => k.label));
-          for (let c = 0; c < block.kopf.length; c++) stile.push({ r, c, s: xlsxKopfStil() });
-          r++;
-          block.zeilen.forEach((zeile, i) => {
-            const zebra = i % 2 === 1;
-            aoa.push(zeile.map((wert, c) => reportingZellZahl(wert, reportingZellFormat(block, i, c))));
-            zeile.forEach((wert, c) => {
-              const format = REPORTING_XLSX_FORMAT[reportingZellFormat(block, i, c)] || null;
-              stile.push({ r, c, s: xlsxZellStil(zebra, !!format, format), z: format });
-            });
-            r++;
-          });
-        }
-        if (block.hinweis) {
-          aoa.push([block.hinweis]); spanne(r);
-          stile.push({ r, c: 0,
-            s: { font: { color: { rgb: XLSX_FARBE.text }, italic: true, sz: 9 } } });
-          r++;
-        }
-        aoa.push([]); r++;            // Leerzeile zwischen den Abschnitten
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!merges'] = merges;
-      stile.forEach(op => {
-        const zelle = ws[XLSX.utils.encode_cell({ r: op.r, c: op.c })];
-        if (!zelle) return;
-        if (op.s) zelle.s = op.s;
-        if (op.z && zelle.t === 'n') zelle.z = op.z;
-      });
-      ws['!cols'] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 26 : 15 }));
-      XLSX.utils.book_append_sheet(wb, ws,
-        xlsxBlattName(gruppe.kanal ? (REPORTING_KANAL_LABEL[gruppe.kanal] || gruppe.kanal) : 'Reporting'));
+      reportingXlsxBlatt(wb,
+        gruppe.kanal ? (REPORTING_KANAL_LABEL[gruppe.kanal] || gruppe.kanal) : 'Reporting',
+        'wallee — Reporting-Report', gruppe.bloecke, datum);
     });
 
     const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
