@@ -133,6 +133,24 @@ test('Betroffenes Volumen steht je Waehrung, nie als Summe darueber', () => {
   assert.ok(!('betrag' in m.kpi), 'kpi darf keinen waehrungsuebergreifenden Betrag tragen');
 });
 
+test('Die Waehrungs-AUFZAEHLUNG kennt kein UNKNOWN, die Verteilung schon', () => {
+  // kpi.waehrungen ist eine Liste von Waehrungscodes - so fuehrt sie auch das
+  // Gesamtmodell des Aggregats, und dort steht UNKNOWN nicht drin. Der Eimer
+  // ist keine Waehrung; in einer Liste, die sonst nur ISO-Codes enthaelt,
+  // laese er sich wie einer.
+  const m = modell([
+    zeile({ attemptId: 'a1', transactionId: 't1', waehrung: 'CHF' }),
+    zeile({ attemptId: 'a2', transactionId: 't2', waehrung: 'UNKNOWN' }),
+  ]);
+  assert.deepStrictEqual(plain(m.kpi.waehrungen), ['CHF']);
+  // Die VERTEILUNGEN behalten ihn: dass eine Zeile ohne Waehrungsangabe kam,
+  // ist eine Messung und gehoert ausgewiesen - und die Anteile summieren nur
+  // mit ihr auf 100 %.
+  assert.deepStrictEqual(plain(m.waehrungen.map(w => w.waehrung)), ['CHF', 'UNKNOWN']);
+  assert.deepStrictEqual(plain(m.betraege.map(b => b.waehrung)), ['CHF', 'UNKNOWN']);
+  assert.strictEqual(summe(m.waehrungen), m.kpi.failures);
+});
+
 // --- Die beiden Nenner aus dem Aggregat ------------------------------------
 
 // Ein minimales Kanal-Modell. Die Zahlen sind so gewaehlt, dass sich die
@@ -173,7 +191,49 @@ test('Mit Aggregat: Anteil an allen FAILED und an allen mit 3DS-Anforderung', ()
   // einen Anteil an einer Menge, in der 3DS nie angefordert wurde.
   assert.strictEqual(m.kpi.basisTdsAngefordert, 400);
   assert.strictEqual(m.kpi.anteilAnFailed, (8 / 200) * 100);
+  // Alle acht Fixture-Zeilen tragen einen Startzeitpunkt, Zaehler und
+  // Zeilenzahl fallen hier also zusammen.
+  assert.strictEqual(m.kpi.mitTdsStart, 8);
   assert.strictEqual(m.kpi.anteilAnTdsAngefordert, (8 / 400) * 100);
+});
+
+test('Der 3DS-Anteil zaehlt nur Zeilen mit Startzeitpunkt, die Failed-Quote alle', () => {
+  // Der Nenner "3DS angefordert" sind die Attempts mit GESTARTETEM Prozess.
+  // Die Definition der Liste (§3.2, erster Zweig) nimmt aber auch Zeilen auf,
+  // die kein tds_started-Label tragen: ein Attempt mit dem Grund "3-D Secure
+  // Failure" und leerem Start-Label kommt herein und steht im Aggregat unter
+  // NOT_REQUESTED, also NICHT im Nenner. Ueber die ganze Liste gerechnet
+  // stuenden solche Zeilen nur im Zaehler.
+  //
+  // Von Hand: drei Zeilen, davon eine ohne Startzeitpunkt.
+  //   anteilAnFailed        = 3 / 200 * 100 = 1.5 %  (ganze Liste)
+  //   mitTdsStart           = 2
+  //   anteilAnTdsAngefordert = 2 / 400 * 100 = 0.5 %  (nicht 3 / 400 = 0.75 %)
+  const m = modell([
+    zeile({ attemptId: 'a1', transactionId: 't1' }),
+    zeile({ attemptId: 'a2', transactionId: 't2' }),
+    zeile({ attemptId: 'a3', transactionId: 't3', tdsStartedOn: '', tdsFinishedOn: '' }),
+  ], { aggregat: AGGREGAT });
+  assert.strictEqual(m.kpi.failures, 3);
+  assert.strictEqual(m.kpi.mitTdsStart, 2);
+  assert.strictEqual(m.kpi.anteilAnFailed, (3 / 200) * 100);
+  assert.strictEqual(m.kpi.anteilAnTdsAngefordert, (2 / 400) * 100);
+  // Und die Zahl steht im Modell, damit die Ausgabe die abweichende
+  // Grundgesamtheit benennen kann statt sie zu verschweigen.
+  assert.ok(m.kpi.mitTdsStart < m.kpi.failures);
+});
+
+test('Ein unlesbarer Startzeitpunkt zaehlt trotzdem als "3DS gestartet"', () => {
+  // Gemessen wird die ANWESENHEIT des Labels, nicht seine Lesbarkeit: ein
+  // Attempt mit unlesbarem Startzeitpunkt hat 3DS trotzdem gestartet und
+  // steckt im Nenner des Aggregats. Ihn aus dem Zaehler zu nehmen machte die
+  // Kachel wieder kleiner als sie ist - nur in die andere Richtung.
+  const m = modell([
+    zeile({ attemptId: 'a1', transactionId: 't1', tdsStartedOn: 'sofort', tdsFinishedOn: '' }),
+  ], { aggregat: AGGREGAT });
+  assert.strictEqual(m.kpi.mitTdsStart, 1);
+  // Eine Dauer ergibt der Wert deshalb noch lange nicht.
+  assert.strictEqual(m.zeilen[0].dauerSekunden, null);
 });
 
 test('Der 3DS-Nenner ist derselbe, aus dem das Aggregat seinen Anteil bildet', () => {
@@ -264,15 +324,41 @@ test('Eine fehlende Bestellnummer ergibt keine Bestellung namens "undefined"', (
 test('Eine Zeile mit Nummer, aber ohne Zaehler ist nicht gruppierbar', () => {
   // Aus dieser Query kann das nicht kommen (beide Zaehler haengen an der
   // Nummer), aus einem importierten CSV schon. Dann fehlt die Grundlage fuer
-  // die Quote, und die Zeile gehoert zu "ohne Bestellnummer" - nicht in einen
-  // Nenner, dessen Gruppe es so nicht gibt.
+  // die Quote, und die Zeile gehoert in keine der beiden Bestell-Zahlen -
+  // nicht in einen Nenner, dessen Gruppe es so nicht gibt.
+  //
+  // Sie gehoert aber auch NICHT unter "ohne Bestellnummer": sie traegt eine
+  // ('ORD-X'). Diese Zeile unter der Beschriftung "n Zeilen ohne
+  // Bestellnummer" auszuweisen waere eine Aussage, der die Zeile selbst
+  // widerspricht - deshalb ein zweiter Zaehler.
   const m = modell([
     zeile({ attemptId: 'a1', transactionId: 't1', merchantReference: 'ORD-X',
       versucheDerBestellung: null, tdsFehlschlaegeDerBestellung: null }),
   ]);
   assert.strictEqual(m.bestellungen.gesamt, 0);
-  assert.strictEqual(m.bestellungen.ohneBestellnummer, 1);
+  assert.strictEqual(m.bestellungen.ohneBestellnummer, 0);
+  assert.strictEqual(m.bestellungen.ohneBestellzaehler, 1);
   assert.strictEqual(m.bestellungen.mehrfachAnteil, null);
+});
+
+test('Die beiden Ausschluss-Zaehler der Bestellebene trennen ihre Faelle', () => {
+  // Drei Zeilen, drei Faelle: eine gruppierbare Bestellung, eine Zeile ohne
+  // Nummer, eine Zeile mit Nummer und ohne Zaehler. Von Hand: gesamt = 1
+  // (eine gruppierbare Bestellung), ohneBestellnummer = 1,
+  // ohneBestellzaehler = 1 - jede ausgeschlossene Zeile in genau einem Topf.
+  const m = modell([
+    zeile({ attemptId: 'a1', transactionId: 't1', merchantReference: 'ORD-A',
+      versucheDerBestellung: 1, tdsFehlschlaegeDerBestellung: 1 }),
+    zeile({ attemptId: 'a2', transactionId: 't2', merchantReference: '',
+      versucheDerBestellung: null, tdsFehlschlaegeDerBestellung: null }),
+    zeile({ attemptId: 'a3', transactionId: 't3', merchantReference: 'ORD-C',
+      versucheDerBestellung: 2, tdsFehlschlaegeDerBestellung: null }),
+  ]);
+  assert.strictEqual(m.bestellungen.gesamt, 1);
+  assert.strictEqual(m.bestellungen.ohneBestellnummer, 1);
+  assert.strictEqual(m.bestellungen.ohneBestellzaehler, 1);
+  // Und keine der beiden ausgeschlossenen Zeilen steckt in einer Quote.
+  assert.strictEqual(m.bestellungen.mehrfach, 0);
 });
 
 // --- Grund und Einordnung (§3.2) -------------------------------------------
@@ -387,6 +473,31 @@ test('Beide belegten Zeitschreibweisen ergeben dieselbe Dauer', () => {
     B.tdsDauerSekunden('2026-07-04T18:10:41Z', '2026-07-04T20:11:02+02:00'), 21);
 });
 
+test('Gemischte Zonen-Schreibweisen ergeben "unbekannt", keine verschobene Dauer', () => {
+  // Date.parse liest einen Wert OHNE Zonenangabe als Lokalzeit, einen MIT
+  // Zone absolut. Traegt nur eine der beiden Seiten eine Zone, ist die
+  // Differenz um den UTC-Versatz des Browsers verschoben: der Abbruch nach
+  // 21 s unten laese sich in Zuerich als 3621 s und landete in "> 5 min" -
+  // also als "Timeout" statt "sofort abgebrochen", die Umkehrung genau der
+  // Aussage, fuer die diese Achse existiert. Die Schreibweise der beiden
+  // 3DS-Zeitpunkte ist NICHT gemessen, der Fall also nicht ausgeschlossen.
+  //
+  // Der Test rechnet bewusst nicht die verschobene Zahl nach - sie haengt an
+  // der Zeitzone des Testlaeufers. Verlangt ist, dass es GAR KEINE Zahl gibt.
+  assert.strictEqual(
+    B.tdsDauerSekunden('2026-07-04T20:10:41+02:00', '2026-07-04T20:11:02'), null);
+  assert.strictEqual(
+    B.tdsDauerSekunden('2026-07-04 20:10:41', '2026-07-04T20:11:02Z'), null);
+  // Und die Zeile landet damit im Eimer "unbekannt", nicht in einem, den sie
+  // sich aus dem Zeitzonen-Versatz verdient hat.
+  const m = modell([zeile({
+    attemptId: 'a1', transactionId: 't1',
+    tdsStartedOn: '2026-07-04T20:10:41+02:00', tdsFinishedOn: '2026-07-04 20:11:02',
+  })]);
+  assert.strictEqual(m.zeilen[0].dauerSekunden, null);
+  assert.strictEqual(m.dauer.gruppen.find(g => g.schluessel === 'UNBEKANNT').anzahl, 1);
+});
+
 // --- Betrags-Eimer (§3.5) --------------------------------------------------
 
 test('Betrags-Eimer: Grenzen aus der Konstanten, halboffen wie bei der Dauer', () => {
@@ -401,14 +512,33 @@ test('Betrags-Eimer: Grenzen aus der Konstanten, halboffen wie bei der Dauer', (
   assert.strictEqual(B.klassifiziereTdsBetrag(500 * E), 'UEBER_500');
 });
 
+test('Ein negativer oder unlesbarer Betrag ist "unbekannt", nicht der kleinste Eimer', () => {
+  // Derselbe Grundsatz wie bei der Dauer: "keine Messung" ist ein eigener Ort.
+  // Ein negativer Betrag in "< 50" saehe aus wie ein gemessener Kleinbetrag.
+  assert.strictEqual(B.klassifiziereTdsBetrag(-1), 'UNBEKANNT');
+  assert.strictEqual(B.klassifiziereTdsBetrag(-500 * 100000000), 'UNBEKANNT');
+  assert.strictEqual(B.klassifiziereTdsBetrag(null), 'UNBEKANNT');
+  assert.strictEqual(B.klassifiziereTdsBetrag(NaN), 'UNBEKANNT');
+  assert.strictEqual(B.klassifiziereTdsBetrag('129'), 'UNBEKANNT');
+  // 0 bleibt eine gueltige Messung und damit der kleinste Eimer.
+  assert.strictEqual(B.klassifiziereTdsBetrag(0), 'UNTER_50');
+  // Der Eimer steht als letzter im festen Satz, damit die Eimer auch mit ihm
+  // vollstaendig auf die Zeilen der Waehrung aufteilen.
+  assert.deepStrictEqual(plain([...B.REPORTING_TDS_BETRAG]),
+    ['UNTER_50', 'B50_200', 'B200_500', 'UEBER_500', 'UNBEKANNT']);
+  const m = modell([zeile({ attemptId: 'a1', transactionId: 't1', waehrung: 'CHF', betrag: -1 })]);
+  assert.deepStrictEqual(plain(m.betraege[0].gruppen.map(g => g.anzahl)), [0, 0, 0, 0, 1]);
+  assert.strictEqual(summe(m.betraege[0].gruppen), m.betraege[0].basis);
+});
+
 test('Betrags-Eimer stehen je Waehrung und summieren auf deren Zeilenzahl', () => {
   const m = modell();
   // CHF: 22.50 unter 50; 54.90, 78.40, 129.00, 129.00 in 50-200.
   // EUR:  89.95 in 50-200; 310.00 und 310.00 in 200-500.
   assert.deepStrictEqual(plain(m.betraege.map(b => [b.waehrung, b.basis,
     b.gruppen.map(g => g.anzahl)])), [
-    ['CHF', 5, [1, 4, 0, 0]],
-    ['EUR', 3, [0, 1, 2, 0]],
+    ['CHF', 5, [1, 4, 0, 0, 0]],
+    ['EUR', 3, [0, 1, 2, 0, 0]],
   ]);
   m.betraege.forEach(b => {
     assert.strictEqual(summe(b.gruppen), b.basis,
@@ -669,11 +799,42 @@ test('Challenge-Status, ACS, 3DS-Version und tds_flow sind keine Achsen', () => 
   // Static-Value-IDs ohne Aufloesung), nicht aus Zeitmangel. Der Test haelt
   // fest, dass sie nicht "vorsorglich" zurueckkommen - eine Achse, die
   // dauerhaft leer bleibt, sieht aus wie eine Messung.
+  //
+  // Geprueft wird der GANZE Modellbaum, nicht bloss die oberste Ebene: eine
+  // Achse entsteht auch als Eimer in dauer.gruppen, als Eintrag einer offenen
+  // Liste oder als Feld an einer Zeile. Ueber Object.keys(m) allein liefe ein
+  // spaeter eingebauter Eimer 'CHALLENGE_TIMEOUT' glatt durch - und der Test
+  // bestuende auch gegen ein leeres Modell.
   const m = modell();
-  const schluessel = Object.keys(m).join(' ');
-  [/challenge/i, /acs/i, /flow/i, /tdsversion/i, /statusreason/i, /transstatus/i]
-    .forEach(muster => assert.ok(!muster.test(schluessel),
+  // Die Zeilenliste bleibt bewusst draussen: sie ist keine Achse, sondern die
+  // Rohtabelle, und sie FUEHRT die 3DS-Version als Spalte (siehe unten).
+  const ohneZeilen = Object.assign({}, m);
+  delete ohneZeilen.zeilen;
+  const gesehen = [];
+  (function sammle(v, tiefe) {
+    if (tiefe > 8 || v === null || v === undefined) return;
+    if (typeof v === 'string') { gesehen.push(v); return; }
+    if (Array.isArray(v)) { v.forEach(e => sammle(e, tiefe + 1)); return; }
+    if (typeof v !== 'object') return;
+    Object.keys(v).forEach(k => { gesehen.push(k); sammle(v[k], tiefe + 1); });
+  }(ohneZeilen, 0));
+  // Dazu die festen Eimersaetze aus DERSELBEN Quelle wie der Code: ein neuer
+  // Eimer landet dort, auch wenn die Fixture ihn nicht belegt.
+  const namen = gesehen.concat(
+    [...B.REPORTING_TDS_GRUENDE], [...B.REPORTING_TDS_DAUER], [...B.REPORTING_TDS_BETRAG]);
+  const heuhaufen = namen.join(' ');
+  [/challenge/i, /acs/i, /flow/i, /tdsversion/i, /tds_version/i, /statusreason/i, /transstatus/i]
+    .forEach(muster => assert.ok(!muster.test(heuhaufen),
       `Das Modell darf keine Achse ${muster} tragen`));
+
+  // Gegenprobe, damit der Test nicht vakuum-gruen ist: er muss die Namen
+  // ueberhaupt sehen. Waere der Sammler kaputt, bestuende er gegen alles -
+  // auch gegen ein leeres Modell.
+  assert.ok(namen.indexOf('dauer') !== -1, 'Der Sammler muss die oberste Ebene sehen');
+  assert.ok(namen.indexOf('gruppen') !== -1, 'Der Sammler muss verschachtelte Ebenen sehen');
+  assert.ok(namen.indexOf('UEBER_5MIN') !== -1, 'Der Sammler muss Eimerschluessel sehen');
+  assert.ok(namen.indexOf('CHALLENGE_TIMEOUT') === -1);
+
   // Die 3DS-Version bleibt als SPALTE in der Zeilenliste erhalten (der
   // wallee-Support kann sie nutzen) - nur als Achse gibt es sie nicht.
   assert.strictEqual(m.zeilen[0].tdsVersion, '2.2.0');

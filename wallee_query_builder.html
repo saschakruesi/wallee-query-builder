@@ -5659,6 +5659,18 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return Number.isFinite(ms) ? ms : null;
   }
 
+  // Traegt der Wert eine Zonenangabe ('Z' oder '+02:00')? Date.parse liest
+  // einen Wert OHNE Zone als Lokalzeit und einen MIT Zone absolut - eine
+  // Differenz aus zwei gemischten Schreibweisen ist deshalb um den
+  // UTC-Versatz des Browsers verschoben, ohne dass irgendwo etwas rot wird.
+  // Das Muster laesst beide Formen zu (die Schreibweise der beiden
+  // 3DS-Zeitpunkte ist NICHT gemessen), also muss die Differenz sie
+  // vergleichen.
+  const TDS_ZEIT_ZONE = /(?:Z|[+-]\d{2}:?\d{2})$/;
+  function tdsHatZone(wert) {
+    return TDS_ZEIT_ZONE.test(String(wert == null ? '' : wert).trim());
+  }
+
   // Dauer bis zum Abbruch, in Sekunden. EIN Ort fuer die Regel "das ist keine
   // Messung": leerer, unlesbarer ODER negativer Wert ergibt null. Eine
   // negative Differenz entsteht, wenn ein Connector die beiden Label-Zeitpunkte
@@ -5669,6 +5681,14 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     const a = tdsZeitMs(start);
     const b = tdsZeitMs(ende);
     if (a === null || b === null) return null;
+    // Gemischte Schreibweisen ergeben KEINE Dauer, sondern "unbekannt".
+    // Traegt tds_started_on eine Zone und tds_finished_on nicht, verschiebt
+    // sich die Differenz um den UTC-Versatz des Browsers: ein Abbruch nach 8 s
+    // laese sich in Zuerich als 3608 s und landete in "> 5 min" - also als
+    // "Timeout" statt "sofort abgebrochen", die Umkehrung genau der Aussage,
+    // fuer die diese Achse existiert. Negative Versaetze faengt die
+    // Negativ-Regel darunter ab, positive nicht; deshalb der Vergleich hier.
+    if (tdsHatZone(start) !== tdsHatZone(ende)) return null;
     const d = (b - a) / 1000;
     return Number.isFinite(d) && d >= 0 ? d : null;
   }
@@ -5701,12 +5721,19 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   const TDS_BETRAG_GRENZEN = [50, 200, 500];
   const TDS_BETRAG_GRENZEN_EINHEITEN =
     TDS_BETRAG_GRENZEN.map(v => Math.round(v * Math.pow(10, AMOUNT_SCALE)));
-  const REPORTING_TDS_BETRAG = ['UNTER_50', 'B50_200', 'B200_500', 'UEBER_500'];
+  const REPORTING_TDS_BETRAG = ['UNTER_50', 'B50_200', 'B200_500', 'UEBER_500', 'UNBEKANNT'];
   function klassifiziereTdsBetrag(betrag) {
-    const b = typeof betrag === 'number' && Number.isFinite(betrag) ? betrag : 0;
-    if (b < TDS_BETRAG_GRENZEN_EINHEITEN[0]) return 'UNTER_50';
-    if (b < TDS_BETRAG_GRENZEN_EINHEITEN[1]) return 'B50_200';
-    if (b < TDS_BETRAG_GRENZEN_EINHEITEN[2]) return 'B200_500';
+    // Derselbe Grundsatz wie bei tdsDauerSekunden ein paar Zeilen weiter oben,
+    // und aus demselben Grund: "keine Messung" ist ein eigener Ort, nicht der
+    // kleinste Eimer. Ein negativer oder unlesbarer Betrag in "< 50" saehe aus
+    // wie ein gemessener Kleinbetrag - aus einem Datenfehler wuerde eine
+    // Aussage ueber das Kaufverhalten. Diese Query kann keinen negativen
+    // Betrag erzeugen (ein gescheiterter Versuch hat keine Rueckerstattung),
+    // ein importiertes CSV schon.
+    if (typeof betrag !== 'number' || !Number.isFinite(betrag) || betrag < 0) return 'UNBEKANNT';
+    if (betrag < TDS_BETRAG_GRENZEN_EINHEITEN[0]) return 'UNTER_50';
+    if (betrag < TDS_BETRAG_GRENZEN_EINHEITEN[1]) return 'B50_200';
+    if (betrag < TDS_BETRAG_GRENZEN_EINHEITEN[2]) return 'B200_500';
     return 'UEBER_500';
   }
 
@@ -5768,13 +5795,37 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     });
   }
 
-  // Die beiden Nenner der Anteils-Kacheln stehen NICHT in diesen Zeilen: die
-  // Liste enthaelt per Konstruktion nur 3DS-Fehlschlaege, "alle gescheiterten
-  // Attempts" und "alle Karten-Attempts mit 3DS-Anforderung" sind groessere
-  // Mengen. Sie kommen aus dem Kanal-Modell des Aggregats, das die App ohnehin
-  // schon gebaut hat. Fehlt es - importierte Liste im Kopieren-Modus, oder das
+  // Die beiden Nenner der Anteils-Kacheln stehen NICHT in diesen Zeilen. Sie
+  // kommen aus dem Kanal-Modell des Aggregats, das die App ohnehin schon
+  // gebaut hat. Fehlt es - importierte Liste im Kopieren-Modus, oder das
   // Aggregat ist nicht gelaufen -, sind beide Kacheln null ("kein Messwert"),
   // niemals 0: eine 0 in einer Kachel liest sich wie ein gemessener Wert.
+  //
+  // Die beiden Kacheln haben VERSCHIEDENE Zaehler, und das ist keine
+  // Feinheit:
+  //
+  //   - "Anteil an allen gescheiterten Attempts" zaehlt die ganze Liste.
+  //     "Alle gescheiterten Attempts" ist die groessere Menge, die Liste ist
+  //     eine echte Teilmenge davon - jede ihrer Zeilen ist ein Fehlschlag.
+  //   - "Anteil an allen Karten-Attempts mit 3DS-Anforderung" darf das NICHT.
+  //     Sein Nenner sind die Attempts mit GESTARTETEM 3DS-Prozess; die
+  //     Definition der Liste (§3.2, erster Zweig) nimmt aber auch Zeilen auf,
+  //     die gar kein tds_started-Label tragen - ein Attempt mit dem Grund
+  //     "3-D Secure Failure" und leerem Start-Label kommt herein und steht im
+  //     Aggregat unter NOT_REQUESTED. Ueber die ganze Liste gerechnet stuenden
+  //     solche Zeilen nur im Zaehler; die Kachel koennte in einem kleinen
+  //     Space rechnerisch ueber 100 % steigen, ohne dass irgendwo etwas rot
+  //     wird. Gezaehlt werden deshalb nur die Zeilen MIT Startzeitpunkt
+  //     (kpi.mitTdsStart), und die Ausgabe hat damit eine andere
+  //     Grundgesamtheit als "3DS-Failures gesamt" darueber - sie muss das
+  //     benennen.
+  //
+  // Was auch danach nicht exakt zusammenfaellt und deshalb hier steht statt
+  // uebergangen zu werden: das Aggregat bildet seine 3DS-Eimer nur ueber
+  // KARTEN_BRANDS. Traegt eine Marke ausserhalb dieser Liste Karten-Labels
+  // (der PostFinance-Fall aus dem Referenzlauf, siehe CLAUDE.md), steht sie
+  // im Zaehler und fehlt im Nenner. Der Rest ist ein Namenslisten-Problem des
+  // Aggregats, kein Fehler dieser Kachel.
   function tdsAggregatNenner(kanalModell) {
     if (!kanalModell || !kanalModell.kpi) {
       return { fehlgeschlagen: 0, tdsAngefordert: 0, vorhanden: false };
@@ -5798,19 +5849,33 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     };
   }
 
-  // Ist die Zeile einer Bestellung zuzuordnen? Drei Bedingungen, die aus
-  // DERSELBEN Tatsache der Query stammen: ohne Bestellnummer gruppiert sie
-  // nicht und laesst beide Zaehler auf NULL. Ein importiertes CSV kann sie
-  // trotzdem uneinheitlich tragen; dann ist die Bestellung nicht verlaesslich
-  // gruppierbar und die Zeile gehoert zu "ohne Bestellnummer" - nicht in eine
-  // Quote, deren Nenner eine Gruppe waere, die es so nicht gibt.
-  function tdsBestellzeile(z) {
+  // Ist die Zeile einer Bestellung zuzuordnen - und wenn nicht, warum? Die
+  // drei Bedingungen stammen aus DERSELBEN Tatsache der Query: ohne
+  // Bestellnummer gruppiert sie nicht und laesst beide Zaehler auf NULL. Ein
+  // importiertes CSV kann sie trotzdem uneinheitlich tragen.
+  //
+  // Der Ausschluss aus den Quoten ist in beiden Faellen richtig (ohne die
+  // Zaehler ist die Bestellung nicht verlaesslich gruppierbar, und ein Nenner
+  // waere eine Gruppe, die es so nicht gibt) - die AUSSAGE darueber ist es
+  // nicht: eine Zeile mit merchant_reference 'ORD-77' und fehlendem Zaehler
+  // unter "n Zeilen ohne Bestellnummer" zu fuehren waere schlicht falsch, und
+  // genau so beschriftet die Ausgabe die Zahl. Deshalb zwei Gruende und zwei
+  // Zaehler statt eines Sammelbegriffs.
+  const TDS_BESTELL_OK = 'OK';
+  const TDS_BESTELL_OHNE_NUMMER = 'OHNE_NUMMER';
+  const TDS_BESTELL_OHNE_ZAEHLER = 'OHNE_ZAEHLER';
+  function tdsBestellgrund(z) {
     // Die Nummer wird auf einen nicht leeren String geprueft, nicht bloss
     // gegen '': ein fehlendes Feld ergaebe sonst eine Bestellung namens
     // "undefined", in der alle solchen Zeilen zusammenliefen.
-    return typeof z.merchantReference === 'string' && z.merchantReference !== ''
-      && typeof z.versucheDerBestellung === 'number'
-      && typeof z.tdsFehlschlaegeDerBestellung === 'number';
+    if (typeof z.merchantReference !== 'string' || z.merchantReference === '') {
+      return TDS_BESTELL_OHNE_NUMMER;
+    }
+    if (typeof z.versucheDerBestellung !== 'number'
+      || typeof z.tdsFehlschlaegeDerBestellung !== 'number') {
+      return TDS_BESTELL_OHNE_ZAEHLER;
+    }
+    return TDS_BESTELL_OK;
   }
 
   // Transaktionszustaende, die "am Ende doch bezahlt" bedeuten (§3.5).
@@ -5845,7 +5910,14 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     const txMap = new Map();
     const bestellMap = new Map();
 
-    let ohneTag = 0, ohneStunde = 0, ohneTransaktion = 0, ohneBestellnummer = 0;
+    let ohneTag = 0, ohneStunde = 0, ohneTransaktion = 0;
+    let ohneBestellnummer = 0, ohneBestellzaehler = 0;
+    // Zeilen mit gestartetem 3DS-Prozess - der Zaehler der Kachel
+    // "Anteil an allen Karten-Attempts mit 3DS-Anforderung" (siehe
+    // tdsAggregatNenner). Gemessen wird die ANWESENHEIT des Labels, nicht
+    // seine Lesbarkeit: ein unlesbarer Startzeitpunkt heisst immer noch, dass
+    // 3DS gestartet wurde, und genau das zaehlt der Nenner im Aggregat.
+    let mitTdsStart = 0;
 
     // Zuerst die Zeilenliste mit ihren abgeleiteten Feldern, DANN gezaehlt -
     // und zwar ueber genau diese Felder. Das ist nicht bloss billiger (jeder
@@ -5891,6 +5963,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       if (!be) { be = new Map(); betragMap.set(z.waehrung, be); }
       tdsZaehle(be, klassifiziereTdsBetrag(z.betrag));
 
+      if (typeof z.tdsStartedOn === 'string' && z.tdsStartedOn !== '') mitTdsStart += 1;
+
       const zeit = tdsTagStunde(z.createdOn);
       if (zeit.tag) tdsZaehle(tagMap, zeit.tag); else ohneTag += 1;
       if (zeit.stunde !== null) tdsZaehle(stundeMap, zeit.stunde); else ohneStunde += 1;
@@ -5913,7 +5987,9 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       }
 
       // --- Bestellebene (§3.8) ---
-      if (!tdsBestellzeile(z)) { ohneBestellnummer += 1; return; }
+      const bestellgrund = tdsBestellgrund(z);
+      if (bestellgrund === TDS_BESTELL_OHNE_NUMMER) { ohneBestellnummer += 1; return; }
+      if (bestellgrund === TDS_BESTELL_OHNE_ZAEHLER) { ohneBestellzaehler += 1; return; }
       // Schluessel ist (Space, Bestellnummer) - dieselbe Nummer in zwei Spaces
       // ist nicht dieselbe Bestellung. Das Nullzeichen als Trenner, weil es in
       // keiner Bestellnummer vorkommen kann - ein '-' oder '|' liesse sich aus
@@ -5988,8 +6064,13 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         // erneut herzuleiten.
         anteilAnFailed: nenner.vorhanden
           ? reportingQuote(gesamt, nenner.fehlgeschlagen) : null,
+        // Zaehler ist mitTdsStart, nicht gesamt - der Grund steht bei
+        // tdsAggregatNenner. Die Zahl steht daneben, damit die Ausgabe
+        // "n von m" schreiben kann und dabei sichtbar wird, dass diese
+        // Kachel eine andere Grundgesamtheit hat als "3DS-Failures gesamt".
         anteilAnTdsAngefordert: nenner.vorhanden
-          ? reportingQuote(gesamt, nenner.tdsAngefordert) : null,
+          ? reportingQuote(mitTdsStart, nenner.tdsAngefordert) : null,
+        mitTdsStart,
         basisFailed: nenner.fehlgeschlagen,
         basisTdsAngefordert: nenner.tdsAngefordert,
         hatAggregat: nenner.vorhanden,
@@ -5997,7 +6078,14 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         ohneStunde,
         ohneTransaktion,
         spaces: [...spaces].sort(strCmp),
-        waehrungen: [...waehrungMap.keys()].sort(strCmp),
+        // Eine AUFZAEHLUNG von Waehrungen, wie sie das Gesamtmodell des
+        // Aggregats fuehrt - dort steht UNKNOWN ebenfalls nicht drin. Der
+        // Eimer ist keine Waehrung, und in einer Liste, die sonst nur
+        // ISO-Codes enthaelt, laese er sich wie einer. Die VERTEILUNGEN
+        // waehrungen[] und betraege[] behalten ihn: dort ist "ohne
+        // Waehrungsangabe" eine Messung und gehoert ausgewiesen.
+        waehrungen: [...waehrungMap.keys()]
+          .filter(w => w !== REPORTING_UNBEKANNT).sort(strCmp),
       },
       // Betroffenes Volumen je Waehrung - nie eine Gesamtsumme darueber
       // (SPEC 2.7). anteil ist der Anteil der ZEILEN dieser Waehrung, nicht
@@ -6028,6 +6116,12 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         // Bestellung, die sich zaehlen liesse. Stumm weglassen waere ein
         // Verlust, mitzaehlen eine Erfindung - deshalb eine eigene Zahl.
         ohneBestellnummer,
+        // Zeilen MIT Bestellnummer, aber ohne die beiden Bestell-Zaehler.
+        // Ebenfalls aus den Quoten heraus (nicht gruppierbar), aber eine
+        // andere Aussage - sie unter "ohne Bestellnummer" zu fuehren waere
+        // eine Beschriftung, die der Zeile widerspricht. Aus dieser Query
+        // kann der Fall nicht kommen, aus einem importierten CSV schon.
+        ohneBestellzaehler,
       },
       gruende: tdsListe(grundMap, gesamt, 'id').map(g => Object.assign(g, {
         name: reportingFailureName(g.id, failureReasons),
