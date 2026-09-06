@@ -223,12 +223,29 @@ test('Die 3DS-Bedingung ist eine Oder-Verknuepfung, beide Zweige nachweisbar', (
 
 test('TDS_FAILURE_REASONS ist die einzige Quelle der Grundliste', () => {
   assert.deepStrictEqual([...B.TDS_FAILURE_REASONS], ['1568360440179', '1568360434240']);
-  // Die Liste wird aus der Konstante gebaut, nicht daneben nochmal getippt:
-  // jede ID kommt in der Query genau einmal vor.
+  // Die Liste wird aus der Konstante gebaut, nicht daneben nochmal getippt.
+  // Zweimal je ID, weil die 3DS-Bedingung an zwei Stellen steht (Fensterzaehler
+  // und aeussere WHERE-Klausel) - beide aus demselben Bauschritt, siehe den
+  // Test darunter.
   const s = sql();
   for (const id of B.TDS_FAILURE_REASONS) {
-    assert.strictEqual(s.split(id).length - 1, 1, `${id} steht mehrfach in der Query`);
+    assert.strictEqual(s.split(id).length - 1, 2, `${id} steht unerwartet oft in der Query`);
   }
+});
+
+test('Die 3DS-Bedingung steht an beiden Stellen wortgleich', () => {
+  // Liste und Zaehler muessen dieselbe Menge meinen. Zwei Handkopien liefen bei
+  // der naechsten Aenderung auseinander, und zwar stumm: die Kachel
+  // "Bestellungen mit >= 2 3DS-Fehlschlaegen" zaehlte dann etwas anderes als
+  // die Liste darunter zeigt.
+  const s = sql();
+  const ohnePraefix = t => t.replace(/\bf\./g, '').replace(/\s+/g, ' ').trim();
+  const imZaehler = ohnePraefix(
+    /SUM\(CASE WHEN ([\s\S]*?)\n\s+THEN 1 ELSE 0 END\)/.exec(cte(s, 'gezaehlt'))[1]);
+  const imFilter = ohnePraefix(
+    /WHERE ([\s\S]*?)\n--/.exec(aeusseresSelect(s))[1]);
+  assert.strictEqual(imZaehler, imFilter);
+  assert.match(imFilter, /^attempt_state = 'FAILED' AND \(failure_reason_id IN \(/);
 });
 
 test('Die Fensterfunktionen rechnen NICHT ueber der FAILED-gefilterten Menge', () => {
@@ -242,7 +259,14 @@ test('Die Fensterfunktionen rechnen NICHT ueber der FAILED-gefilterten Menge', (
   const gezaehlt = cte(s, 'gezaehlt');
   assert.match(gezaehlt, /ROW_NUMBER\(\) OVER \(PARTITION BY f\.transaction_id/);
   assert.match(gezaehlt, /COUNT\(\*\)\s+OVER \(PARTITION BY f\.transaction_id\)\s+AS attempts_der_transaktion/);
-  assert.ok(!gezaehlt.includes("'FAILED'"), 'gezaehlt darf nicht auf FAILED filtern');
+  // 'FAILED' kommt im gezaehlt-CTE seit tds_fehlschlaege_der_bestellung vor -
+  // aber nur INNERHALB eines CASE-Ausdrucks im Fenster, nie als Filter. Die
+  // Unterscheidung ist der Punkt: ein CASE schrumpft die Grundgesamtheit nicht.
+  const ohneKommentar = gezaehlt.replace(/--[^\n]*/g, '');
+  assert.doesNotMatch(ohneKommentar, /\bWHERE\b/, 'gezaehlt darf keine WHERE-Klausel haben');
+  for (const treffer of gezaehlt.match(/[^\n]*'FAILED'[^\n]*/g) || []) {
+    assert.match(treffer, /CASE WHEN/, `'FAILED' steht in gezaehlt ausserhalb eines CASE: ${treffer}`);
+  }
   // 3. Erst danach filtert die aeussere WHERE-Klausel.
   assert.match(aeusseresSelect(s), /WHERE attempt_state = 'FAILED'/);
   // Und der Filter kommt im Text tatsaechlich NACH den Fenstern - sonst waere
@@ -268,12 +292,30 @@ test('Wiederholer je Bestellung: leere Referenz wird nicht gruppiert', () => {
   // Ausgewiesen wird trotzdem NULL: "nicht gruppierbar" ist keine 1.
   const gezaehlt = cte(s, 'gezaehlt');
   assert.strictEqual(
-    gezaehlt.split('CASE WHEN f.merchant_reference IS NULL THEN NULL ELSE').length - 1, 2);
+    gezaehlt.split('CASE WHEN f.merchant_reference IS NULL THEN NULL ELSE').length - 1, 3);
   assert.match(gezaehlt, /AS versuche_der_bestellung/);
+  assert.match(gezaehlt, /AS tds_fehlschlaege_der_bestellung/);
   assert.match(gezaehlt, /AS bestellung_am_ende_bezahlt/);
-  // Beide Bestell-Fenster partitionieren ueber denselben Schluessel.
+  // Alle drei Bestell-Fenster partitionieren ueber denselben Schluessel.
   assert.strictEqual(
-    gezaehlt.split('OVER (PARTITION BY f.space_id, f.bestell_key, f.bestell_fenster_nr)').length - 1, 2);
+    gezaehlt.split('OVER (PARTITION BY f.space_id, f.bestell_key, f.bestell_fenster_nr)').length - 1, 3);
+});
+
+test('tds_fehlschlaege_der_bestellung zaehlt nur die 3DS-Fehlschlaege', () => {
+  // Die Kachel aus §3.5/§3.8 heisst "Bestellungen mit >= 2 3DS-FEHLSCHLAEGEN".
+  // versuche_der_bestellung beantwortet eine andere Frage: eine Bestellung mit
+  // einem 3DS-Fehlschlag und einem darauf folgenden erfolgreichen Versuch
+  // traegt dort 2 - gegen diese Spalte gerechnet ueberschaetzte die Kachel
+  // systematisch, und in einem Space, der je Versuch eine neue Transaktion
+  // anlegt, waere das der Regelfall.
+  const gezaehlt = cte(sql(), 'gezaehlt');
+  // Gezaehlt wird ueber einen CASE, nicht ueber COUNT(*) - COUNT(*) waere
+  // wieder die Zahl ALLER Versuche.
+  assert.match(gezaehlt,
+    /SUM\(CASE WHEN f\.attempt_state = 'FAILED'[\s\S]*?THEN 1 ELSE 0 END\)\s*\n\s*OVER \(PARTITION BY f\.space_id, f\.bestell_key, f\.bestell_fenster_nr\)\s*\n\s*END\s+AS tds_fehlschlaege_der_bestellung/);
+  // Und beide Spalten bleiben nebeneinander bestehen - sie beantworten
+  // verschiedene Fragen, die eine ersetzt die andere nicht.
+  assert.match(gezaehlt, /COUNT\(\*\) OVER \(PARTITION BY f\.space_id[^\n]*\n\s*END\s+AS versuche_der_bestellung/);
 });
 
 test('bestellung_am_ende_bezahlt sieht auch die erfolgreichen Attempts', () => {
@@ -292,7 +334,8 @@ test('Ausgabespalten: vollstaendig, in der Reihenfolge der Spec, ohne Helfer', (
     'card_issuer_number', 'tds_version', 'attempt_retry', 'cryptogram_present',
     'tds_started_on', 'tds_finished_on', 'tds_cavv', 'transaction_state',
     'attempt_nr', 'attempts_der_transaktion',
-    'versuche_der_bestellung', 'bestellung_am_ende_bezahlt',
+    'versuche_der_bestellung', 'tds_fehlschlaege_der_bestellung',
+    'bestellung_am_ende_bezahlt',
   ]);
   // Die beiden Hilfsspalten der Bestell-Partition bleiben im CTE und tauchen
   // in der Ausgabe nicht auf - sie sind Rechenweg, kein Ergebnis. Ebenso
@@ -314,7 +357,12 @@ test('Betrag kommt aus authorizationamount, nicht aus completedamount', () => {
 
 test('Sortierung und Obergrenze aus der benannten Konstante', () => {
   const s = sql();
-  assert.match(s, /ORDER BY created_on DESC/);
+  // Mit Tie-Break: bei gleichem Zeitstempel waere die Reihenfolge sonst nicht
+  // festgelegt, und weil das LIMIT stumm abschneidet, lieferten zwei Laeufe
+  // derselben Abfrage an der Grenze verschiedene Zeilen - das saehe nach
+  // schwankenden Daten aus, nicht nach einer Abschneidung. Dieselbe
+  // Ueberlegung wie bei attempt_nr.
+  assert.match(s, /ORDER BY created_on DESC, attempt_id DESC/);
   assert.strictEqual(B.REPORTING_TDS_LIMIT, 20000);
   assert.match(s, new RegExp(`LIMIT ${B.REPORTING_TDS_LIMIT};$`));
 });

@@ -1580,7 +1580,8 @@ const TDS_KOPF = [
   'card_issuer_number', 'tds_version', 'attempt_retry', 'cryptogram_present',
   'tds_started_on', 'tds_finished_on', 'tds_cavv', 'transaction_state',
   'attempt_nr', 'attempts_der_transaktion',
-  'versuche_der_bestellung', 'bestellung_am_ende_bezahlt',
+  'versuche_der_bestellung', 'tds_fehlschlaege_der_bestellung',
+  'bestellung_am_ende_bezahlt',
 ];
 
 // Eine vollstaendige, unauffaellige Zeile als Ausgangspunkt; die Tests
@@ -1595,7 +1596,11 @@ const TDS = {
   cryptogram_present: 'false', tds_started_on: '2026-07-04T20:10:41+02:00',
   tds_finished_on: '2026-07-04T20:11:02+02:00', tds_cavv: 'false',
   transaction_state: 'FAILED', attempt_nr: '1', attempts_der_transaktion: '2',
-  versuche_der_bestellung: '3', bestellung_am_ende_bezahlt: 'true',
+  // Drei Versuche der Bestellung, davon zwei an 3DS gescheitert - der dritte
+  // war erfolgreich und steht deshalb gar nicht in der Liste. Genau der
+  // Unterschied, um den es den beiden Spalten geht.
+  versuche_der_bestellung: '3', tds_fehlschlaege_der_bestellung: '2',
+  bestellung_am_ende_bezahlt: 'true',
 };
 
 const tdsCsv = zeilen => csv(zeilen, TDS_KOPF);
@@ -1683,7 +1688,8 @@ test('parseReportingTdsCsv: eine Zeile je Attempt, Felder vollstaendig gelesen',
     tdsStartedOn: '2026-07-04T20:10:41+02:00',
     tdsFinishedOn: '2026-07-04T20:11:02+02:00', tdsCavv: false,
     transactionState: 'FAILED', attemptNr: 1, attemptsDerTransaktion: 2,
-    versucheDerBestellung: 3, bestellungAmEndeBezahlt: true,
+    versucheDerBestellung: 3, tdsFehlschlaegeDerBestellung: 2,
+    bestellungAmEndeBezahlt: true,
   });
 });
 
@@ -1755,10 +1761,13 @@ test('parseReportingTdsCsv: versuche_der_bestellung ohne Referenz ist null, nich
   const r = parseReportingTdsCsv(tdsCsv([
     Object.assign({}, TDS, {
       merchant_reference: '', versuche_der_bestellung: '',
-      bestellung_am_ende_bezahlt: '',
+      tds_fehlschlaege_der_bestellung: '', bestellung_am_ende_bezahlt: '',
     }),
   ]));
   assert.strictEqual(r.rows[0].versucheDerBestellung, null);
+  // Dasselbe fuer den 3DS-Zaehler: ohne Bestellnummer waere auch eine 1 eine
+  // Behauptung ueber eine Gruppe, die es nicht gibt.
+  assert.strictEqual(r.rows[0].tdsFehlschlaegeDerBestellung, null);
   assert.strictEqual(r.rows[0].bestellungAmEndeBezahlt, null);
   // Die Zaehler der Transaktion dagegen sind immer gefuellt und bleiben Zahlen.
   assert.strictEqual(r.rows[0].attemptNr, 1);
@@ -1880,4 +1889,18 @@ test('parseReportingTdsCsv: Fixture parst fehlerfrei und meldet nichts', () => {
   assert.ok(r.rows.some(z => z.versucheDerBestellung >= 2 && z.bestellungAmEndeBezahlt === true));
   // Und einer, der es nicht getan hat.
   assert.ok(r.rows.some(z => z.versucheDerBestellung >= 2 && z.bestellungAmEndeBezahlt === false));
+
+  // Der Fall, der die beiden Bestell-Zaehler unterscheidbar macht: zwei
+  // Versuche, aber nur EIN 3DS-Fehlschlag (der zweite Versuch war erfolgreich
+  // und steht deshalb gar nicht in der Liste). Gegen versuche_der_bestellung
+  // gerechnet zaehlte die Kachel "Bestellungen mit >= 2 3DS-Fehlschlaegen"
+  // diese Bestellung mit - bei genau einem Fehlschlag.
+  const einmalGescheitert = r.rows.filter(
+    z => z.versucheDerBestellung === 2 && z.tdsFehlschlaegeDerBestellung === 1);
+  assert.strictEqual(einmalGescheitert.length, 1);
+  assert.strictEqual(einmalGescheitert[0].bestellungAmEndeBezahlt, true);
+  // Und der Gegenfall, damit die Fixture beide Seiten traegt.
+  assert.ok(r.rows.some(z => z.tdsFehlschlaegeDerBestellung >= 2));
+  // Ohne Bestellnummer bleibt auch dieser Zaehler null.
+  assert.strictEqual(ohneReferenz[0].tdsFehlschlaegeDerBestellung, null);
 });

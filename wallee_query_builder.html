@@ -3688,6 +3688,17 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     const spaces = spaceIds || [];
     const gruende = TDS_FAILURE_REASONS.map(id => `'${id}'`).join(', ');
 
+    // Die Definition "3DS-Failure" (§3.2) steht in dieser Query an ZWEI
+    // Stellen: im Fensterzaehler tds_fehlschlaege_der_bestellung und in der
+    // aeusseren WHERE-Klausel. Sie wird deshalb einmal gebaut und zweimal
+    // eingesetzt - zwei Handkopien liefen bei der naechsten Aenderung
+    // auseinander, und zwar stumm: die Liste zeigte dann andere Zeilen, als
+    // der Zaehler daneben zaehlt. Unterschiedlich ist nur der Spaltenpraefix
+    // (im CTE traegt die Quelle den Alias f.) und der Einzug.
+    const tdsBedingung = (p, einzug) =>
+      `${p}attempt_state = 'FAILED'\n${einzug}AND (${p}failure_reason_id IN (${gruende})`
+      + `\n${einzug}     OR (${p}tds_started_on IS NOT NULL AND ${p}tds_cavv = false))`;
+
     return `WITH att AS (
     -- ALLE Attempts des Zeitraums im Kanal E-Commerce - ohne den FAILED-Filter.
     -- Das ist die Grundgesamtheit der Fensterfunktionen weiter unten; der
@@ -3831,6 +3842,31 @@ gezaehlt AS (
         CASE WHEN f.merchant_reference IS NULL THEN NULL ELSE
             COUNT(*) OVER (PARTITION BY f.space_id, f.bestell_key, f.bestell_fenster_nr)
         END                                                     AS versuche_der_bestellung,
+        -- Dieselbe Partition, andere Frage: hier zaehlen nur die Versuche, die
+        -- nach §3.2 ein 3DS-Failure SIND. Der Unterschied zu
+        -- versuche_der_bestellung ist der, an dem eine Kachel stumm falsch
+        -- wird: eine Bestellung mit einem 3DS-Fehlschlag und einem darauf
+        -- folgenden erfolgreichen Versuch traegt versuche_der_bestellung = 2,
+        -- ist aber genau EINMAL an 3DS gescheitert. Die Kachel aus §3.5/§3.8
+        -- heisst "Bestellungen mit >= 2 3DS-Fehlschlaegen" und rechnet deshalb
+        -- gegen diese Spalte; in einem Space, der je Versuch eine neue
+        -- Transaktion anlegt, waere der Unterschied nicht der Sonderfall,
+        -- sondern der Regelfall. Beide Spalten bleiben - sie beantworten
+        -- verschiedene Fragen ("wie oft hat der Kunde es versucht?" gegen "wie
+        -- oft ist er an 3DS gescheitert?").
+        CASE WHEN f.merchant_reference IS NULL THEN NULL ELSE
+            SUM(CASE WHEN ${tdsBedingung('f.', '                     ')}
+                     THEN 1 ELSE 0 END)
+                OVER (PARTITION BY f.space_id, f.bestell_key, f.bestell_fenster_nr)
+        END                                                     AS tds_fehlschlaege_der_bestellung,
+        -- Achtung, bewusste Asymmetrie zu transaction_state weiter oben:
+        -- transaction_state liest t.state, also den HEUTIGEN Zustand der
+        -- Transaktion, unabhaengig vom Abfragezeitraum; dieses Fenster liest
+        -- att, und att endet am Zeitraum-Ende. Am rechten Rand koennen die
+        -- beiden deshalb auseinanderlaufen (Kunde scheitert am 31. Juli,
+        -- zahlt am 1. August: transaction_state = FULFILL, hier trotzdem
+        -- false). Das ist kein Fehler, sondern die konservative Richtung -
+        -- gemessen wird, was im Zeitraum passiert ist.
         CASE WHEN f.merchant_reference IS NULL THEN NULL ELSE
             max(CASE WHEN f.attempt_state = 'SUCCESSFUL' THEN 1 ELSE 0 END)
                 OVER (PARTITION BY f.space_id, f.bestell_key, f.bestell_fenster_nr) = 1
@@ -3865,6 +3901,7 @@ SELECT
     attempt_nr,
     attempts_der_transaktion,
     versuche_der_bestellung,
+    tds_fehlschlaege_der_bestellung,
     bestellung_am_ende_bezahlt
 FROM gezaehlt
 -- Definition "3DS-Failure" (§3.2), woertlich: gescheitert UND (ein Ablehngrund
@@ -3881,10 +3918,15 @@ FROM gezaehlt
 --
 -- tds_cavv ist an dieser Stelle bereits ein Boolean (Existenzpruefung im att-
 -- CTE), deshalb "= false" statt des "IS NULL" aus der Spec-Skizze.
-WHERE attempt_state = 'FAILED'
-  AND (failure_reason_id IN (${gruende})
-       OR (tds_started_on IS NOT NULL AND tds_cavv = false))
-ORDER BY created_on DESC
+--
+-- Dieselbe Bedingung zaehlt oben tds_fehlschlaege_der_bestellung; sie kommt
+-- aus einer gemeinsamen Quelle, damit Liste und Zaehler nicht auseinanderlaufen.
+WHERE ${tdsBedingung('', '  ')}
+-- Zweiter Sortierschluessel, aus demselben Grund wie bei attempt_nr: bei
+-- gleichem Zeitstempel waere die Reihenfolge sonst nicht festgelegt, und weil
+-- das LIMIT stumm abschneidet, lieferten zwei Laeufe derselben Abfrage an der
+-- Grenze verschiedene Zeilen - das saehe nach schwankenden Daten aus.
+ORDER BY created_on DESC, attempt_id DESC
 LIMIT ${REPORTING_TDS_LIMIT};`;
   }
 
@@ -4270,7 +4312,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     'card_issuer_number', 'tds_version', 'attempt_retry', 'cryptogram_present',
     'tds_started_on', 'tds_finished_on', 'tds_cavv', 'transaction_state',
     'attempt_nr', 'attempts_der_transaktion',
-    'versuche_der_bestellung', 'bestellung_am_ende_bezahlt',
+    'versuche_der_bestellung', 'tds_fehlschlaege_der_bestellung',
+    'bestellung_am_ende_bezahlt',
   ];
 
   // Zeitstempel werden als ISO-String durchgereicht, nicht in ein Date
@@ -4397,6 +4440,12 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         attemptNr:        zahl(z, 'attempt_nr'),
         attemptsDerTransaktion: zahl(z, 'attempts_der_transaktion'),
         versucheDerBestellung:  zahlNull(z, 'versuche_der_bestellung'),
+        // Nicht dasselbe wie versucheDerBestellung: hier zaehlen nur die
+        // Versuche, die nach §3.2 3DS-Fehlschlaege sind. Die Kachel
+        // "Bestellungen mit >= 2 3DS-Fehlschlaegen" (§3.5/§3.8) rechnet gegen
+        // dieses Feld - gegen das andere gerechnet zaehlte sie auch eine
+        // Bestellung mit, die nach einem einzigen Fehlschlag erfolgreich war.
+        tdsFehlschlaegeDerBestellung: zahlNull(z, 'tds_fehlschlaege_der_bestellung'),
         bestellungAmEndeBezahlt: bool(z, 'bestellung_am_ende_bezahlt'),
       });
     }
