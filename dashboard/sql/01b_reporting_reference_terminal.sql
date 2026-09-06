@@ -2,7 +2,9 @@
 -- Reporting-Modus · Task 1: Referenz-Query mit Terminal-Aufschluesselung
 --
 -- Zweite Form derselben Query (buildReportingQuery), generiert mit:
---   spaceIds   = ['40402']            (POS-Referenz-Space - nur dort gibt es Terminals)
+--   spaceIds   = ['<SPACE_ID_POS>']     (POS-Referenzspace - nur dort gibt es Terminals;
+--                                      Platzhalter - vor dem Ausfuehren durch die eigene
+--                                      Space-ID ersetzen, sonst kein gueltiges SQL)
 --   start      = 2026-07-01 00:00:00
 --   end        = 2026-08-01 00:00:00  (exklusiv)
 --   channels   = []                   (keine Kanalwahl = alle)
@@ -25,7 +27,7 @@ WITH tx AS (
     FROM chargeattempt ca
     JOIN charge c
       ON c.id      = ca.charge_id
-    WHERE ca.spaceid = 40402
+    WHERE ca.spaceid = <SPACE_ID_POS>
       AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
       AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
       AND ca.environment = 'PRODUCTION'
@@ -38,7 +40,7 @@ tip AS (
     JOIN lineitem li
       ON li.id      = tl.lineitems_id
      AND li.spaceid = tl.spaceid
-    WHERE tl.spaceid = 40402
+    WHERE tl.spaceid = <SPACE_ID_POS>
       AND li.type = 'TIP'
       AND tl.transaction_id IN (SELECT id FROM tx)
     GROUP BY tl.transaction_id
@@ -114,7 +116,7 @@ att AS (
     LEFT JOIN paymentterminal pt
            ON pt.id      = ca.terminal_id
           AND pt.spaceid = ca.spaceid
-    WHERE ca.spaceid = 40402
+    WHERE ca.spaceid = <SPACE_ID_POS>
       AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
       AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
       AND ca.environment = 'PRODUCTION'

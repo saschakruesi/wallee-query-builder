@@ -2,7 +2,9 @@
 -- Reporting-Modus · Task 1: Referenz-Query (buildReportingQuery)
 --
 -- Generiert aus wallee_query_builder.html (buildReportingQuery) mit:
---   spaceIds   = ['40402', '12622']   (POS-Referenz-Space + E-Commerce-Space)
+--   spaceIds   = ['<SPACE_ID_POS>', '<SPACE_ID_ECOM>']  (POS-Referenzspace + E-Com-Referenzspace;
+--                                      Platzhalter - vor dem Ausfuehren durch die eigenen
+--                                      Space-IDs ersetzen, sonst kein gueltiges SQL)
 --   start      = 2026-07-01 00:00:00
 --   end        = 2026-08-01 00:00:00  (exklusiv)
 --   channels   = []                   (keine Kanalwahl = alle, kein saleschannel-Filter,
@@ -25,7 +27,7 @@ WITH tx AS (
     FROM chargeattempt ca
     JOIN charge c
       ON c.id      = ca.charge_id
-    WHERE ca.spaceid IN (40402, 12622)
+    WHERE ca.spaceid IN (<SPACE_ID_POS>, <SPACE_ID_ECOM>)
       AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
       AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
       AND ca.environment = 'PRODUCTION'
@@ -38,7 +40,7 @@ tip AS (
     JOIN lineitem li
       ON li.id      = tl.lineitems_id
      AND li.spaceid = tl.spaceid
-    WHERE tl.spaceid IN (40402, 12622)
+    WHERE tl.spaceid IN (<SPACE_ID_POS>, <SPACE_ID_ECOM>)
       AND li.type = 'TIP'
       AND tl.transaction_id IN (SELECT id FROM tx)
     GROUP BY tl.transaction_id
@@ -109,7 +111,7 @@ att AS (
            ON wt.id       = ca.wallet
     LEFT JOIN tip
            ON tip.transaction_id = t.id
-    WHERE ca.spaceid IN (40402, 12622)
+    WHERE ca.spaceid IN (<SPACE_ID_POS>, <SPACE_ID_ECOM>)
       AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
       AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
       AND ca.environment = 'PRODUCTION'

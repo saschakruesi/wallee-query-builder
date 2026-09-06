@@ -5,7 +5,7 @@ const { loadBuilders } = require('./harness');
 const B = loadBuilders();
 
 const BASIS = {
-  spaceIds: ['40402', '12622'],
+  spaceIds: ['90001', '90002'],
   start: '2026-07-01 00:00:00',
   end:   '2026-08-01 00:00:00',
   channels: [],
@@ -80,8 +80,8 @@ test('Nur PRODUCTION-Attempts - in BEIDEN CTEs, nicht nur im tx-CTE', () => {
 });
 
 test('Space-Filter ueber spaceInClause auf ca.spaceid', () => {
-  assert.match(sql(), /ca\.spaceid IN \(40402, 12622\)/);
-  assert.match(sql({ spaceIds: ['40402'] }), /ca\.spaceid = 40402/);
+  assert.match(sql(), /ca\.spaceid IN \(90001, 90002\)/);
+  assert.match(sql({ spaceIds: ['90001'] }), /ca\.spaceid = 90001/);
 });
 
 test('Ohne Space laeuft die Query leer statt zu crashen', () => {

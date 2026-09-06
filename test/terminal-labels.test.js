@@ -18,7 +18,7 @@ test('terminalGehoertZuSpace matcht ueber spaceId', () => {
   const t = { id: '111', space: '83954 · Zürich', spaceId: '83954' };
   assert.ok(X.terminalGehoertZuSpace(t, '83954'));
   assert.ok(X.terminalGehoertZuSpace(t, 83954), 'Zahl als Space-ID wird toleriert');
-  assert.ok(!X.terminalGehoertZuSpace(t, '73192'), 'andere Space matcht nicht');
+  assert.ok(!X.terminalGehoertZuSpace(t, '90003'), 'andere Space matcht nicht');
 });
 
 test('terminalGehoertZuSpace faellt auf den ID-Teil des Anzeige-Tags zurueck', () => {
@@ -28,8 +28,8 @@ test('terminalGehoertZuSpace faellt auf den ID-Teil des Anzeige-Tags zurueck', (
   assert.ok(X.terminalGehoertZuSpace(alt, '83954'), 'ID aus dem Tag-Kopf');
   assert.ok(!X.terminalGehoertZuSpace(alt, '8395'), 'kein Teiltreffer');
 
-  const nurId = { id: '333', space: '73192' };
-  assert.ok(X.terminalGehoertZuSpace(nurId, '73192'));
+  const nurId = { id: '333', space: '90003' };
+  assert.ok(X.terminalGehoertZuSpace(nurId, '90003'));
 });
 
 test('terminalGehoertZuSpace ist robust gegen fehlende Felder', () => {
@@ -42,7 +42,7 @@ test('terminalGehoertZuSpace ist robust gegen fehlende Felder', () => {
 test('setzeAuswahlFuerSpace waehlt nur die Terminals der Space an', () => {
   const terminals = [
     { id: 'A', space: '83954 · Zürich', spaceId: '83954', selected: false },
-    { id: 'B', space: '73192 · Bern',   spaceId: '73192', selected: false },
+    { id: 'B', space: '90003 · Bern',   spaceId: '90003', selected: false },
     { id: 'C', selected: false },                       // ohne Space - bleibt
   ];
   const r = X.setzeAuswahlFuerSpace(terminals, '83954', true);
@@ -54,7 +54,7 @@ test('setzeAuswahlFuerSpace waehlt nur die Terminals der Space an', () => {
 test('setzeAuswahlFuerSpace waehlt beim Abwaehlen nur die eigenen ab', () => {
   const terminals = [
     { id: 'A', spaceId: '83954', selected: true },
-    { id: 'B', spaceId: '73192', selected: true },
+    { id: 'B', spaceId: '90003', selected: true },
   ];
   const r = X.setzeAuswahlFuerSpace(terminals, '83954', false);
   assert.strictEqual(r.geaendert, 1);

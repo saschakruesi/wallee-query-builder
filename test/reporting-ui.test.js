@@ -81,7 +81,7 @@ test('In einem anderen Modus bleiben beide Reporting-Panels aus', () => {
 test('Terminal-Panel folgt der Checkbox und der Kanalwahl, nicht nur dem Modus', () => {
   const { app, dokument, el } = starte({
     wallee_query_builder_v6: JSON.stringify({
-      mode: 'reporting', spaces: [{ id: '40402', label: '', selected: true }],
+      mode: 'reporting', spaces: [{ id: '90001', label: '', selected: true }],
     }),
   });
   assert.ok(!aktiv(el('terminalSection')), 'Ausgangslage: keine Aufschluesselung');
@@ -130,20 +130,20 @@ test('generate() erzeugt im Modus reporting die Reporting-Query', () => {
   const { app, dokument } = starte({
     wallee_query_builder_v6: JSON.stringify({
       mode: 'reporting',
-      spaces: [{ id: '40402', label: '', selected: true }],
+      spaces: [{ id: '90001', label: '', selected: true }],
     }),
   });
   const s = sql(app, dokument);
   assert.match(s, /FROM chargeattempt ca/, 'Basis ist der Charge Attempt');
   assert.match(s, /ca\.environment = 'PRODUCTION'/);
-  assert.match(s, /ca\.spaceid = 40402/);
+  assert.match(s, /ca\.spaceid = 90001/);
   assert.doesNotMatch(s, /ca\.saleschannel IN/, '"Beide" darf gar nicht nach Kanal filtern');
 });
 
 test('generate() setzt den Kanalfilter, sobald ein einzelner Kanal gewaehlt ist', () => {
   const { app, dokument, el } = starte({
     wallee_query_builder_v6: JSON.stringify({
-      mode: 'reporting', spaces: [{ id: '40402', label: '', selected: true }],
+      mode: 'reporting', spaces: [{ id: '90001', label: '', selected: true }],
     }),
   });
   el('reportingChannelPos').checked = true;
@@ -154,7 +154,7 @@ test('generate() setzt den Kanalfilter, sobald ein einzelner Kanal gewaehlt ist'
 test('generate() haengt Terminals nur an, wenn das Terminal-Panel auch gilt', () => {
   const basis = {
     mode: 'reporting',
-    spaces: [{ id: '40402', label: '', selected: true }],
+    spaces: [{ id: '90001', label: '', selected: true }],
     terminals: [{ id: 'T-1', label: '', selected: true }],
   };
   // Ohne Aufschluesselung ist das Panel unsichtbar - ein aus einem anderen
@@ -176,7 +176,7 @@ test('Die uebrigen Modi bekommen weiterhin ihre eigene Query', () => {
   ['brand', 'terminal', 'export', 'card', 'settlement'].forEach(modus => {
     const { app, dokument } = starte({
       wallee_query_builder_v6: JSON.stringify({
-        mode: modus, spaces: [{ id: '40402', label: '', selected: true }],
+        mode: modus, spaces: [{ id: '90001', label: '', selected: true }],
       }),
     });
     const s = sql(app, dokument);
@@ -463,8 +463,8 @@ test('reportingExportOptionen traegt gewaehlten Zeitraum und Spaces', () => {
   const { app } = starte({
     wallee_query_builder_v6: JSON.stringify({
       mode: 'reporting',
-      spaces: [{ id: '40402', label: '', selected: true },
-        { id: '12622', label: '', selected: true },
+      spaces: [{ id: '90001', label: '', selected: true },
+        { id: '90002', label: '', selected: true },
         { id: '99999', label: '', selected: false }],
       startDate: '2026-07-01', startTime: '00:00:00',
       endDate: '2026-08-01', endTime: '00:00:00',
@@ -472,7 +472,7 @@ test('reportingExportOptionen traegt gewaehlten Zeitraum und Spaces', () => {
   });
   app.ingestReportingCsv(FIXTURE);
   const opt = plain(app.reportingExportOptionen());
-  assert.deepStrictEqual(opt.spaces, ['40402', '12622'],
+  assert.deepStrictEqual(opt.spaces, ['90001', '90002'],
     'Nur die angehakten Spaces, in der Reihenfolge der Liste');
   assert.strictEqual(opt.zeitraum.start, '2026-07-01 00:00:00');
   assert.strictEqual(opt.zeitraum.end, '2026-08-01 00:00:00');

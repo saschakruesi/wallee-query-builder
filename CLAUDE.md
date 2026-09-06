@@ -37,7 +37,7 @@ Bildschirm und im PDF.
 | `sql/settlement_reference_reference.sql` | Referenz-Query: funktionierender Settlement-Join (valuedate + withdrawal-Referenz), Basis für das `settle`-CTE in v2. |
 | `sql/settlement_verifikation.sql` | Verifikations-Queries für die Settlement-Annahmen (bt.state, Gebühren-Vorzeichen, Auszahlungsdauer, Mehrfach-Settlements, `NO_RECORD`-Anteil) — Kernbefunde an Produktivdaten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `settlement-report-spec/` | **Nur lokal, bewusst nicht im Git** (siehe `.gitignore`): fachliche Vorgabe des Settlement-Reports (seit v5.10 umgesetzt) — `SPEC.md` (Datenmodell, Aggregation, Aufbau, Edge Cases, Validierungen §7), `GAP-ANALYSIS.md` (was der Report vor v5.10 anders machte), `generate_report.py` (Referenz-Implementierung in Python) sowie die Referenz-Ausgaben `Settlement_Report_Juni-Juli_2026.pdf` / `Settlement_Detail_Juni-Juli_2026.xlsx`. Die Referenzdateien enthalten **echte Produktivdaten** (~69'000 Transaktionen mit Bankreferenzen, namentlich genannter Händler) — dieses Repo ist **öffentlich**, weil das Self-Update ohne Auth von `raw.githubusercontent.com` lädt, deshalb dürfen sie nicht eingecheckt werden. **Bei Änderungen am Settlement-Report zuerst hier nachlesen** — die Referenzdaten sind der Prüfstein (siehe „Gegen die Referenzdaten prüfen" unten). |
-| `dashboard/` | Fachliche Vorgabe des **Reporting-Modus** (v5.11): `SPEC.md` (Grundsatzentscheide, Datenmodell der Query, KPI-Katalog K1–K10 / P1–P7 / E1–E6, UI, Edge Cases, Validierung §8), `PLAN.md`/`README.md` sowie unter `sql/` die Discovery-Queries (`00_label_discovery.sql`, `00b_ecom_discovery_12622.sql`) und die **aus dem Builder generierten** Referenz-Queries (`01_reporting_reference.sql`, `01b_reporting_reference_terminal.sql` mit Terminal-Join). Diese Dateien sind im Git. **Nicht** im Git ist `dashboard/discovery-results/` (siehe `.gitignore`): dort liegen die Task-0-CSVs mit Produktivdaten sowie die Referenzausgaben des Reports. `DESCRIPTORS.md` darin ist die **Fundstelle aller Descriptor-IDs**, `ABNAHME.md` der **Abnahme-Nachweis nach SPEC §8** (inkl. der §8.3-Gegenrechnung gegen den `brand`-Modus, Belege `brand_ref_2026-07.csv` / `reporting_ref.csv` / `spec-8-3-vergleich.txt`) — bei Änderungen am Reporting-Modus zuerst dort und in `SPEC.md` nachlesen. |
+| `dashboard/` | Fachliche Vorgabe des **Reporting-Modus** (v5.11): `SPEC.md` (Grundsatzentscheide, Datenmodell der Query, KPI-Katalog K1–K10 / P1–P7 / E1–E6, UI, Edge Cases, Validierung §8), `PLAN.md`/`README.md` sowie unter `sql/` die Discovery-Queries (`00_label_discovery.sql`, `00b_ecom_discovery.sql`) und die **aus dem Builder generierten** Referenz-Queries (`01_reporting_reference.sql`, `01b_reporting_reference_terminal.sql` mit Terminal-Join). Diese Dateien sind im Git. **Nicht** im Git ist `dashboard/discovery-results/` (siehe `.gitignore`): dort liegen die Task-0-CSVs mit Produktivdaten sowie die Referenzausgaben des Reports. `DESCRIPTORS.md` darin ist die **Fundstelle aller Descriptor-IDs**, `ABNAHME.md` der **Abnahme-Nachweis nach SPEC §8** (inkl. der §8.3-Gegenrechnung gegen den `brand`-Modus, Belege `brand_ref_2026-07.csv` / `reporting_ref.csv` / `spec-8-3-vergleich.txt`) — bei Änderungen am Reporting-Modus zuerst dort und in `SPEC.md` nachlesen. |
 | `dashboard/SPEC-ITERATION-2.md` | Fachliche Vorgabe der **Iteration 2** (v5.12), datiert 2026-09-03: §1 Ablehngründe im Klartext, §2 Kuchendiagramme, §3 Seite «3DS-Failures», §4/§5 Discovery und die Antworten auf die Support-Anfrage aus Referenzfall B. **Umgesetzt sind §1 und §2**; was offen blieb und warum, steht unter „Offene Punkte". Der Fall selbst (Space-ID, Händler, Volumen, E-Mail-Wortlaut) steht **nicht** hier, sondern in `dashboard/discovery-results/FALL-B.md` (gitignored — das Repo ist öffentlich). |
 | `dashboard/catalog/` | Die beiden **gescrapten wallee-Kataloge** als JSON, im Git: `failure-reasons.json` (2'254 Einträge mit Name, Kategorie und Beschreibung, je englisch und deutsch) und `label-descriptors.json` (755 Einträge). Quelle ist die öffentliche Doku-Liste, **kein API-Dienst** (siehe „Ablehngründe"). Aktualisiert mit `dashboard/tools/scrape_wallee_catalogs.py` (Python 3, nur Standardbibliothek) — danach den Build-Schritt erneut laufen lassen. |
 | `tools/build-failure-reasons.mjs` | Erzeugt aus `dashboard/catalog/failure-reasons.json` die Konstante `FAILURE_REASONS` zwischen den Markerkommentaren in `wallee_query_builder.html`. **Der einzige Generator im Repo** — er läuft nie zur Laufzeit, die App bleibt eine Single-File-App ohne Build. Idempotent; bricht ab bei fehlenden oder doppelten Markern und bei einer Kategorie, die er nicht kennt. Details unter „Ablehngründe im Klartext (v5.12)". |
@@ -980,7 +980,7 @@ Stunden, Terminals, Länder, Conversion.
   stünden `dcc`, `tds_started`, `tds_cavv` und sämtliche Beträge dauerhaft auf `null` bzw.
   `0` — P7 läse „DCC 0 %", E1/E2 „nicht angefordert 100 %", und zwar als gemessen
   aussehende Nullen. **Der Referenzlauf vom 2026-09-01 hat die erwarteten Formate
-  bestätigt** (Spaces 40402 + 12622, Juli 2026): `true`/`false` klein, Punkt-Dezimalzahlen
+  bestätigt** (die beiden Referenzspaces, Juli 2026): `true`/`false` klein, Punkt-Dezimalzahlen
   mit acht Nachkommastellen, `yyyy-mm-dd`, Stunde ohne führende Null — der Parser meldete
   über beide Ergebnisse **0 unbrauchbare Werte und 0 unbekannte Blöcke**. Das war vorher
   offen und ist es nicht mehr; der Zähler bleibt trotzdem, weil er die Aussage erst
@@ -1695,10 +1695,11 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     bildet auf **genau eine** Referenz ab (über alle 82 Settlements geprüft). Wer die
     Kosten sparen will, schaltet die Checkbox ab — der Report degradiert dann sauber.
 - **Charge-Attempt-Befunde (Task 0, v5.11) — bisher beobachtet, nicht „gibt es nicht".**
-  Grundlage sind **zwei** Spaces über **einen** Monat: POS **Space 40402** (12'537 Attempts)
-  und E-Commerce **Space 12622** (1'855 Attempts), jeweils **Juli 2026**, ausgewertet mit
-  `dashboard/sql/00_label_discovery.sql` und `00b_ecom_discovery_12622.sql`; die Rohdaten und
-  die Auswertung liegen in `dashboard/discovery-results/DESCRIPTORS.md` (nicht im Git). Ein
+  Grundlage sind **zwei** Spaces über **einen** Monat: der **POS-Referenzspace** (12'537
+  Attempts) und der **E-Com-Referenzspace** (1'855 Attempts), jeweils **Juli 2026**,
+  ausgewertet mit `dashboard/sql/00_label_discovery.sql` und `00b_ecom_discovery.sql`; die
+  Rohdaten, die Auswertung und die Zuordnung der Space-IDs liegen in
+  `dashboard/discovery-results/` (nicht im Git, `DESCRIPTORS.md` bzw. `SPACE-IDS.md`). Ein
   anderer Space, ein anderer Acquirer oder eine Schema-Änderung kann das verschieben — dann
   sind die Discovery-Queries erneut zu fahren.
   - **`ca.state` kam nur als `SUCCESSFUL` und `FAILED` vor — kein `PENDING`, in keinem der
@@ -1956,7 +1957,7 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
   ausdrücklich als offen steht):
   - **Der Referenzlauf hat am 2026-09-01 stattgefunden** — beide Referenz-Queries
     (`dashboard/sql/01_reporting_reference.sql` und die Terminal-Variante `01b`) liefen im
-    Portal fehlerfrei über **Spaces 40402 + 12622, Juli 2026**, also dieselben zwei Spaces
+    Portal fehlerfrei über **beide Referenzspaces, Juli 2026**, also dieselben zwei Spaces
     und denselben Monat wie Task 0. **Belegt ist damit:** die typisierten
     `UNION ALL`-Platzhalter halten, alle elf Descriptors lösen auf (keine Kennzahl steht
     pauschal auf „Unbekannt"), der `tip`-Join trägt, und die Zahlen reproduzieren die
@@ -1981,7 +1982,7 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     Am POS ist die Tabelle mit 2 von 2 IDs vollständig.
   - **SPEC 8.3 ist gegengerechnet — die fachliche Abnahme ist damit abgeschlossen**
     (2026-09-02, Nachweis `dashboard/discovery-results/ABNAHME.md`, gitignored). Der
-    `brand`-Modus lief über **dieselben zwei Spaces 40402 + 12622 im Juli 2026** wie der
+    `brand`-Modus lief über **dieselben zwei Referenzspaces im Juli 2026** wie der
     Referenzlauf; verglichen wurde die Zahlungsmittel-Verteilung **nach Betrag** für die
     erfolgreichen Attempts. Ergebnis: **im E-Commerce stimmen beide Modi exakt überein**
     — 0.000 %, jede Marke auf den Rappen, gleiche Transaktionszahl —, **am POS weicht

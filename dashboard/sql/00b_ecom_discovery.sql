@@ -1,7 +1,9 @@
 -- =============================================================================
--- Reporting-Modus · Task 0b: E-Commerce-Discovery, Space 12622 (online only)
--- Fertig parametrisiert: Juli 2026. Jede Query EINZELN im Portal ausfuehren,
--- Ergebnisse als ecom_12622_2026-07_q<n>.csv nach dashboard/discovery-results/.
+-- Reporting-Modus · Task 0b: E-Commerce-Discovery, E-Com-Referenzspace (online only)
+-- Zeitraum fertig parametrisiert: Juli 2026. <SPACE_ID> ist ein Platzhalter und MUSS
+-- vor dem Ausfuehren durch die eigene Space-ID ersetzt werden - unersetzt ist die
+-- Query kein gueltiges SQL. Jede Query EINZELN im Portal ausfuehren, Ergebnisse als
+-- ecom_<space>_2026-07_q<n>.csv nach dashboard/discovery-results/.
 -- Ziel: 3-D-Secure-Descriptors (fehlen am POS), wallet-Werte (Apple/Google Pay),
 -- Failure-Reason-Spektrum, PENDING-Vorkommen, tokenisierte Attempts.
 -- =============================================================================
@@ -18,7 +20,7 @@ SELECT
     MIN(ca.createdon)            AS erster,
     MAX(ca.createdon)            AS letzter
 FROM chargeattempt ca
-WHERE ca.spaceid IN (12622)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
 GROUP BY 1, 2, 3, 4
@@ -41,7 +43,7 @@ SELECT
     SUM(CASE WHEN l['shortTextContent'] IS NULL THEN 1 ELSE 0 END) AS ohne_shorttext
 FROM chargeattempt ca
 CROSS JOIN UNNEST(ca.labels) AS u (l)
-WHERE ca.spaceid IN (12622)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
 GROUP BY 1, 2
@@ -54,7 +56,7 @@ SELECT
     COUNT(*)                     AS anzahl
 FROM chargeattempt ca
 CROSS JOIN UNNEST(ca.labels) AS u (l)
-WHERE ca.spaceid IN (12622)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
   AND l['shortTextContent'] IS NULL
@@ -69,7 +71,7 @@ SELECT
     ca.failurereason                     AS failure_reason_id,
     COUNT(*)                             AS anzahl
 FROM chargeattempt ca
-WHERE ca.spaceid IN (12622)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
   AND ca.state = 'FAILED'
@@ -89,14 +91,15 @@ FROM chargeattempt ca
 LEFT JOIN paymentconnectorconfiguration pcc ON pcc.id = ca.connectorconfiguration AND pcc.spaceid = ca.spaceid
 LEFT JOIN paymentconnector pc ON pc.id = pcc.connector
 LEFT JOIN wallettype wt ON wt.id = ca.wallet
-WHERE ca.spaceid IN (12622)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
 GROUP BY 1, 2, 3, 4
 ORDER BY 1, anzahl DESC;
 
 -- Q7: Werteverteilung der vier fuer den Report entscheidenden Karten-Labels
---     (IDs aus dem POS-Lauf Space 40402, Juli 2026 - siehe discovery-results/DESCRIPTORS.md).
+--     (IDs aus dem Lauf im POS-Referenzspace, Juli 2026 - siehe
+--     discovery-results/DESCRIPTORS.md).
 --     Liefert das Mapping Rohwert -> Report-Bucket (Business/Privat, Debit/Credit,
 --     Kontaktlos/Chip, Issuer-Land). Pro Sales Channel.
 SELECT
@@ -113,7 +116,7 @@ SELECT
     SUM(CASE WHEN ca.state = 'SUCCESSFUL' THEN 1 ELSE 0 END)    AS erfolgreich
 FROM chargeattempt ca
 CROSS JOIN UNNEST(ca.labels) AS u (l)
-WHERE ca.spaceid IN (12622)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
   AND l['descriptor'] IN ('1474552618699', '1474552618999', '1474552618629', '1761481788939')
@@ -127,7 +130,7 @@ SELECT
     ca.state,
     COUNT(*) AS anzahl
 FROM chargeattempt ca
-WHERE ca.spaceid IN (12622)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
 GROUP BY 1, 2, 3

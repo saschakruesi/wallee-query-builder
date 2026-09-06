@@ -6,10 +6,12 @@
 -- Jede Query EINZELN unter Account > Analytics > Submit Query ausfuehren
 -- (PrestoDB/Athena, Tabellen- und Spaltennamen lowercase).
 -- VOR DEM AUSFUEHREN ANPASSEN (in jeder Query, 3 Stellen):
---   ca.spaceid IN (40402)                      -> eigene Space-ID(s), kommagetrennt
+--   ca.spaceid IN (<SPACE_ID>)                 -> eigene Space-ID(s), kommagetrennt
 --   TIMESTAMP '2026-07-01 00:00:00'            -> Beginn des Zeitraums
 --   TIMESTAMP '2026-08-01 00:00:00'            -> Ende (exklusiv)
--- Die Beispielwerte sind gueltiges SQL, die Queries laufen auch unveraendert.
+-- <SPACE_ID> ist ein Platzhalter und MUSS vor dem Ausfuehren durch die eigene
+-- Space-ID ersetzt werden - unersetzt ist die Query kein gueltiges SQL. Die
+-- Zeitstempel sind dagegen gueltige Beispielwerte.
 --
 -- ACHTUNG: Die Ergebnisse enthalten Produktivdaten (Beispielwerte der Labels,
 -- u. a. maskierte Kartennummern). Sie gehoeren nach dashboard/discovery-results/
@@ -29,7 +31,7 @@ SELECT
     MIN(ca.createdon)            AS erster,
     MAX(ca.createdon)            AS letzter
 FROM chargeattempt ca
-WHERE ca.spaceid IN (40402)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
 GROUP BY 1, 2, 3, 4
@@ -52,7 +54,7 @@ SELECT
     SUM(CASE WHEN l['shortTextContent'] IS NULL THEN 1 ELSE 0 END) AS ohne_shorttext
 FROM chargeattempt ca
 CROSS JOIN UNNEST(ca.labels) AS u (l)
-WHERE ca.spaceid IN (40402)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
 GROUP BY 1, 2
@@ -65,7 +67,7 @@ SELECT
     COUNT(*)                     AS anzahl
 FROM chargeattempt ca
 CROSS JOIN UNNEST(ca.labels) AS u (l)
-WHERE ca.spaceid IN (40402)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
   AND l['shortTextContent'] IS NULL
@@ -82,7 +84,7 @@ FROM (
     SELECT c.transaction_id, ca.saleschannel, COUNT(*) AS attempts_pro_tx
     FROM chargeattempt ca
     JOIN charge c ON c.id = ca.charge_id
-    WHERE ca.spaceid IN (40402)
+    WHERE ca.spaceid IN (<SPACE_ID>)
       AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
       AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
     GROUP BY c.transaction_id, ca.saleschannel
@@ -98,7 +100,7 @@ SELECT
     ca.failurereason                     AS failure_reason_id,
     COUNT(*)                             AS anzahl
 FROM chargeattempt ca
-WHERE ca.spaceid IN (40402)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
   AND ca.state = 'FAILED'
@@ -118,7 +120,7 @@ FROM chargeattempt ca
 LEFT JOIN paymentconnectorconfiguration pcc ON pcc.id = ca.connectorconfiguration AND pcc.spaceid = ca.spaceid
 LEFT JOIN paymentconnector pc ON pc.id = pcc.connector
 LEFT JOIN wallettype wt ON wt.id = ca.wallet
-WHERE ca.spaceid IN (40402)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
 GROUP BY 1, 2, 3, 4
@@ -137,13 +139,14 @@ SELECT
 FROM chargeattempt ca
 JOIN charge c ON c.id = ca.charge_id
 JOIN transaction t ON t.id = c.transaction_id AND t.spaceid = ca.spaceid
-WHERE ca.spaceid IN (40402)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
 GROUP BY 1;
 
 -- Q7: Werteverteilung der vier fuer den Report entscheidenden Karten-Labels
---     (IDs aus dem POS-Lauf Space 40402, Juli 2026 - siehe discovery-results/DESCRIPTORS.md).
+--     (IDs aus dem Lauf im POS-Referenzspace, Juli 2026 - siehe
+--     discovery-results/DESCRIPTORS.md).
 --     Liefert das Mapping Rohwert -> Report-Bucket (Business/Privat, Debit/Credit,
 --     Kontaktlos/Chip, Issuer-Land). Pro Sales Channel.
 SELECT
@@ -160,7 +163,7 @@ SELECT
     SUM(CASE WHEN ca.state = 'SUCCESSFUL' THEN 1 ELSE 0 END)    AS erfolgreich
 FROM chargeattempt ca
 CROSS JOIN UNNEST(ca.labels) AS u (l)
-WHERE ca.spaceid IN (40402)
+WHERE ca.spaceid IN (<SPACE_ID>)
   AND ca.createdon >= TIMESTAMP '2026-07-01 00:00:00'
   AND ca.createdon <  TIMESTAMP '2026-08-01 00:00:00'
   AND l['descriptor'] IN ('1474552618699', '1474552618999', '1474552618629', '1761481788939')
@@ -168,7 +171,7 @@ GROUP BY 1, 2, 3, 4
 ORDER BY 2, anzahl_attempts DESC;
 
 -- Q8 (nur E-Commerce-Space): 3-D-Secure-Labels. Q1, Q2, Q2b und Q4 zusaetzlich in
---     einem E-Com-Space ausfuehren - Space 40402 ist reiner POS (kein einziger
+--     einem E-Com-Space ausfuehren - der POS-Referenzspace ist reiner POS (kein einziger
 --     Attempt mit saleschannel 1582816223150), dort gibt es keine 3DS-Labels.
 --     Q8 listet danach alle Descriptors der Gruppe mit Beispielwerten, deren Name
 --     ueber die Doku aufgeloest wird (3-D Secure Authenticated / Status / Liability Shift).

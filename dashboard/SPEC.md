@@ -1,6 +1,6 @@
 # Reporting-Modus (Händler-KPIs) — Design-Spezifikation
 
-Datum: 2026-08-28 · Zielversion: v5.11.0 · Status: **Task 0 abgeschlossen** — POS (Space 40402) und E-Com (Space 12622), Juli 2026, siehe `dashboard/discovery-results/DESCRIPTORS.md`
+Datum: 2026-08-28 · Zielversion: v5.11.0 · Status: **Task 0 abgeschlossen** — POS- und E-Com-Referenzspace, Juli 2026, siehe `dashboard/discovery-results/DESCRIPTORS.md` (Space-IDs in `SPACE-IDS.md`)
 
 ## 1. Ziel
 

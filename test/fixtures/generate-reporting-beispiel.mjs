@@ -3,8 +3,8 @@
 //
 // ACHTUNG - die Daten sind FREI ERFUNDEN und SYNTHETISCH. Space-IDs,
 // Terminal-Kennungen, Zaehlwerte, Betraege und Zeitstempel sind erfunden; die
-// realen Referenz-Spaces (40402/12622) tauchen hier bewusst NICHT auf, weil
-// dieses Repository oeffentlich ist.
+// realen Referenz-Spaces tauchen hier bewusst NICHT auf, weil dieses
+// Repository oeffentlich ist.
 //
 // Die SCHREIBWEISE dagegen ist seit dem Portal-Referenzlauf vom 2026-09-01
 // nicht mehr geraten, sondern Feld fuer Feld gegen die echte Athena-Ausgabe

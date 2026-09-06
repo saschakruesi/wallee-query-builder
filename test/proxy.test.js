@@ -99,9 +99,9 @@ test('findeRoute erkennt /credentials GET und POST', () => {
 });
 
 test('Routing: /terminals wird erkannt und liest space aus dem Query', () => {
-  const r = P.findeRoute('GET', '/terminals?space=73192');
+  const r = P.findeRoute('GET', '/terminals?space=90003');
   assert.strictEqual(r.name, 'terminals');
-  assert.strictEqual(r.space, '73192');
+  assert.strictEqual(r.space, '90003');
   assert.strictEqual(P.findeRoute('GET', '/terminals').space, '', 'ohne space leerer String');
 });
 
@@ -431,9 +431,9 @@ test('JWT: base64url ohne Polsterung und ohne + /', () => {
 test('JWT: Query-String gehoert in den requestPath', () => {
   const { inhalt } = teileToken(P.baueToken({
     userId: '1', secret: TEST_SECRET, methode: 'GET',
-    pfad: '/analytics/queries?spaceId=73192', iat: 1700000000,
+    pfad: '/analytics/queries?spaceId=90003', iat: 1700000000,
   }));
-  assert.strictEqual(inhalt.requestPath, '/api/v2.0/analytics/queries?spaceId=73192');
+  assert.strictEqual(inhalt.requestPath, '/api/v2.0/analytics/queries?spaceId=90003');
 });
 
 test('JWT: unterschiedliche Pfade ergeben unterschiedliche Signaturen', () => {
@@ -593,7 +593,7 @@ test('Proxy /terminals: Space-Header, signierter Pfad und Paginierung', async ()
 
   let res;
   try {
-    const paar = fakeReqRes({ method: 'GET', url: '/terminals?space=73192', origin: 'null' });
+    const paar = fakeReqRes({ method: 'GET', url: '/terminals?space=90003', origin: 'null' });
     await P.behandleAnfrage(paar.req, paar.res);
     res = await warteAufAntwort(paar.res);
   } finally {
@@ -603,7 +603,7 @@ test('Proxy /terminals: Space-Header, signierter Pfad und Paginierung', async ()
   assert.strictEqual(aufrufe.length, 2, 'zwei Seiten wegen hasMore');
   const u0 = new URL(aufrufe[0].url);
   assert.strictEqual(u0.origin + u0.pathname, 'https://app-wallee.com/api/v2.0/payment/terminals');
-  assert.strictEqual(aufrufe[0].opts.headers.Space, '73192', 'Space-Header statt Account');
+  assert.strictEqual(aufrufe[0].opts.headers.Space, '90003', 'Space-Header statt Account');
   assert.strictEqual(aufrufe[0].opts.headers.Account, undefined, 'kein Account-Header fuer Terminals');
   // Zweite Seite muss den after-Cursor der letzten id der ersten Seite tragen.
   assert.match(String(aufrufe[1].url), /after=1/, 'Cursor after=<letzte id>');

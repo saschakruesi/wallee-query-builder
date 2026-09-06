@@ -57,9 +57,9 @@ test('mergeSyncTerminals: space wird gesetzt und bei bestehenden aktualisiert', 
   ]);
   // bestehend ohne space -> bekommt space, zaehlt als aktualisiert
   const r2 = X.mergeSyncTerminals([{ id: '9', label: 'T9', selected: false }],
-    [{ identifier: '9', name: 'T9', space: '73192 · Bern' }]);
+    [{ identifier: '9', name: 'T9', space: '90003 · Bern' }]);
   assert.strictEqual(r2.aktualisiertCount, 1, 'Space-Aenderung zaehlt');
-  assert.strictEqual(plain(r2.liste)[0].space, '73192 · Bern');
+  assert.strictEqual(plain(r2.liste)[0].space, '90003 · Bern');
   assert.strictEqual(plain(r2.liste)[0].selected, false, 'Auswahl bleibt');
 });
 

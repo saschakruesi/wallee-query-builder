@@ -116,7 +116,7 @@ test('alter State ohne die neuen Felder faellt sauber auf den Kopieren-Modus', (
   // Ein State aus v3 des Builders kennt apiMode/proxyUrl nicht. Er darf
   // deswegen weder crashen noch versehentlich im API-Modus landen.
   const { app, el } = starte({
-    wallee_query_builder_v5: JSON.stringify({ mode: 'terminal', spaces: [{ id: '73192', selected: true }] }),
+    wallee_query_builder_v5: JSON.stringify({ mode: 'terminal', spaces: [{ id: '90003', selected: true }] }),
   });
 
   assert.strictEqual(app.getState().apiMode, false);

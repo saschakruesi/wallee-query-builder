@@ -94,9 +94,10 @@ Reihenfolge = Datenfluss: Discovery → SQL → Parser → Modell → Ausgabe �
       KPI in SPEC als «nur wenn Label vorhanden» markieren — der Report zeigt dann
       100 % UNKNOWN mit Hinweistext, nicht nichts.
 
-**Stand 2026-08-28 — Task 0 abgeschlossen** (POS Space 40402 + E-Com Space 12622, Juli
-2026). Alle Konstanten stehen in SPEC §6.3, Herleitung und Wertemengen in
-`discovery-results/DESCRIPTORS.md`. Wichtigste Befunde für die Implementierung:
+**Stand 2026-08-28 — Task 0 abgeschlossen** (POS- und E-Com-Referenzspace, Juli 2026;
+Zuordnung der Space-IDs in `discovery-results/SPACE-IDS.md`). Alle Konstanten stehen in
+SPEC §6.3, Herleitung und Wertemengen in `discovery-results/DESCRIPTORS.md`.
+Wichtigste Befunde für die Implementierung:
 Map-Keys sind descriptorabhängig (`countryContent`, `dateTimeContent`, `longTextContent`);
 3DS wird aus Started/CAVV-Existenz abgeleitet (keine Status-/Liability-Labels);
 `ca.tokenversion_id` ist immer NULL → Pan Type statt dessen; Authorization Method ist
@@ -141,7 +142,7 @@ Zeilen befüllt); `terminalIds` filtert wie `buildTerminalQuery` (leer = alle).
       (Sascha). Läuft sie nicht (Typfehler im UNION, Label-Syntax), hier fixen, bevor
       Task 2 beginnt. Ergebnis-CSV nach `dashboard/discovery-results/reporting_ref.csv`.
       **Erledigt am 2026-09-01** — beide Queries (`01` und die Terminal-Variante `01b`)
-      liefen fehlerfrei über Spaces 40402 + 12622, Juli 2026; UNION-Typen und Label-Syntax
+      liefen fehlerfrei über beide Referenzspaces, Juli 2026; UNION-Typen und Label-Syntax
       halten, der Parser meldet 0 unbrauchbare Werte und 0 unbekannte Blöcke. Die
       Ergebnis-CSVs bleiben **gitignored** (Produktivdaten). Die Fixture
       `test/fixtures/reporting-beispiel.csv` ist **nicht** aus ihnen abgeleitet, sondern
@@ -314,7 +315,7 @@ P2 (Terminals) → K10 Verlauf → Stunden. Pro Kanal ein Block-Set (Kanal-Titel
       dagegen `AUTH / (AUTH + FAILED_OR_ABANDONED)` (281/310 = 90.6 %, was der Code
       rechnet und §4.3 selbst zitiert); SPEC §8.5 ist auf §4.3 korrigiert, die
       Doppelzählungs-Hälfte ist erfüllt und geprüft.
-      **§8.3 ist gegengerechnet:** `brand`-Modus über dieselben Spaces 40402 + 12622,
+      **§8.3 ist gegengerechnet:** `brand`-Modus über dieselben beiden Referenzspaces,
       Juli 2026, Zahlungsmittel-Verteilung nach Betrag für die erfolgreichen Attempts.
       **E-Commerce exakt (0.000 %), POS −1.102 %, beide Spaces zusammen −0.594 %**;
       Trinkgeld-Differenz in derselben Grössenordnung und Richtung. Abweichungen je Marke

@@ -87,7 +87,7 @@ function spaltenAusQuery(sql) {
 }
 
 const QUERY_ARGS = {
-  spaceIds: ['40402'], start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00',
+  spaceIds: ['90001'], start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00',
   channels: [], byTerminal: false, terminalIds: [],
 };
 

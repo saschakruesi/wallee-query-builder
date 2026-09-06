@@ -9,8 +9,9 @@ einer Blockquelle, keine Chart-Vendoren).
 ## 0. Ausgangslage
 
 Der erste Referenz-Report mit einem echten Händler-Space (Report `reportingreport_20260903.pdf`,
-Space 16853, E-Com, CHF, 01.07.–03.09.2026, 9'373 Attempts, Success Rate 90.7 %) zeigt vier
-Lücken, die dieser Iteration den Auftrag geben:
+der **Vergleichsspace**, E-Com, CHF, 01.07.–03.09.2026, 9'373 Attempts, Success Rate
+90.7 %; Space-ID in `discovery-results/SPACE-IDS.md`, gitignored) zeigt vier Lücken, die
+dieser Iteration den Auftrag geben:
 
 1. **Ablehngründe ohne Namen.** 6 von 10 Zeilen im Block «Ablehngründe» und 9 Zeilen in
    «Ablehngründe je Brand» tragen nur `#<id>`; 7 weitere Einträge sind gar nicht dargestellt.
@@ -511,7 +512,7 @@ die ACS-Achse aus der Support-Anfrage), `1552301749305` Challenge Mandate,
 
 **Gruppe «Transaction Details» / «Credit Card Information»** (Acquirer-Antwort):
 `1532425961678` CVC Response Code, `1532425961673`/`1553773976792` Address Verification
-Result, `1556796749189` AVS Result Type (im E-Com-Space 12622 beobachtet), `1532425961679`
+Result, `1556796749189` AVS Result Type (im E-Com-Referenzspace beobachtet), `1532425961679`
 Liability Shift (String), `1482414040602` Liability Shift (Static), `1482414032747`
 Acquirer Response Code, `1458749261553` **Card Issuer Number (BIN)** — die einzige
 Issuer-Identifikation im Katalog, siehe §5.1; `1615561443205` Scheme Reference Id.
@@ -519,7 +520,7 @@ Issuer-Identifikation im Katalog, siehe §5.1; `1615561443205` Scheme Reference 
 **Gruppe «Fraud Data»**: `1476865633759` Fraud Score, `1476865318023` Fraud Category
 (Processor-seitiges Scoring, connectorabhängig); Adyen: `1509096043194` Total Fraud Score.
 
-**Befund aus Task 0b:** Im Referenz-Space 12622 schreibt der Connector **keines** dieser
+**Befund aus Task 0b:** Im E-Com-Referenzspace schreibt der Connector **keines** dieser
 Labels — nur Started/Finished/CAVV/Version/Cryptogram-ECI. Das ist **nicht** auf andere
 Spaces übertragbar: die Support-Anfrage aus Referenzfall B beweist, dass für diesen Space im Backend
 Transaction Status, Status Reason und Challenge Cancel vorliegen. Ob sie im
@@ -623,8 +624,9 @@ Zahlen je Space stehen in `discovery-results/FALL-B.md`; hier nur die Muster:
 
 - Zwei unabhängige Händler-Spaces: 3DS-Failure-Anteil an den Fehlschlägen **34 % bzw.
   65 %**, bei Visa/Mastercard in beiden **rund 80 % aller Kartenfehlschläge**. 3DS-Akzeptanz
-  85.6 % bzw. 82.1 % (Referenzmonat 12622: 90.6 %). Das ist kein Einzelfall, sondern
-  das dominante Ablehnmuster im Schweizer E-Commerce mit App-basierter Challenge.
+  85.6 % bzw. 82.1 % (Referenzmonat im E-Com-Referenzspace: 90.6 %). Das ist kein
+  Einzelfall, sondern das dominante Ablehnmuster im Schweizer E-Commerce mit
+  App-basierter Challenge.
 - «Security Decline» (in beiden Spaces nur Mastercard) und «Suspicion of Manipulation» (nur
   Visa) sind **Issuer-Fraud-Ablehnungen**, «nicht wiederholen» — heute unsichtbar hinter
   `#<id>`. Für den Händler ist das die Zeile, die Retry-Logik im Shop steuern sollte.
