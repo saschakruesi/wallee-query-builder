@@ -8926,9 +8926,11 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         // "wie viel laeuft ueber ein Wallet"), diese Liste fuehrt beide als
         // eigene Eimer (sie misst "woran scheitert 3DS"). Beides ist richtig,
         // aber wer die zwei Tabellen nebeneinander legt, haelt die Differenz
-        // sonst fuer einen Fehler.
+        // sonst fuer einen Fehler. Bewusst ohne "darueber": der Hinweis steht
+        // auch im eigenen PDF und in der eigenen Excel-Mappe der 3DS-Seite,
+        // wo der Reporting-Report gar nicht danebensteht.
         + 'Zahlungsmitteln (Apple Pay auf Visa). Anders als der Wallet-Block des '
-        + 'Reporting-Reports darüber führt diese Liste „Kein Wallet“ und „Unbekannt“ als '
+        + 'Reporting-Reports führt diese Liste „Kein Wallet“ und „Unbekannt“ als '
         + 'eigene Zeilen mit — dort zählen nur Versuche MIT Wallet, hier alle Zeilen der '
         + '3DS-Liste.', false));
     }
