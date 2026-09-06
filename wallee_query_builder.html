@@ -4936,7 +4936,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
     const tdsOhneCavv = tdsWert('STARTED_NO_CAVV');
     // Die trotzdem autorisierten Versuche des Eimers (SPEC-ITERATION-2 §3.6).
     // Die Zahl steht im DIM-Block ohnehin bereit - attempt_state ist eine
-    // Gruppierungsspalte -, sie wird hier nur benannt.
+    // Gruppierungsspalte -, sie wird hier nur benannt. Beide Werte sind eine
+    // SICHT auf tdsGruppen, kein zweiter Zaehldurchgang: sie koennen deshalb
+    // nicht gegen die Eimer-Tabelle auseinanderlaufen, die direkt darunter
+    // steht.
     const tdsOhneCavvErfolgreich = tdsGruppe('STARTED_NO_CAVV').erfolgreich;
 
     return {
@@ -6450,12 +6453,12 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       ], 'tabelle',
       `Grundlage: ${formatIntCH(tds.basis)} Karten-Attempts mit Endzustand. `
       + '„3DS gestartet, kein CAVV“ heisst: die Authentifizierung lief an, der Connector '
-      + 'schrieb kein Kryptogramm — ein Teil davon wurde trotzdem autorisiert. Ob die '
+      + 'schrieb kein Kryptogramm — ein Teil davon wurde trotzdem autorisiert; ob die '
       + 'übrigen abgebrochen wurden oder fehlschlugen, lässt sich nicht trennen, weil die '
       + 'EMVCo-Felder im Analytics-Export nicht ankommen (gemessen 2026-09-04, '
-      + 'connectorabhängig). Die Akzeptanz nimmt die trotzdem autorisierten Versuche aus '
-      + 'dem Nenner; der Angefordert-Anteil enthält sie weiterhin. Ein Liability-Shift-Label '
-      + 'liefert die API nicht.',
+      + 'connectorabhängig); die Akzeptanz nimmt die trotzdem autorisierten Versuche aus '
+      + 'dem Nenner, der Angefordert-Anteil enthält sie weiterhin. '
+      + 'Ein Liability-Shift-Label liefert die API nicht.',
       // zellFormate hat dieselbe Form wie zeilen; leere Eintraege fallen auf
       // das Spaltenformat zurueck, das hier bewusst nicht renderbar ist.
       [['text', 'pct'], ['text', 'zahl'], ['text', 'pct'], ['text', 'pct']]));

@@ -537,14 +537,19 @@ const AUTORISIERT_ZEILE = '3DS gestartet ohne CAVV, trotzdem autorisiert';
 // test/fixtures/generate-reporting-beispiel.mjs).
 const AUTORISIERT_N = 11;
 
+// Der Zeilentext geht als Muster in eine RegExp - er kommt aus einer Konstante
+// und traegt heute kein Metazeichen, aber ein spaeteres "(§3.6)" darin waere
+// sonst ein stiller Syntaxfehler statt eines fehlgeschlagenen Vergleichs.
+const regexEscape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 test('«trotzdem autorisiert» steht mit der richtigen Zahl auf dem Schirm', () => {
-  const { app, el } = mitFixture();
+  const { el } = mitFixture();
   const abschnitt = blockAbschnitt(el('reportingReportOutput').innerHTML, 'E-Com · 3DS-Akzeptanz');
   assert.ok(abschnitt.includes(AUTORISIERT_ZEILE), 'Zeile fehlt auf dem Schirm');
   // Als ZAEHLER, nicht als Prozentwert: die Wert-Spalte des Blocks steht auf
   // 'gemischt', das Format kommt je Zelle aus zellFormate. Ein '11.0 %' hier
   // hiesse, dass jemand am Spaltenkopf statt an reportingZellFormat() liest.
-  assert.match(abschnitt, new RegExp(AUTORISIERT_ZEILE + '</td><td[^>]*>' + AUTORISIERT_N + '</td>'));
+  assert.match(abschnitt, new RegExp(regexEscape(AUTORISIERT_ZEILE) + '</td><td[^>]*>' + AUTORISIERT_N + '</td>'));
   // Der Hinweis erklaert den Eimer und beide Nenner (§3.6 Punkt 3).
   assert.match(abschnitt, /kein Kryptogramm/);
   assert.match(abschnitt, /EMVCo-Felder im Analytics-Export nicht ankommen/);
