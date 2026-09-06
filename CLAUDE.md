@@ -2021,11 +2021,12 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     *(Der Absatz steht im Wortlaut von 2026-09-02 und nennt den zweiten Eimer deshalb
     noch `FAILED_OR_ABANDONED`; er heisst seit v5.12.1 `STARTED_NO_CAVV`, und der Nenner
     von 4.3 zieht dessen erfolgreiche Attempts ab — siehe „Herkunft, Kartentyp, 3DS" oben.
-    Ob sich die 90.6 % dadurch verschieben, ist **nicht nachgerechnet** — das CSV des
-    Laufs vom 2026-09-01 liegt vor, die Zahl hier ist aber die von damals. Der Eimer war
-    dort 29 Attempts gross, und diese 29 decken sich der Zahl nach mit der Failure Reason
-    „3-D Secure Failure"; wären es dieselben, änderte sich nichts. Das ist eine
-    Übereinstimmung von Zählwerten, kein Nachweis je Attempt.)*
+    **Nachgerechnet 2026-09-04** an `dashboard/discovery-results/reporting_ref.csv`
+    (E-Com-Kartenbrands, Referenzlauf 2026-09-01): der Eimer zählt 29 Attempts, davon
+    **29 `FAILED` und 0 `SUCCESSFUL`** — der neue Nenner zieht also nichts ab, und die
+    Quote bleibt alt wie neu bei 281/310 = 90.6 %. Das gilt für diesen Referenzlauf, nicht
+    allgemein: ein anderer Space kann in diesem Eimer autorisierte Attempts haben, dann
+    weichen alte und neue Formel voneinander ab.)*
   - **Die Fixture ist an die echte Schreibweise angeglichen** (siehe
     „Entwicklungs-Workflow"): NULL steht jetzt als unquotiertes Leerfeld, die
     Zeilenreihenfolge folgt dem `ORDER BY` der Query. Sollte ein anderer Connector oder

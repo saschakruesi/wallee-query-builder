@@ -1,5 +1,12 @@
 # Reporting-Modus (Händler-KPIs) — Implementierungsplan
 
+> **Stand v5.11 (2026-09-06 nachgetragen):** Dieser Plan ist ein historisches
+> Ausführungsdokument (Checkboxen aus der ursprünglichen Umsetzung), kein gepflegter
+> Fachstand. Die 3DS-Namen und -Formeln weiter unten (Eimer `FAILED_OR_ABANDONED`,
+> Akzeptanz = `AUTHENTICATED / (AUTHENTICATED + FAILED_OR_ABANDONED)`) sind seit v5.12.1
+> überholt — der Eimer heisst jetzt `STARTED_NO_CAVV`, und die trotzdem autorisierten
+> Versuche fallen aus dem Akzeptanz-Nenner. Massgeblich ist `dashboard/SPEC.md` §4.3.
+
 > **Für Claude Code:** Diesen Plan Task für Task abarbeiten (empfohlen:
 > superpowers:subagent-driven-development oder superpowers:executing-plans). Jede Task
 > endet mit grünen Tests (`node --test "test/*.test.js"`) und einem Commit. Vor Task 1

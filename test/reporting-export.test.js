@@ -624,6 +624,32 @@ test('kopf-Deskriptoren der Kernbloecke stehen fest', () => {
   ]);
 });
 
+// Der WERT_FORMAT-Wächter oben prueft nur die Spalten-Deskriptoren (Format
+// 'gemischt' fuer die ganze Spalte) - er sagt nichts darueber, WELCHES Format
+// jede einzelne Zeile ueber zellFormate bekommt. Vor v5.12.1 war das indirekt
+// mitgeprueft, weil die Spalte selbst 'pct' war; seither steht es nur noch im
+// un-assertierten zellFormate-Literal im Code. Ohne diesen Test faellt eine
+// falsch indizierte Zeile (z. B. der Zaehler ohne %-Zeichen als 'pct') nicht
+// auf - die Suite bliebe gruen, die Ausgabe zeigte "84.7 %" statt "84.7".
+test('E-Com · 3DS-Akzeptanz: zellFormate je Zeile steht fest', () => {
+  const { reportingExportBloecke } = loadBuilders();
+  const b = plain(reportingExportBloecke(fixturModell(), {}));
+  const block = b.find(x => x.titel === 'E-Com · 3DS-Akzeptanz');
+  assert.ok(block, 'Block fehlt');
+  assert.strictEqual(block.zeilen.length, block.zellFormate.length);
+  assert.deepStrictEqual(block.zeilen.map(z => z[0]), [
+    '3DS-Akzeptanz',
+    '3DS gestartet ohne CAVV, trotzdem autorisiert',
+    '3DS angefordert (Anteil)',
+    'Wallet-Kryptogramm (Anteil)',
+  ]);
+  // Reihenfolge exakt wie die Zeilen: Akzeptanz/Angefordert/Wallet sind
+  // Prozente, der dazwischenstehende Zaehler ist eine reine Zahl.
+  assert.deepStrictEqual(block.zellFormate, [
+    ['text', 'pct'], ['text', 'zahl'], ['text', 'pct'], ['text', 'pct'],
+  ]);
+});
+
 // --- E5: Ablehngruende je Zahlungsmittel ------------------------------------
 
 test('E5: Kreuztabelle Brand x Ablehngrund, Anteil am Brand selbst', () => {
