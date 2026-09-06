@@ -583,9 +583,28 @@ Alles clientseitig im Modell, aus den Rohwerten der Query:
   oder fehlend → `UNKNOWN`, **nicht** `PRIVATE`; alles andere → `PRIVATE`. Der Wert ist
   häufig (siehe „Wallee-Referenzwissen"), ihn als privat durchgehen zu lassen wäre eine
   erfundene Aussage über jede siebte bis dritte Karte.
-- **`klassifiziereTds`** — `AUTHENTICATED` (Start ∧ CAVV) / `FAILED_OR_ABANDONED`
+- **`klassifiziereTds`** — `AUTHENTICATED` (Start ∧ CAVV) / **`STARTED_NO_CAVV`**
   (Start ohne CAVV) / `WALLET_CRYPTOGRAM` (kein Start, aber ECI — Apple/Google Pay bringen
-  ihr eigenes Kryptogramm) / `NOT_REQUESTED`. Ein **Liability Shift wird nicht ausgewiesen**:
+  ihr eigenes Kryptogramm) / `NOT_REQUESTED`. Es bleiben **vier** Eimer, und sie summieren
+  weiterhin restlos auf die Karten-Attempts.
+  Der zweite hiess bis v5.12.0 `FAILED_OR_ABANDONED`, deutsch „Fehlgeschlagen /
+  abgebrochen" — ~~gestartet ohne CAVV heisst, die Authentifizierung ist gescheitert oder
+  wurde abgebrochen~~ **korrigiert 2026-09-04 (SPEC-ITERATION-2 §3.6), an Produktivdaten
+  widerlegt:** am zweiten Händler-Space (siehe „Charge-Attempt-Befunde am zweiten
+  Händler-Space" unter „Wallee-Referenzwissen") liegen **2'439 Attempts mit
+  `attempt_state = SUCCESSFUL`** in diesem Eimer — **16.8 %** seines Inhalts. Sie wurden
+  autorisiert, obwohl der Connector kein CAVV-Label schrieb. `Cryptogram Present` erklärt
+  es **nicht** (nur 20 der 2'439 tragen es). Der Report vom 03.09.2026 wies diese 16.8 %
+  offen als Erfolgsquote einer „fehlgeschlagenen" Zeile aus — eine Zahl, die per
+  Definition unmöglich schien und in Wahrheit die Definition widerlegte.
+  **Was es wirklich ist, lässt sich nicht sagen** — Attempts-Flow, Frictionless ohne
+  CAVV-Label oder Autorisierung nach Soft Decline: die dazu nötigen EMVCo-Felder
+  (Transaction Status, Status Reason, Challenge Cancel) kommen im Analytics-`labels`-Array
+  gar nicht an, dieselbe Discovery hat das gemessen. Der Eimer bleibt also **unscharf**;
+  der Name sagt seither nur noch, was gemessen wurde („3DS gestartet, kein CAVV"), statt
+  einen Ausgang zu unterstellen. **Das ist der ganze Fix** — er macht den Report nicht
+  genauer, er nimmt ihm eine Behauptung.
+  Ein **Liability Shift wird nicht ausgewiesen**:
   ~~der Connector schreibt kein solches Label (Task 0)~~ — **korrigiert 2026-09-04:** *jener*
   Connector schrieb keines. Die Discovery zum zweiten Händler-Space (SPEC-ITERATION-2 §4.3)
   fand dort `1634723429059` **Liability Shift** (Wert `ON`). Der Report weist ihn weiterhin
@@ -603,8 +622,27 @@ jede Quote:** die übrigen haben je einen eigenen, fachlich passenden Nenner —
 `walletAnteil` misst gegen **alle** Attempts des Kanals (`kpi.attempts`, `offen` und
 `sonstige` eingeschlossen: die Frage lautet „wie viel läuft über ein Wallet"),
 `dccAnteil` und die Karten-Verteilungen gegen `kartenErfolgreich`, `tds.akzeptanz` gegen
-`AUTHENTICATED + FAILED_OR_ABANDONED` und `tds.angefordertAnteil` gegen `kartenAttempts`.
+`AUTHENTICATED + STARTED_NO_CAVV − gestartetOhneCavvErfolgreich` und
+`tds.angefordertAnteil` gegen `kartenAttempts`.
 Wer eine KPI ergänzt, wählt den Nenner also aus der Frage, nicht aus dieser Regel.
+
+**Die beiden 3DS-Quoten sind das schärfste Beispiel dafür** (seit v5.12.1): sie greifen auf
+denselben Eimer zu und zählen ihn trotzdem verschieden.
+`tds.akzeptanz` fragt „wie oft ging die angeforderte Authentifizierung durch?" und nimmt
+die **trotzdem autorisierten** Versuche des `STARTED_NO_CAVV`-Eimers aus dem Nenner — ein
+autorisierter Versuch gehört nicht in den Ablehn-Nenner einer Kennzahl, die
+„3DS-Akzeptanz" heisst. **Das ist ein ausdrücklicher Entscheid des Auftraggebers, keine
+Herleitung aus den Daten**: die Daten sagen nur, *dass* diese Versuche autorisiert wurden,
+nicht, ob 3DS daran beteiligt war. An den Referenzdaten hebt der Abzug die Quote von
+**82.1 % auf 84.7 %** (66'785 / 78'890 statt / 81'329).
+`tds.angefordertAnteil` fragt „wie oft wurde 3DS überhaupt angefordert?" und enthält den
+Eimer deshalb **vollständig, ohne Abzug** — angefordert wurde in jedem seiner Versuche,
+unabhängig vom Ausgang. Ein gemeinsamer Nenner wäre in einer der beiden Fragen die falsche
+Antwort; ein Test rechnet beide von Hand nach, damit die eine nicht mit der anderen
+mitwandert.
+Die Zahl der trotzdem autorisierten Versuche steht als **eigene Zeile** im Block
+„3DS-Akzeptanz" („3DS gestartet ohne CAVV, trotzdem autorisiert", absolut, in allen vier
+Ausgaben) — sie darf nicht bloss im Nenner verschwinden, denn genau das war der Fehler.
 **Anteile** (Verteilungen)
 haben dagegen alle Attempts im Nenner, sonst summierten die Brand-Anteile nicht auf 100 %.
 Der Unterschied ist der Grund für zwei Helfer statt einem: `reportingQuote` gibt bei Nenner 0
@@ -1094,7 +1132,7 @@ irgendwann „nachgetragen" wird: das Label `1761481788939` trägt unter
 
 #### Bewusste Abweichungen von `dashboard/SPEC-ITERATION-2.md`
 
-Wie bei `dashboard/SPEC.md`: jede offengelegt, keine übersehen. Es sind drei.
+Wie bei `dashboard/SPEC.md`: jede offengelegt, keine übersehen. Es sind vier.
 
 1. **Die Katalog-Beschreibungen werden nicht vollständig eingebettet** (§1.3 Punkt 2 wünscht
    die «Bedeutung» aus dem Katalog für alle Gründe). Eingebettet sind Name und Kategorie
@@ -1118,6 +1156,17 @@ Wie bei `dashboard/SPEC.md`: jede offengelegt, keine übersehen. Es sind drei.
    dieselbe Zeile wie der Eintrag selbst, hiesse aber weniger — dieselbe Überlegung, die
    `reportingUebrige()` für die Tabellen schon trifft. Ab zwei greift die Regel wie
    spezifiziert.
+4. **Kein fünfter 3DS-Eimer `STARTED_NO_CAVV_SUCCESS`** (v5.12.1, §3.6 verlangt für die
+   trotzdem autorisierten Versuche ausdrücklich einen eigenen Eimer-Wert). Als fünfter
+   Eimer hätte er eine Erfolgsquote von definitionsgemäss **100 %** und `STARTED_NO_CAVV`
+   daneben eine von **0 %** — der Block «3DS-Status» weist aber gerade die Erfolgsquote je
+   Status aus (E2), und zwei tautologische Zeilen darin sagen nichts. Stattdessen: **ein**
+   Eimer mit ehrlichem Namen und einer aussagekräftigen Erfolgsquote (an den Referenzdaten
+   16.8 % — genau die Zahl, die auffällig ist und auffällig bleiben soll), plus die
+   absolute Zahl als eigene KPI-Zeile im Block «3DS-Akzeptanz» daneben. Der **Zweck** von
+   §3.6 ist damit erfüllt: der Erfolg läuft nicht mehr stumm in die Quote. Nebeneffekt, der
+   für dieselbe Lösung spricht: die vier Eimer summieren weiterhin restlos auf die
+   Karten-Attempts — ein fünfter wäre eine Teilmenge des zweiten und bräche das.
 
 #### Grenzen (dem Kunden so kommunizieren)
 
@@ -1757,9 +1806,21 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     10.6 % — allein wegen der beiden PostFinance-Timeouts, die der Katalog falsch einordnet.
     Der Unterschied ist die Aussage „das Problem liegt beim Checkout-Verhalten der Kunden"
     gegen „zehn Prozent sind ein wallee-/Acquirer-Thema".
-  - **Was der Lauf NICHT klären konnte:** er filtert auf `FAILED`, der Widerspruch aus
-    SPEC-ITERATION-2 §3.6 (erfolgreiche Attempts im Eimer «Fehlgeschlagen / abgebrochen»)
-    braucht dieselbe Frage für `SUCCESSFUL`. Query liegt als Q2e bereit.
+  - ~~**Was der Lauf NICHT klären konnte:** er filtert auf `FAILED`, der Widerspruch aus
+    SPEC-ITERATION-2 §3.6 … braucht dieselbe Frage für `SUCCESSFUL`. Query liegt als Q2e
+    bereit.~~ **Q2e ist gelaufen (2026-09-04) und hat den Widerspruch aufgelöst — zulasten
+    der Heuristik.** Von **103'729 erfolgreichen** Attempts trugen 67'054 einen 3-D-Secure-
+    Start, davon **64'615 ein CAVV**: **2'439 erfolgreiche Attempts sind «gestartet ohne
+    CAVV»** (direkt gemessen ohne CAVV *und* ohne Cryptogram Present: 2'419 — das Label
+    erklärt den Fall also nicht). Zusammen mit den 12'105 gescheiterten desselben Zuschnitts
+    (14'275 gestartet, 2'170 mit CAVV) ist der Eimer **14'544** gross, davon **16.8 %
+    erfolgreich** — exakt die Erfolgsquote, die der Report vom 03.09.2026 auswies und die
+    per Definition unmöglich schien. **Die Heuristik «gestartet ohne CAVV = gescheitert» ist
+    damit widerlegt, nicht bloss bezweifelt.** Folge in v5.12.1: der Eimer heisst
+    `STARTED_NO_CAVV` (siehe „Herkunft, Kartentyp, 3DS — die Klassifikation"). Was die
+    2'439 wirklich sind, bleibt offen und **ist aus dem Analytics-Export nicht zu
+    beantworten** — die dafür nötigen EMVCo-Felder kommen dort nicht an, das hat derselbe
+    Lauf gemessen (Punkt eins dieser Liste).
 - **Es gibt keinen Failure-Reason-Dienst in der wallee-Web-Service-API.** 98 Services in
   Doku und Java-SDK, keiner davon; beide Kandidatenpfade antworten mit einer HTML-404;
   `static-values` kennt die IDs nicht; das Analytics-Schema hat keine Nachschlagetabelle.
@@ -1957,6 +2018,14 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     Angefordert-Anteil. `dashboard/SPEC.md` §8.5 ist auf 4.3 korrigiert. Die
     Doppelzählungs-Hälfte von 8.5 ist erfüllt und geprüft: `klassifiziereTds` vergibt je
     Zeile genau einen Wert, die vier Eimer summieren restlos auf die Karten-Attempts.
+    *(Der Absatz steht im Wortlaut von 2026-09-02 und nennt den zweiten Eimer deshalb
+    noch `FAILED_OR_ABANDONED`; er heisst seit v5.12.1 `STARTED_NO_CAVV`, und der Nenner
+    von 4.3 zieht dessen erfolgreiche Attempts ab — siehe „Herkunft, Kartentyp, 3DS" oben.
+    Ob sich die 90.6 % dadurch verschieben, ist **nicht nachgerechnet** — das CSV des
+    Laufs vom 2026-09-01 liegt vor, die Zahl hier ist aber die von damals. Der Eimer war
+    dort 29 Attempts gross, und diese 29 decken sich der Zahl nach mit der Failure Reason
+    „3-D Secure Failure"; wären es dieselben, änderte sich nichts. Das ist eine
+    Übereinstimmung von Zählwerten, kein Nachweis je Attempt.)*
   - **Die Fixture ist an die echte Schreibweise angeglichen** (siehe
     „Entwicklungs-Workflow"): NULL steht jetzt als unquotiertes Leerfeld, die
     Zeilenreihenfolge folgt dem `ORDER BY` der Query. Sollte ein anderer Connector oder
@@ -1974,15 +2043,23 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
   - Sollte wallee den **Failure-Reason-Dienst** je veröffentlichen, ersetzt er die statische
     `FAILURE_REASONS`-Tabelle (das Modell existiert in der API, nur der Dienst fehlt) —
     Nachfrage bei wallee wäre der Weg, erneutes Pfad-Raten nicht.
-- **Reporting-Modus, Iteration 2 (v5.12) — was diese Version bewusst NICHT gebracht hat.**
+- **Reporting-Modus, Iteration 2 (v5.12/v5.12.1) — was diese Versionen bewusst NICHT
+  gebracht haben.**
   `dashboard/SPEC-ITERATION-2.md` beschreibt vier Vorhaben; umgesetzt sind **§1**
-  (Ablehngründe im Klartext samt Proxy-Route) und **§2** (Kuchendiagramme). Offen bleibt:
+  (Ablehngründe im Klartext samt Proxy-Route) und **§2** (Kuchendiagramme), dazu in
+  v5.12.1 die **Konsistenzprüfung aus §3.6** (der 3DS-Eimer heisst nach der Messung statt
+  nach einem Ausgang, die trotzdem autorisierten Versuche sind sichtbar und aus dem
+  Ablehn-Nenner). Offen bleibt:
   - **§3 — die Seite «3DS-Failures»** (Transaktionsliste mit Export und Dashboard-Link,
     eigene zeilenweise Query `buildReportingTdsQuery`, zweiter `queryToken`). Sie ist der
     eigentliche Auftrag aus Referenzfall B: 3-D Secure Failure ist dort mit **64.8 % aller
     Fehlschläge** der grösste Ablehngrund, und der Händler kann die betroffenen Versuche
     heute weder sehen noch exportieren. v5.12 macht den Grund **sichtbar und benannt** — es
-    beantwortet aber nicht, *welche* Versuche es waren.
+    beantwortet aber nicht, *welche* Versuche es waren. **Auch die neue `tds_flow`-Achse
+    aus §3.6 selbst steht noch aus** (Frictionless / Challenge / Abgebrochen): v5.12.1 hat
+    nur die Konsistenzprüfung desselben Abschnitts erledigt — also die Beschriftung, die
+    falsch war, nicht die feinere Klassifikation, die den Händler eigentlich interessiert. Sie hängt an den
+    Dauer-Eimern, weil die EMVCo-Felder fehlen (siehe §4.3 unten).
   - ~~**§4.3 — Discovery Q2 für den zweiten Händler-Space** … steht noch aus.~~
     **Erledigt am 2026-09-04** (Ergebnis unter „Charge-Attempt-Befunde am zweiten
     Händler-Space" oben, Rohdaten in `dashboard/discovery-results/`). Der Ausgang ist der

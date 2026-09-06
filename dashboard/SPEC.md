@@ -82,7 +82,7 @@ Abgeleitete Spalten pro Attempt:
 | `tds_started` | `true`, wenn Label `DESC_TDS_STARTED` = `1568637480278` (3-D Secure Process Started, `dateTimeContent`) vorhanden |
 | `tds_cavv` | `true`, wenn Label `DESC_TDS_CAVV` = `1569496536590` (3-D Secure CAVV, `longTextContent`) vorhanden — **der Wert selbst wird nie ausgegeben** |
 | `eci` | Label `DESC_ECI` = `1634723429552` (Cryptogram Eci, `02`/`05`/`06`/`07`) → Rohwert |
-| `tds_status` | **clientseitig** aus den drei Feldern: `AUTHENTICATED` (started ∧ cavv) / `FAILED_OR_ABANDONED` (started ∧ ¬cavv) / `WALLET_CRYPTOGRAM` (¬started ∧ eci vorhanden) / `NOT_REQUESTED` (sonst, nur Karten). Der Connector schreibt keine «Authenticated/Status/Liability-Shift»-Labels — Liability Shift wird nicht ausgewiesen |
+| `tds_status` | **clientseitig** aus den drei Feldern: `AUTHENTICATED` (started ∧ cavv) / `STARTED_NO_CAVV` (started ∧ ¬cavv) / `WALLET_CRYPTOGRAM` (¬started ∧ eci vorhanden) / `NOT_REQUESTED` (sonst, nur Karten). Der Connector schreibt keine «Authenticated/Status/Liability-Shift»-Labels — Liability Shift wird nicht ausgewiesen. *Korrektur 2026-09-04 (SPEC-ITERATION-2 §3.6):* der zweite Eimer hiess `FAILED_OR_ABANDONED`, deutsch «Fehlgeschlagen / abgebrochen». Am zweiten Händler-Space liegen darin **2'439 Attempts mit `attempt_state = SUCCESSFUL` (16.8 %)** — sie wurden autorisiert, obwohl kein CAVV-Label geschrieben wurde. Der Name behauptete also einen Ausgang, den die Daten nicht hergeben; er beschreibt seither nur noch die Messung. Ob es Attempts-Flow, Frictionless ohne CAVV-Label oder Autorisierung nach Soft Decline ist, lässt sich **nicht** entscheiden — die EMVCo-Felder kommen im Analytics-`labels`-Array nicht an (dieselbe Discovery). |
 | `amount` | `CASE WHEN ca.state = 'SUCCESSFUL' THEN t.completedamount END` (Q6: bei SUCCESSFUL identisch mit `authorizationamount`, bei FAILED ist `completedamount` 0 und `authorizationamount` gefüllt) |
 | `amount_failed` | `CASE WHEN ca.state = 'FAILED' THEN t.authorizationamount END` — Ø abgelehnter Betrag (Q6 zeigt: am POS 24.04 vs. 20.98 erfolgreich) |
 | `tip_amount` | `CASE WHEN ca.state = 'SUCCESSFUL' THEN tip.tip_amount END` — Trinkgeld je Transaktion aus dem wiederverwendeten `tipCte` (`LEFT JOIN tip ON tip.transaction_id = t.id`). `lineitem` wird **nie** direkt gejoint (eine Transaktion hat mehrere Line Items); `tipCte` aggregiert pro Transaktion vor. Der `CASE` ist zwingend: `att` hat die Körnigkeit des Attempts, ohne ihn zählte die Summe das Trinkgeld einer wiederholten Transaktion einmal je Versuch. `tipCte` braucht ein CTE `tx`; es entsteht hier aus den Attempts des Zeitraums (`chargeattempt` + `charge`), **nicht** aus `txCte` — das filtert auf `t.completedon` und `t.state` und wäre ein anderer Zeitschnitt |
@@ -167,7 +167,7 @@ Nachkommastelle, Schweizer Zahlformat (`formatZahlCH`, `CH_TAUSENDER`).
 
 | # | KPI | Formel |
 |---|---|---|
-| E1 | **3DS-Akzeptanz (Kreditkarte)** | AUTHENTICATED / (AUTHENTICATED + FAILED_OR_ABANDONED) — Referenzmonat 281/310 = 90.6 %; zusätzlich «3DS angefordert»-Anteil an allen Karten-Attempts (73 %) und Wallet-Kryptogramm-Anteil. Kein Liability-Shift-Label vorhanden |
+| E1 | **3DS-Akzeptanz (Kreditkarte)** | AUTHENTICATED / (AUTHENTICATED + STARTED_NO_CAVV − davon erfolgreiche) — Referenzmonat 281/310 = 90.6 %; zusätzlich «3DS angefordert»-Anteil an allen Karten-Attempts (73 %, Nenner **mit** dem vollen Eimer) und Wallet-Kryptogramm-Anteil. Kein Liability-Shift-Label vorhanden. *Korrektur 2026-09-04 (SPEC-ITERATION-2 §3.6):* der Nenner war `AUTHENTICATED + FAILED_OR_ABANDONED`; seit v5.12.1 verlassen die trotzdem autorisierten Versuche des Eimers den Ablehn-Nenner — ein autorisierter Versuch gehört nicht in den Nenner einer Kennzahl namens «3DS-Akzeptanz». **Entscheid des Auftraggebers, keine Herleitung aus den Daten.** Am zweiten Händler-Space 66'785 / 78'890 = **84.7 %** statt 82.1 %. Ihre absolute Zahl steht als eigene Zeile im Block, sie verschwindet nicht bloss im Nenner. |
 | E2 | **Success Rate nach 3DS-Status** | K1 gruppiert nach `tds_status` — zeigt, ob 3DS-Failures die Conversion drücken |
 | E3 | **Transaktions-Conversion** | `tx_erfolgreich / tx_mit_attempt` (Block CONV) — der Wert, den der Shop-Betreiber «Conversion» nennt; neben K1 ausgewiesen, mit Erklärung des Unterschieds |
 | E4 | **Retry-Rate** | `anzahl_attempts / tx_mit_attempt` pro Brand (Block `CONV`, nicht die entfallene DIM-Spalte `anzahl_transaktionen`) — > 1.3 deutet auf Reibung im Checkout |
@@ -347,16 +347,25 @@ auf `UNKNOWN`. Im Einzelnen:
    Praktische Folge: **der Report ist kein Umsatz-Abstimmungswerkzeug** — dafür `brand`
    oder `settlement`.
 4. K5 + K6: Summe der Buckets = 100 % der erfolgreichen Karten-Attempts.
-5. E1: Nenner = `AUTHENTICATED + FAILED_OR_ABANDONED`, wie in §4.3 definiert; kein Attempt
-   zählt doppelt (jeder Karten-Attempt bekommt genau einen der vier `tds_status`-Werte, die
-   Eimer summieren restlos auf die Karten-Attempts).
+5. E1: Nenner wie in §4.3 definiert; kein Attempt zählt doppelt (jeder Karten-Attempt
+   bekommt genau einen der vier `tds_status`-Werte, die Eimer summieren restlos auf die
+   Karten-Attempts — das gilt nach der Umbenennung von 2026-09-04 unverändert und ist der
+   Grund, warum es bei **vier** Eimern bleibt).
    *Korrektur 2026-09-01:* hier stand „Nenner = alle Karten-Attempts mit 3DS-Status ≠
-   `NOT_REQUESTED`". Das ist `AUTHENTICATED + FAILED_OR_ABANDONED + WALLET_CRYPTOGRAM` und
+   `NOT_REQUESTED`". Das ist `AUTHENTICATED + STARTED_NO_CAVV + WALLET_CRYPTOGRAM` und
    widerspricht §4.3 — am Referenzlauf gemessen 281/423 = 66.4 % statt 281/310 = 90.6 %.
-   Die dritte Grösse, `(AUTHENTICATED + FAILED_OR_ABANDONED) / Karten-Attempts`, ist der
+   Die dritte Grösse, `(AUTHENTICATED + STARTED_NO_CAVV) / Karten-Attempts`, ist der
    **Angefordert-Anteil**, den §4.3 gesondert führt; §8.5 hatte die beiden Nenner
    vermischt. Der Code rechnet nach §4.3, die Spec ist daran angeglichen — es war eine
    Inkonsistenz in der Spec, keine offene Prüfung.
+   *Korrektur 2026-09-04:* der Eimer hiess damals noch `FAILED_OR_ABANDONED` (oben im
+   Wortlaut angeglichen, damit die Namen nicht auseinanderlaufen), und der E1-Nenner zieht
+   seither dessen erfolgreiche Attempts ab. **Die Prüfung selbst ist dadurch schärfer
+   geworden, nicht schwächer:** dass kein Attempt doppelt zählt, war schon vorher
+   festgenagelt; neu dazu kommt, dass **kein erfolgreicher Attempt in einem Eimer stehen
+   darf, dessen Name ein Scheitern behauptet** — genau daran ist die alte Bezeichnung
+   gescheitert. Der Test ist über diese Absicht formuliert, nicht über den heutigen
+   Schlüssel.
 6. Referenzlauf mit echten Daten unter `dashboard/discovery-results/` (gitignored)
    dokumentieren: Space, Zeitraum, erwartete Werte.
 
