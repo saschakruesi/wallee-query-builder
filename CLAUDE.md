@@ -29,7 +29,7 @@ Bildschirm und im PDF.
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.12.1).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse ~1.41 MB. Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.13.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.48 MB** (1'551'261 Bytes, gemessen 2026-09-06 an v5.13.0; die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, `/failure-reasons` (öffentliche Doku, **keine** API-Route), **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -101,10 +101,11 @@ Seit v4 enthält die HTML-Datei mehrere `<script>`-Blöcke: den eingebetteten XL
 (`<script id="vendor-xlsx">`, nur für den XLSX-Export), seit v5.8 zusätzlich den eingebetteten
 PDF-Vendor (`<script id="vendor-jspdf">`, jsPDF 2.5.2 + jspdf-autotable 3.8.4, UMD, nur für den
 Settlement-Report-PDF-Export) und den App-Code (`<script id="app-logic">`) — **drei** Blöcke
-insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch **~1.41 MB** gross
-(gemessen 2026-09-04 an v5.12.0 — die Angabe stand über mehrere Versionen auf „~1.06 MB",
-einem Wert aus v5.8, und war schon vor v5.12 überholt; seit v5.12 kommen die ~107 KB des
-eingebetteten Ablehngrund-Katalogs dazu, siehe „Reporting-Report"). Der Vendor
+insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch **~1.48 MB** gross
+(1'551'261 Bytes, gemessen 2026-09-06 an v5.13.0 — davor stand hier „~1.41 MB" aus v5.12.0
+und lange „~1.06 MB" aus v5.8; **die Zahl veraltet mit jeder Version, deshalb steht das
+Messdatum dabei und beim Bump wird nachgemessen statt geschätzt**. Seit v5.12 kommen die
+~107 KB des eingebetteten Ablehngrund-Katalogs dazu, siehe „Reporting-Report"). Der Vendor
 `vendor-xlsx` ist seit v5.1 **`xlsx-js-style` 1.2.0** (~425 KB minified, MIT-Fork von SheetJS
 0.18.5) statt der reinen SheetJS Community Edition: nur dieser Fork kann beim Schreiben
 **Zellstile** (Fill/Font/Border) setzen, was der XLSX-Export für die wallee-Optik braucht. Die
@@ -178,6 +179,12 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
    kein Werkzeug zur Umsatz-Abstimmung** — dafür `brand` oder `settlement`.
    Der Modus filtert zusätzlich fest auf **`ca.environment = 'PRODUCTION'`**
    (`ATTEMPT_ENVIRONMENT`): Testtransaktionen verfälschen jede Quote.
+   **Seit v5.13 setzt derselbe Modus eine zweite, zeilenweise Abfrage ab**
+   (`buildReportingTdsQuery`, eigener `queryToken`) und zeigt daraus die Seite
+   **«3DS-Failures»** — eine Zeile je gescheitertem 3DS-Versuch, fest auf E-Commerce.
+   Zwei Abfragen statt einer, damit das Aggregat PII-frei und weitergabefähig bleibt;
+   Details im eigenen Abschnitt unten. Ein **siebter Modus ist das nicht**: es gibt keinen
+   Knopf dafür, `reporting-tds` existiert nur als Verlaufs-Modus.
 
 Sichtbarkeit der Panels steuert `setMode()` über die CSS-Klasse `.cond-section.active`
 bzw. `.hidden`. Terminal-Panel aktiv in `terminal`/`export`/`card` (seit v5.8 **nicht** mehr
@@ -186,7 +193,11 @@ Settlement-Panel (`settlementSection`, Account/Super-User/Detail) nur `settlemen
 Report-Panel (Terminal-Report) nur `terminal`, Settlement-Report-Panel
 (`settlementReportSection`) nur `settlement`, Reporting-Panel (`reportingSection`, Kanal/
 Händler-Land/Terminal-Aufschlüsselung) und Reporting-Report-Panel
-(`reportingReportSection`) nur `reporting`. Das Space-Panel (`spaceSection`) wird im
+(`reportingReportSection`) nur `reporting`. Das 3DS-Failure-Panel (`reportingTdsSection`,
+seit v5.13) ist das **einzige, das nicht allein am Modus hängt**: es steht nur im Modus
+`reporting` **und** nur, wenn es etwas zu zeigen gibt — ein 3DS-Modell **oder** eine
+Statuszeile (ohne die zweite Bedingung wäre eine Fehlermeldung des Imports unsichtbar,
+siehe „Die Seite «3DS-Failures»" unten). Das Space-Panel (`spaceSection`) wird im
 Modus `settlement` zusätzlich per `.hidden` ausgeblendet — der Modus ist account-, nicht
 space-basiert, eine Space-Auswahl wäre dort irreführend; in `reporting` bleibt es sichtbar
 (der Modus filtert nach Space). Die Modus-Whitelist in `loadState()` ist
@@ -1032,7 +1043,7 @@ Stunden, Terminals, Länder, Conversion.
 - **Bildschirm:** Kanal-Abschnitte unter `<h2 class="report-kanal">`, Kacheln, Tabellen
   (ab `REPORTING_TABELLE_OFFEN = 20` Zeilen in `<details>` eingeklappt — die Schwelle liegt
   bewusst unter den 24 Stunden), und für `typ: 'balken'` ein **Inline-SVG** über der Tabelle
-  (`svgBalken`, kein Chart-Vendor — die Datei ist schon ~1.41 MB, und mit dem eingebetteten
+  (`svgBalken`, kein Chart-Vendor — die Datei ist schon ~1.48 MB, und mit dem eingebetteten
   Ablehngrund-Katalog aus v5.12 ist das Argument stärker geworden, nicht schwächer). Farben
   ausschliesslich
   über die Whitelist `SVG_BALKEN_FARBEN` (genau die zwei Farben, die
@@ -1084,13 +1095,196 @@ Stunden, Terminals, Länder, Conversion.
   leer, während der Settlement-Modus den Override behält).
 - **Abfrage-Verlauf:** wie bei Terminal- und Settlement-Report zeigt die Verlaufszeile im
   Modus `reporting` nur den Roh-CSV-Download; Excel und PDF laufen über das Report-Panel.
-  Die Unterdrückung läuft über `MODI_MIT_REPORT_PANEL = ['terminal','settlement','reporting']`
+  Die Unterdrückung läuft über `MODI_MIT_REPORT_PANEL = ['terminal','settlement','reporting','reporting-tds']`
   statt einer wachsenden Oder-Kette. `MODUS_LABELS.reporting = 'Reporting'`.
   `historyEintragBauen` hat seit v5.11 einen eigenen `filterSummary`-Zweig für den Modus:
   er nennt die **Kanalwahl** (`REPORTING_KANAL_WAHL_LABEL`, `'BOTH'` → „alle Kanäle" — der
   Kanal ist hier der eigentliche Filter) und die Terminal-Auswahl **nur dann**, wenn
   `reportingTerminalPanelSichtbar` sie gelten lässt, also mit derselben Bedingung wie
   `generate()`. Sonst versprächen die Zeilen eine Einschränkung, die die Query nicht trägt.
+
+#### Die Seite «3DS-Failures» (v5.13) — die zweite, zeilenweise Abfrage
+
+Fachliche Vorgabe: `dashboard/SPEC-ITERATION-2.md` §3. Auslöser ist Referenzfall B: dort
+ist *3-D Secure Failure* mit **64.8 % aller Fehlschläge** der grösste Ablehngrund, und der
+Händler konnte bis v5.12 zwar den Grund sehen, aber nicht die betroffenen Versuche. Gebaut
+wie alles andere in diesem Modus: reine, DOM-freie Funktionen plus eine dünne UI-Schicht,
+**eine** Blockquelle für vier Ausgaben.
+
+**Zwei Abfragen, und das ist der Kern des Entwurfs.** Die Seite hängt am
+Modus `reporting`, hat aber eine **eigene Query mit eigenem `queryToken`**
+(`buildReportingTdsQuery({ spaceIds, start, end })`, eine Zeile je Attempt statt eines
+Aggregats). Sie in die bestehende `UNION ALL`-Query zu ziehen wäre möglich gewesen und
+wäre der teurere Weg:
+
+- **Das Aggregat bleibt PII-frei und damit weitergabefähig.** Es trägt ausschliesslich
+  Zählwerte (SPEC 2.4) — genau deshalb ist sein CSV-Import im Kopieren-Modus überhaupt
+  vertretbar. Die Zeilenliste trägt **Bestellnummern und Transaktions-IDs**. In einer
+  Datei könnte der Händler den Reporting-Report nicht mehr an seinen Shop-Betreiber oder
+  Acquirer weiterreichen, ohne die Transaktionsliste mitzugeben.
+- **Die beiden Modelle sind unabhängig.** Jedes existiert ohne das andere: bei Kanal POS
+  wird die zweite Abfrage gar nicht erst abgesetzt (`reportingTdsQueryNoetig(kanal)` —
+  eine unbekannte Kanalwahl verhält sich wie «Beide», ohne Kanalfilter ist E-Commerce
+  enthalten), beim Import kann eine der beiden Dateien fehlen, und ein Fehlschlag der
+  zweiten Abfrage lässt den Aggregat-Report unberührt stehen.
+- Die Query filtert **fest auf E-Commerce** und kennt deshalb weder `channels` noch
+  Terminals. Am POS gibt es die Seite nicht — kein leeres Panel, keine Meldung „nichts
+  gescheitert", **und kein Abruf, der bei wallee als Download zählt**.
+
+**Definition «3DS-Failure» ist eine Oder-Verknüpfung** (§3.2), und die ist nicht kosmetisch:
+gescheitert **und** (Ablehngrund aus `TDS_FAILURE_REASONS` **oder** 3DS gestartet, aber ohne
+CAVV). Ein „3-D Secure Failure", dessen Connector kein Start-Label schrieb, gehört ebenso
+dazu wie ein abgebrochener 3DS-Prozess, der unter einem anderen Grund verbucht wurde. Ein
+einzelner Zweig verlöre je nach Connector die eine oder die andere Hälfte.
+`TDS_FAILURE_REASONS` ist bewusst aus `TDS_GRUND_FAILURE`/`TDS_GRUND_TIMEOUT` gebaut — die
+Query braucht die beiden zusammen (`IN`-Liste), die Grund-Achse unterscheidet sie; zwei
+Literale liefen bei der nächsten Änderung stumm auseinander.
+Der zweite Zweig heisst im Modell **`STARTED_NO_CAVV`** und nicht mehr
+`FAILED_OR_ABANDONED`: an Produktivdaten wurde gemessen, dass ein Sechstel dieses Eimers
+trotzdem autorisiert wurde — der alte Name behauptete einen Ausgang, den die Daten nicht
+hergeben. Die Bedingung ist unverändert richtig, nur der Name war es nicht.
+
+**Fünf neue Descriptor-Konstanten, jede mit gemessenem Map-Key** — derselbe Fallstrick wie
+im Aggregat, nur schärfer: **drei der fünf weichen vom Default `shortTextContent` ab**, und
+ein falsch geratener Key wirft nicht, er liefert dauerhaft `NULL`.
+
+| Konstante | ID | Map-Key | gemessen in |
+|---|---|---|---|
+| `DESC_TDS_FINISHED` | `1568637885195` | **`dateTimeContent`** | Task 0 |
+| `DESC_TDS_VERSION` | `1620379912010` | **`staticValueContent`** | Discovery Q2, 2026-09-04 |
+| `DESC_CARD_ISSUER_NUMBER` (BIN) | `1458749261553` | **`integerContent`** | Discovery Q2 |
+| `DESC_ATTEMPT_RETRY` | `1634723431551` | `shortTextContent` | Discovery Q2 |
+| `DESC_CRYPTOGRAM_PRESENT` | `1634723429554` | `booleanContent` | Discovery Q2 |
+
+`DESC_TDS_FINISHED` steht hier, obwohl er aus Task 0 stammt: er war nie als Konstante
+angelegt, weil das Aggregat ihn nicht braucht — **ohne ihn gäbe es keine Dauer-Achse.** Die
+BIN benennt den **Herausgeber**, nicht die Karte, und fällt deshalb nicht unter die
+PII-Sperrliste; diese bleibt unverändert strikt (Card Holder Name und Masked Card Number
+kommen in keiner der beiden Queries vor, auch nicht in einem `GROUP BY`).
+
+**Die Dauer-Achse ist der Ersatz für die Challenge-Status-Achse, nicht eine Zutat.** §3.6
+und §3.7 planten «Challenge-Status-Grund» und «ACS» als Kernachsen. Discovery Q2 hat
+gemessen, dass **keines der dreizehn EMVCo-3DS-Labels im Analytics-`labels`-Array
+ankommt** (siehe „Charge-Attempt-Befunde am zweiten Händler-Space", 2026-09-04) — der
+Händler sieht sie im Backend, sie entstehen also im 3DS-Server, landen aber nicht in der
+Analytics-Tabelle. Sie „vorsorglich" mitzuführen wäre genau der Fehler, den dieser Code
+sonst vermeidet: eine Spalte, die dauerhaft `NULL` liefert, sieht aus wie eine Messung. Ein
+Test hält fest, dass sie nicht zurückkehren. Geblieben ist die Zeitspanne zwischen
+`Process Started` und `Process Finished`, in vier Eimern plus `UNBEKANNT`
+(`TDS_DAUER_GRENZEN_SEK = [10, 60, 300]`; die Grenzen gehören zum **oberen** Eimer, und die
+Beschriftung sagt das mit `<` und `>` ausdrücklich): sie beantwortet dieselbe Frage — bricht der Kunde sofort ab oder scheitert
+er nach einer langen Challenge — nur aus dem, was tatsächlich da ist.
+
+**Was aus demselben Messergebnis nicht gebaut ist — und zwar nicht „noch nicht":** die
+Achse «Challenge-Status-Grund», die ACS-Achse, die Flow-Klassifikation `tds_flow` (§3.6)
+und die statischen EMVCo-Reason-Code-Tabellen (§3.7). Alle vier hängen an denselben
+dreizehn Labels, und die kommen im Analytics-Export **nicht** an (Discovery Q2,
+2026-09-04). Eine Tabelle ohne Werte, auf die sie zeigen könnte, ist keine halbe
+Kennzahl, sondern eine leere Behauptung.
+Für `tds_flow` sieht §3.6 einen **Rückfall ohne Labels** vor (Started ∧ CAVV ∧ Dauer < 3 s
+= frictionless). Genau der ist bewusst **nicht** umgesetzt: aus einer Drei-Sekunden-Schwelle
+Namen wie `FRICTIONLESS` und `CHALLENGE_OK` zu bilden hiesse, eine Annahme als Messung zu
+beschriften — und niemand liest einer Zeile «Frictionless» noch an, dass sie aus einem
+Zeitvergleich stammt. Die **Dauer-Eimer zeigen dieselbe Grundlage unverfälscht**: sie
+sagen, wie lange es gedauert hat, und überlassen die Deutung dem Leser. Was aus §3.6
+sehr wohl umgesetzt ist, ist die **Konsistenz-Korrektur** — der Eimer heisst seit v5.12.1
+`STARTED_NO_CAVV`; siehe „Bewusste Abweichungen von `dashboard/SPEC-ITERATION-2.md`",
+Punkt 4.
+Wer die EMVCo-Felder braucht, kommt nur über die API je Attempt an sie heran (§4.4,
+weiterhin offen). **Ändert ein Connector das**, ist `dashboard/sql/00_label_discovery.sql`
+erneut zu fahren — die Labels sind connectorabhängig, und dieser Befund stammt aus **einem**
+Space bei **einem** Acquirer: „bisher gemessen", nicht „gibt es nicht".
+
+**Wiederholer auf zwei Ebenen**, und die Unterscheidung ist der eigentliche Erkenntniswert:
+die **Transaktion** (`attempts_der_transaktion`) beantwortet „hat der Kunde es nochmal
+versucht", die **Bestellung** (`versuche_der_bestellung`,
+`tds_fehlschlaege_der_bestellung`, `bestellung_am_ende_bezahlt`) beantwortet „hat er es am
+Ende geschafft" — ein Kunde, der es nach drei Fehlschlägen mit einer neuen Transaktion
+versucht, ist auf der Transaktionsebene unsichtbar. Beides zählt über **alle** Attempts,
+auch die erfolgreichen: der `FAILED`-Filter steht deshalb in der äusseren `WHERE`-Klausel,
+**hinter** den Fensterfunktionen. Stünde er im `att`-CTE, wäre „am Ende doch bezahlt" still
+falsch beantwortet — ein Test prüft das strukturell.
+«Innerhalb von 24 h» (§3.8) ist der Abstand zum **ersten** Versuch derselben Bestellung,
+ganzzahlig durch 86 400 geteilt, **kein** rollendes Fenster: `RANGE BETWEEN INTERVAL` können
+die Athena-Engines je nach Version nicht, und ein Kalendertag-Bucket zerschnitte jede
+Bestellung über Mitternacht. Der Preis steht im Code: zwei Versuche kurz vor und kurz nach
+einer Blockgrenze zählen als zwei Bestellungen — das **unterschätzt** die Wiederholer, es
+erfindet keine. Eine leere Bestellnummer wird nie gruppiert (Partitionsschlüssel
+`COALESCE(merchant_reference, CONCAT('#attempt-', <attempt_id>))`; `PARTITION BY` fasste
+`NULL`-Werte sonst zu einem Riesen-Eimer zusammen) und erscheint als `null` — „nicht
+gruppierbar" ist keine 1.
+
+**Dashboard-Link:** `tdsDashboardUrl(spaceId, transactionId)` baut
+`TDS_DASHBOARD_BASIS + <space>/payment/transaction/view/<tx>`; die beiden Bausteine kommen
+roh aus dem Parser (`space_id`, `attempt_id`, `transaction_id` und `merchant_reference`
+bleiben **rohe Strings**, sie laufen nicht auf `'UNKNOWN'` — ein `UNKNOWN` in einer Adresse
+ergäbe einen Link, der aussieht wie einer und ins Leere führt). Zwei Nähte: die
+Ziffernprüfung im Modell und `reportingLinkZiel()` in der Ausgabe, die nur eine Adresse
+unterhalb von `TDS_DASHBOARD_BASIS` zu einem `<a>` macht. Die Adresse selbst wird **nicht
+in SQL erzeugt** — das hiesse, denselben String bis zu 20'000-mal zu übertragen.
+
+**Drei Deckel, drei verschiedene Gründe** — bewusst drei Konstanten statt einer:
+
+- `REPORTING_TDS_LIMIT = 20000` im `LIMIT` der Query. Wird er erreicht, steht
+  `abgeschnitten` im Modell, und **alle Zählwerte werden zu Untergrenzen**: die Kacheln
+  laufen über das Format `mindestens`, und die Prosa der Hinweise ebenso (seit der
+  Abschlussrunde — vorher wies die Kachel „mindestens 20’000" aus, während der Satz
+  darunter „die 20’000 Fehlschläge" schrieb). Die **Prozentwerte sind dann keine
+  Untergrenzen, sondern Schätzungen**, und „Anteil an allen gescheiterten Versuchen" ist
+  sogar systematisch **zu klein** — gekappter Zähler über vollem Aggregat-Nenner. Beides
+  steht in der Ausgabe, nicht nur hier.
+- `REPORTING_TDS_SCREEN_ZEILEN = 500` für den Bildschirm (Parse- und Renderzeit),
+  `REPORTING_TDS_PDF_ZEILEN = 500` für das PDF (Seitenzahl). Gleiche Zahl, verschiedene
+  Gründe — sie werden getrennt nachjustiert. **CSV und Excel bleiben vollständig**; der
+  Deckel gilt der Anzeige, nie den Daten.
+
+**Excel ist eine eigene Mappe** mit dem einen Blatt `3DS-Failures`, nicht ein Blatt in der
+Reporting-Mappe. Der Grund ist derselbe wie der für die zweite Query: das Aggregat soll
+weitergabefähig bleiben, die Zeilenliste trägt Bestellnummern. Dazu ein praktischer: ein
+gemeinsamer Knopf müsste entscheiden, was er tut, wenn nur eines der beiden Modelle
+existiert — zwei Knöpfe müssen das nicht. **Zwei Tests halten das in beide Richtungen
+fest** (die 3DS-Mappe hat genau ein Blatt, und die Reporting-Mappe trägt es nicht mit);
+einzeln wäre jeder von beiden auch dann grün, wenn das Blatt zusätzlich in der
+Aggregat-Mappe landete. Die Link-Spalte heisst in CSV und Excel `dashboard_url` (§3.4) und
+trägt die Adresse als Wert — im PDF fehlt sie ganz (zu lang), dort ist die Transaktions-ID
+der Anker.
+
+**UI und Ingest.** Panel `reportingTdsSection` (Statuszeile, Export-Leiste, Ausgabe)
+erscheint, sobald es etwas zu zeigen gibt — **Modell *oder* Statuszeile**. Die zweite
+Bedingung ist kein Komfort: ohne sie wäre eine Fehlermeldung des Imports unsichtbar (kein
+Modell, also kein Panel, in dem sie stünde). Der Knopf **„3DS-Liste importieren"** steht
+deshalb in der Import-Leiste des Aggregat-Panels — zwei Abfragen, zwei Dateien, eine
+Import-Leiste. **Achtung:** anders als beim Aggregat gibt es im Kopieren-Modus **keinen Weg
+zur 3DS-Query selbst** — `sqlOutput` trägt immer nur die Aggregat-Query (es wird von Submit
+*und* Kopieren gelesen, ein zweites SQL darin bräche den Submit). Der Knopf lädt eine
+anderswo erzeugte Datei; die Abfrage setzt die App im API-Modus selbst ab.
+`reportingTdsZuruecksetzen()` räumt Modell, Zeilen, Zeitraum und Statuszeile **vor** jedem
+neuen Lauf weg — beim Submit *und* beim Token-Abruf; sonst stünde die Liste des Vorlaufs
+unter einem frisch geladenen Aggregat.
+`abfrageFilter()` ist die **eine** Quelle für Zeitraum und Spaces und wird je Lauf **genau
+einmal** gelesen: der Nutzer kann den Picker während eines laufenden Abrufs umstellen, und
+ohne diese Festschreibung rechnete die 3DS-Seite ihre Anteile gegen die Grundgesamtheit
+eines anderen Zeitraums. Aus demselben Grund reicht `filterGleich()` das Aggregat nur dann
+als Nenner durch, wenn es denselben Schnitt sieht — sonst verschwinden die beiden
+Anteils-Kacheln, statt einen plausibel aussehenden Prozentwert über eine Liste zu setzen,
+zu der er nicht gehört.
+
+**`reporting-tds` ist kein Bedienmodus**, sondern nur ein **Verlaufs**-Modus: es gibt keinen
+Knopf dafür, und die Modus-Whitelist in `loadState()` bleibt unangetastet (ein
+`mode: 'reporting-tds'` im State fiele wie jeder unbekannte Wert auf `brand` zurück). Damit
+die Zeile trotzdem im Verlauf des Reporting-Modus erscheint, gibt es
+`HISTORY_NEBENMODI = { reporting: ['reporting-tds'] }` — die Zuordnung gilt **nur in diese
+Richtung**. Die Zeile bietet wie die anderen Report-Modi nur den Roh-CSV-Download, und ihr
+`filterSummary` sagt „3DS-Failures · E-Commerce": er nennt weder Kanalwahl noch Terminals,
+denn die Query kennt beides nicht. Der **Account-Override bleibt auf den Settlement-Modus
+beschränkt** — auch hier, aus demselben Grund wie überall (siehe oben); getestet, nicht
+angenommen.
+
+**Was die Seite nicht ist:** ein Werkzeug zur Umsatz-Abstimmung (das war der
+Reporting-Report schon nicht) und keine Chargeback-Sicht — dafür gibt es im Analytics-Schema
+keine Tabelle. Und sie zeigt nur, woran ein **Zahlungsversuch** gescheitert ist: eine
+Bestellung, die es nie bis zu einem Charge Attempt geschafft hat, sieht sie nicht (siehe
+„Offene Punkte", §5.3).
 
 #### Bewusste Abweichungen von `dashboard/SPEC.md`
 
@@ -1132,13 +1326,14 @@ irgendwann „nachgetragen" wird: das Label `1761481788939` trägt unter
 
 #### Bewusste Abweichungen von `dashboard/SPEC-ITERATION-2.md`
 
-Wie bei `dashboard/SPEC.md`: jede offengelegt, keine übersehen. Es sind vier.
+Wie bei `dashboard/SPEC.md`: jede offengelegt, keine übersehen. Es sind acht — die ersten
+vier aus v5.12, die letzten vier aus der 3DS-Seite in v5.13.
 
 1. **Die Katalog-Beschreibungen werden nicht vollständig eingebettet** (§1.3 Punkt 2 wünscht
    die «Bedeutung» aus dem Katalog für alle Gründe). Eingebettet sind Name und Kategorie
    aller 2'254 Einträge (~107 KB) plus **~30 kuratierte** Beschreibungen — genau die IDs aus
    §1.2, also die, die in den beiden Referenz-Reports tatsächlich vorkamen. Alle 2'254
-   Beschreibungen wären rund **450 KB** zusätzlich, in einer Datei, die schon 1.41 MB wiegt
+   Beschreibungen wären rund **450 KB** zusätzlich, in einer Datei, die schon 1.48 MB wiegt
    und per Doppelklick aus dem Dateisystem geladen wird. §1.3 Punkt 1 rechnet selbst nur mit
    Name + Kategorie und beziffert genau das als den bewusst bezahlten Preis. Für alles
    Übrige gibt es die Proxy-Route, die die Beschreibung je ID mitliefert; im Kopieren-Modus
@@ -1167,6 +1362,38 @@ Wie bei `dashboard/SPEC.md`: jede offengelegt, keine übersehen. Es sind vier.
    §3.6 ist damit erfüllt: der Erfolg läuft nicht mehr stumm in die Quote. Nebeneffekt, der
    für dieselbe Lösung spricht: die vier Eimer summieren weiterhin restlos auf die
    Karten-Attempts — ein fünfter wäre eine Teilmenge des zweiten und bräche das.
+5. **Ein gestapelter Abschnitt statt eines Reiters** (§3.1 spricht von einem «Reiter»).
+   Dieselbe Entscheidung und dieselbe Begründung wie Punkt 2 der SPEC-Abweichungen
+   darüber: ein Reiter zeigt immer nur eine Seite, bricht Ausdruck und Browser-Suche und
+   hätte in XLSX und PDF ohnehin keine Entsprechung — die sind linear. Der Verweis steht
+   auch im Markup-Kommentar, damit er nicht wie ein Versehen aussieht.
+6. **Die Zeilentabelle hat kein Filter-Feld** (§3.5 Punkt 3 wünscht eines über Grund,
+   Brand, Land, Referenz). Es ist **nicht gebaut** — eine Auslassung, keine Umsetzung auf
+   anderem Weg, und sie steht hier, damit sie nicht als „übersehen" durchgeht. Der Rest der
+   Seite kommt ohne es aus: die Aufschlüsselungen darüber beantworten „woran scheitert es",
+   und wer einzelne Zeilen suchen will, nimmt Excel oder das Roh-CSV über der
+   **vollständigen** Liste. Ein Feld über der Bildschirmtabelle sähe zudem aus, als
+   durchsuchte es die Abfrage, während es nur die gedeckelten 500 Zeilen sähe. Nachrüstbar
+   bleibt es jederzeit — es ist reine Bildschirm-Interaktion über einer Zeilenliste, die
+   das Modell ohnehin vollständig und vorsortiert liefert.
+7. **«mindestens n» erreicht nur zwei der vier Ausgaben.** Bildschirm und PDF schreiben
+   `mindestens 20’000`, CSV und Excel die nackte Zahl `20000` — §3.5 schreibt „die Ausgabe
+   schreibt mindestens n" ohne Einschränkung. Grund: in einer Tabellenkalkulation wird über
+   dieser Spalte gerechnet und sortiert, ein String `"mindestens 20’000"` wäre dort der
+   teurere Verlust. Dass die Zahl eine Untergrenze ist, fährt trotzdem in **allen vier**
+   Ausgaben mit — der Hinweis des Blocks steht in jeder von ihnen, und seit der
+   Abschlussrunde auch in der Prosa daneben (vorher wies die Kachel „mindestens" aus und
+   der Satz darunter dieselbe Zahl als exakt).
+8. **Die Kachel «Bestellungen mit ≥ 2 3DS-Fehlschlägen» kommt ohne den zugehörigen
+   Betrag** (§3.8 nennt „der Betrag, der nicht verloren ist" als Ziel). Er ist aus diesen
+   Zeilen **ohne Doppelzählung nicht bildbar**: jeder gescheiterte Versuch trägt den vollen
+   Betrag der Bestellung erneut, und der Bestellwert selbst steht in keiner Spalte. Eine
+   Summe über die Zeilen zählte denselben Warenkorb je Wiederholung noch einmal — eine
+   Zahl, die grösser wird, je öfter jemand scheitert, und die genau dort stünde, wo der
+   Leser „gerettetes Volumen" liest. Der Hinweis der Kachel sagt das seit der
+   Abschlussrunde ausdrücklich; vorher stand es nur im Modell-Kommentar. Bildbar wäre er
+   erst mit dem Bestellwert als eigener Spalte — dazu müsste die Query wissen, welcher
+   Versuch einer Bestellung ihren Wert trägt.
 
 #### Grenzen (dem Kunden so kommunizieren)
 
@@ -1203,7 +1430,10 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   Filter, Status); `historyEinfuegen(list, eintrag)` fügt vorne ein und entfernt Duplikate
   desselben Tokens (`slice(0, HISTORY_MAX)`); `historyFuerModus(list, mode)` filtert für die
   Tabellenanzeige — der Verlauf ist **pro Modus** gefiltert, jeder Modus sieht nur seine
-  eigenen Einträge.
+  eigenen Einträge. **Eine Ausnahme seit v5.13:** `HISTORY_NEBENMODI =
+  { reporting: ['reporting-tds'] }` blendet die Einträge der 3DS-Abfrage im Verlauf des
+  Reporting-Modus mit ein. Die Zuordnung gilt **nur in diese Richtung** — `reporting-tds`
+  ist kein Bedienmodus, es gibt keine Ansicht, in der es der eigene Modus wäre.
 - **Laden/Speichern** `historyLaden()`/`historySpeichern(list)` — Private-Mode-sicher wie die
   übrige Persistenz (try/catch, leeres Array als Fallback).
 - **Ergebnis-Abruf über den Token:** `holeErgebnisText(token)` → `GET /result/:token`, liefert
@@ -1873,6 +2103,16 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    Descriptor-IDs, PII-Sperrliste, GROUP-BY-Listen und typisierten UNION-Platzhaltern ·
    **Parser und Modell zusammen** in `reporting-model` · Export-Blöcke · Render, SVG-Balken,
    CSV/PDF-Blöcke, Verlaufszeile · State/Panels/`generate()`/Ingest · XLSX end-to-end),
+   `reporting-tds-queries`/`reporting-tds-model`/`reporting-tds-export`/
+   `reporting-tds-render`/`reporting-tds-ui`/`reporting-tds-xlsx` (die Seite «3DS-Failures»
+   seit v5.13, **sechs neue Dateien** — `reporting-tds-queries` deckt
+   Query **und Parser** ab: SQL inkl. der fünf neuen Descriptor-IDs und ihrer Map-Keys, der
+   Nachweis, dass die dreizehn EMVCo-IDs **nicht** zurückkehren, dass der `FAILED`-Filter
+   hinter den Fensterfunktionen steht und dass CAVV genau einmal im ganzen SQL vorkommt ·
+   Modell mit von Hand gerechneten Erwartungswerten (Dauer-/Betrags-Eimer, Wiederholer auf
+   beiden Ebenen, Sortierung samt numerischem Tie-Break) · Blockschicht, CSV und PDF ·
+   Bildschirm-Markup und -Deckel · Panel, Ingest, Verlauf und der ganze Lauf über ein
+   gefälschtes `fetch` · die Mappen-Entscheidung in beide Richtungen),
    `embedding`/`dom-ids` (Struktur-/ID-Wächter).
    **v5.12 hat keine neue Testdatei gebracht, sondern vier neue Nähte in bestehenden:**
    `embedding` prüft zusätzlich den Build-Schritt `tools/build-failure-reasons.mjs` (er
@@ -1903,6 +2143,13 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    bildet sie seit der `KARTEN_BRANDS`-Korrektur **beide Seiten** des Befunds ab, der die
    frühere Annahme widerlegt hat: eine lokale Debitmarke **mit** Issuer-Labels am POS und
    dieselbe Marke **ohne** Labels im E-Commerce.
+   Die 3DS-Tests laufen gegen `test/fixtures/reporting-tds-beispiel.csv` — acht Zeilen, jede
+   für einen fachlich interessanten Fall, alle Erwartungswerte von Hand gerechnet. **Hier
+   ist auch die Schreibweise erfunden, nicht gemessen**, und das ist der Unterschied zur
+   Aggregat-Fixture: die 3DS-Query ist nie im Portal gelaufen (siehe „Offene Punkte"). Vor
+   allem die beiden 3DS-Zeitstempel stammen aus einem `dateTimeContent`-Label, dessen Form
+   niemand gesehen hat; der Parser reicht einen unpassenden Wert deshalb **durch** und zählt
+   ihn zusätzlich als `unbrauchbareWerte`, statt ihn als leer auszugeben.
    **Einschränkung:** Der einfache Stub liefert für **jede** ID irgendein Element — eine
    verwaiste DOM-Referenz fällt so nicht auf. `test/dom-ids.test.js` gleicht deshalb die per
    `getElementById` angefragten IDs statisch gegen das Markup ab; nach UI-Änderungen bleibt
@@ -2045,23 +2292,46 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
   - Sollte wallee den **Failure-Reason-Dienst** je veröffentlichen, ersetzt er die statische
     `FAILURE_REASONS`-Tabelle (das Modell existiert in der API, nur der Dienst fehlt) —
     Nachfrage bei wallee wäre der Weg, erneutes Pfad-Raten nicht.
-- **Reporting-Modus, Iteration 2 (v5.12/v5.12.1) — was diese Versionen bewusst NICHT
+- **Reporting-Modus, Iteration 2 (v5.12/v5.12.1/v5.13) — was diese Versionen bewusst NICHT
   gebracht haben.**
   `dashboard/SPEC-ITERATION-2.md` beschreibt vier Vorhaben; umgesetzt sind **§1**
-  (Ablehngründe im Klartext samt Proxy-Route) und **§2** (Kuchendiagramme), dazu in
+  (Ablehngründe im Klartext samt Proxy-Route), **§2** (Kuchendiagramme), in
   v5.12.1 die **Konsistenzprüfung aus §3.6** (der 3DS-Eimer heisst nach der Messung statt
   nach einem Ausgang, die trotzdem autorisierten Versuche sind sichtbar und aus dem
-  Ablehn-Nenner). Offen bleibt:
-  - **§3 — die Seite «3DS-Failures»** (Transaktionsliste mit Export und Dashboard-Link,
-    eigene zeilenweise Query `buildReportingTdsQuery`, zweiter `queryToken`). Sie ist der
-    eigentliche Auftrag aus Referenzfall B: 3-D Secure Failure ist dort mit **64.8 % aller
-    Fehlschläge** der grösste Ablehngrund, und der Händler kann die betroffenen Versuche
-    heute weder sehen noch exportieren. v5.12 macht den Grund **sichtbar und benannt** — es
-    beantwortet aber nicht, *welche* Versuche es waren. **Auch die neue `tds_flow`-Achse
-    aus §3.6 selbst steht noch aus** (Frictionless / Challenge / Abgebrochen): v5.12.1 hat
-    nur die Konsistenzprüfung desselben Abschnitts erledigt — also die Beschriftung, die
-    falsch war, nicht die feinere Klassifikation, die den Händler eigentlich interessiert. Sie hängt an den
-    Dauer-Eimern, weil die EMVCo-Felder fehlen (siehe §4.3 unten).
+  Ablehn-Nenner) und in **v5.13 der §3 selbst**. Offen bleibt:
+  - ~~**§3 — die Seite «3DS-Failures»** … steht noch aus.~~ **Gebaut in v5.13.0
+    (2026-09-06)** — Beschreibung unter „Die Seite «3DS-Failures»" oben. Was die Seite
+    beantwortet und was v5.12 nur benannte: *welche* Versuche gescheitert sind. Was sie
+    **nicht** beantwortet und auch nicht mehr beantworten wird, solange kein Connector die
+    Labels schreibt: die `tds_flow`-Achse aus §3.6 (Frictionless / Challenge /
+    Abgebrochen), die Challenge-Status- und die ACS-Achse. Die Discovery hat gemessen,
+    dass die dreizehn EMVCo-Labels im Analytics-Export nicht ankommen; an ihrer Stelle
+    stehen die **Dauer-Eimer**, und der in §3.6 vorgesehene Drei-Sekunden-Rückfall ist
+    bewusst nicht gebaut (er beschriftete eine Annahme als Messung — siehe „Die Seite
+    «3DS-Failures»", Abschnitt zu den nicht gebauten Achsen).
+  - **Der Portal-Referenzlauf der 3DS-Query steht noch aus.** Sie ist **nie gegen echte
+    Daten gelaufen** — anders als die Aggregat-Query, die den Lauf vom 2026-09-01 hinter
+    sich hat. Getestet ist sie ausschliesslich gegen eine **synthetische** Fixture
+    (`test/fixtures/reporting-tds-beispiel.csv`, acht Zeilen von Hand gerechnet). Beim
+    ersten echten Lauf gezielt auf drei Dinge schauen:
+    (a) **`unbrauchbareWerte`** in der Statuszeile — steht dort eine Zahl, stimmt eine
+    Format-Annahme des Parsers nicht;
+    (b) **die Schreibweise der beiden 3DS-Zeitstempel** (`tds_started_on`,
+    `tds_finished_on`): sie kommen aus einem `dateTimeContent`-Label, nicht aus Athena,
+    und ihre genaue Form ist **nicht gemessen** — `REPORTING_TDS_MUSTER_ZEIT` ist
+    absichtlich grosszügig, aber geraten. Passt sie nicht, ist die **Dauer-Achse leer**,
+    also genau die Kernachse der Seite;
+    (c) **die Laufzeit**: das `att`-CTE wird zweimal referenziert (die Fensterfunktionen
+    und der äussere `SELECT`), und die Label-Extraktion läuft über **alle** Attempts des
+    Zeitraums, auch die erfolgreichen — ein bewusster Kostenentscheid (die Alternative
+    wäre ein zweiter Scan derselben Partitionen), aber einer, der noch nie gegen ein
+    echtes Volumen gehalten wurde.
+  - **Im Kopieren-Modus gibt es die 3DS-Query nicht.** `sqlOutput` trägt immer nur die
+    Aggregat-Query; die zweite Abfrage setzt die App im API-Modus selbst ab, und der
+    Import-Knopf lädt eine anderswo erzeugte Datei. Ein **eigenes SQL-Feld** für die
+    zweite Query wäre der saubere Weg — es ist die grosse Variante und bewusst
+    zurückgestellt, weil `sqlOutput.textContent` von Submit *und* Kopieren gelesen wird
+    und ein zweites SQL darin den Submit bräche.
   - ~~**§4.3 — Discovery Q2 für den zweiten Händler-Space** … steht noch aus.~~
     **Erledigt am 2026-09-04** (Ergebnis unter „Charge-Attempt-Befunde am zweiten
     Händler-Space" oben, Rohdaten in `dashboard/discovery-results/`). Der Ausgang ist der

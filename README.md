@@ -1,6 +1,6 @@
 # Wallee Analytics Query Builder
 
-**Aktuelle Version: v5.12.1**
+**Aktuelle Version: v5.13.0**
 
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies
@@ -14,7 +14,8 @@ Zwei Betriebsmodi:
   Proxy (siehe unten). Das Ergebnis landet im modus-eigenen **Abfrage-Verlauf** (CSV/Excel
   per Klick abrufbar) und, in den Modi Terminal-Report, Settlement-Report und Reporting,
   zusätzlich sofort als aufbereiteter Report (Gruppen-Auswertung, Settlement-Übersicht bzw.
-  Händler-Kennzahlen). Der Modus *Reporting* lässt sich als einziger auch im Kopieren-Modus
+  Händler-Kennzahlen; im Reporting-Modus dazu die Seite **3DS-Failures** aus einer zweiten
+  Abfrage). Der Modus *Reporting* lässt sich als einziger auch im Kopieren-Modus
   vollständig nutzen — sein Ergebnis enthält keine personenbezogenen Daten und kann per
   **„CSV importieren"** aus dem Portal geladen werden.
 
@@ -84,6 +85,7 @@ Gerät. Zugangsdaten für den API-Modus liegen ausschliesslich beim Proxy, nie i
 | **Kartensuche** | Transaktionen zu den letzten vier Kartenziffern (für Streitfälle) |
 | **Settlement-Report** | **account-basiert** (nicht space-basiert): was ist bereits ausbezahlt, was steht noch aus, was ist ganz ohne Settlement-Record — im API-Modus wird das Ergebnis der eigenen Query automatisch zum Settlement-Report (siehe unten) |
 | **Reporting** | Händler-Kennzahlen über **Zahlungsversuche** (Charge Attempts), getrennt nach POS und E-Commerce: Success Rate, Zahlungsmittel-Mix, Karten-Herkunft, Business/Privat, Debit/Kredit, Ø-Beträge, Ablehngründe **im Klartext** (Name, Kategorie, Bedeutung und Empfehlung aus dem wallee-Katalog), 3DS-Akzeptanz, Verlauf und Stosszeiten — als Report auf dem Bildschirm, in Excel, PDF und CSV, mit **Kuchendiagrammen** über den Verteilungen (siehe unten) |
+| ↳ **3DS-Failures** | zweite Ausgabe desselben Modus (seit v5.13): **eine Zeile je gescheitertem 3-D-Secure-Versuch** im E-Commerce — mit Bestellnummer, Betrag, Grund, Dauer bis zum Abbruch, Wiederholungen je Transaktion **und** je Bestellung, „am Ende doch bezahlt" und Direktlink ins wallee-Backend; eigene Excel-Mappe, PDF und CSV (siehe unten) |
 
 ## Abfrage-Verlauf
 
@@ -94,7 +96,9 @@ Filter, Zeitstempel), **nie** die SQL und **nie** das Ergebnis selbst; das wird 
 CSV oder eine Excel-Datei herunterladen. In den Modi Terminal-Report, Settlement-Report und
 Reporting bietet die Verlaufszeile bewusst nur den Roh-CSV-Download — Excel (mit gebrandetem
 Titel), PDF und die Report-Ansicht laufen dort über das jeweilige Report-Panel selbst. Jeder erneute
-Abruf über den Token zählt bei wallee als Download.
+Abruf über den Token zählt bei wallee als Download. Der Reporting-Modus setzt seit v5.13
+**zwei** Abfragen ab und schreibt entsprechend zwei Zeilen mit eigenen Token; die der
+3DS-Liste ist als solche beschriftet und steht im selben Verlauf.
 
 ## Terminal-Report
 
@@ -192,6 +196,40 @@ Trinkgeld, Retries und Stosszeiten?
   Kartentyp, 3DS) stammen aus Labels, die der **Connector** schreibt — bei einem anderen
   Acquirer können andere Label-IDs vorkommen; die betroffenen Kennzahlen stehen dann auf
   „Unbekannt", der Report wird nicht falsch, aber blind.
+
+## 3DS-Failures
+
+Die Seite *3DS-Failures* ist die **zweite Ausgabe des Reporting-Modus** und beantwortet die
+Frage, die der Report darüber offenlässt: Der Reporting-Report sagt, dass *3-D Secure
+Failure* der häufigste Ablehngrund ist — diese Seite sagt, **welche Versuche** es waren.
+
+- **Was hineinkommt:** ein Zahlungsversuch, der gescheitert ist **und** entweder als Grund
+  einen 3DS-Fehlschlag oder -Timeout trägt **oder** dessen 3DS-Prozess ohne Kryptogramm
+  abgebrochen wurde. Beide Wege, damit weder ein „3-D Secure Failure" ohne Start-Label noch
+  ein abgebrochener Prozess mit anderem Ablehngrund fehlt. Die Abfrage läuft fest auf
+  **E-Commerce**; bei Kanal *POS* wird sie gar nicht erst abgesetzt.
+- **Was drinsteht:** Kennzahlen (betroffene Versuche, Transaktionen, Bestellungen, „am Ende
+  doch bezahlt", betroffenes Volumen je Währung), Aufschlüsselungen nach Ablehngrund,
+  **Dauer bis zum Abbruch**, Betrag, Zahlungsmittel, Wallet, Issuer-Land, BIN, PAN-Quelle,
+  ECI und Attempt Retry, Verlauf und Stosszeiten — und die **Zeilentabelle** mit einem
+  Direktlink in die Transaktion im wallee-Backend.
+- **Wiederholungen auf zwei Ebenen:** je *Transaktion* („hat der Kunde es nochmal
+  versucht?") und je *Bestellung* („hat er es am Ende geschafft?"). Wer nach drei
+  Fehlschlägen mit einer neuen Transaktion zum Ziel kommt, ist auf der Transaktionsebene
+  unsichtbar — auf der Bestellebene nicht.
+- **Zwei Abfragen, zwei Dateien.** Die Seite hat eine eigene Query und eine **eigene
+  Excel-Mappe**: der Reporting-Report enthält keine personenbezogenen Daten und lässt sich
+  deshalb weiterreichen, die Zeilenliste trägt Bestellnummern und Transaktions-IDs. In einer
+  Datei ginge das nicht mehr.
+- **Im API-Modus setzt die App beide Abfragen selbst ab**; im Kopieren-Modus lässt sich eine
+  anderswo erzeugte Ergebnisdatei über **„3DS-Liste importieren"** laden — das SQL der
+  zweiten Abfrage steht dort allerdings nicht im Kopier-Feld.
+- **Grenzen:** Die Liste ist bei 20'000 Zeilen gedeckelt; ist der Deckel erreicht, sagt der
+  Report es und weist alle Zählwerte als „mindestens" aus (ein engerer Zeitraum liefert ein
+  vollständiges Bild). Auf dem Bildschirm und im PDF stehen die ersten 500 Zeilen, in Excel
+  und CSV alle. Eine Aufschlüsselung nach Challenge-Status oder ACS gibt es **nicht** — die
+  entsprechenden EMVCo-Felder kommen im Analytics-Export nicht an; an ihrer Stelle steht die
+  gemessene Dauer zwischen Start und Ende des 3DS-Prozesses.
 
 ## API-Modus und lokaler Proxy
 
