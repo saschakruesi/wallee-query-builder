@@ -1555,3 +1555,329 @@ test('C8: der Deckel bleibt wirksam, ohne Tage zu verlieren', { timeout: 10000 }
   assert.strictEqual(m.zeitraum.lueckenlos, false);
   assert.ok(Number.isFinite(m.zeitraum.tage) && m.zeitraum.tage > 300000);
 });
+
+// --- 3DS-Failures: parseReportingTdsCsv (Iteration 2, Task 4a) --------------
+//
+// Der Parser der zweiten, zeilenweisen Query. Er sitzt hier und nicht in einer
+// eigenen Datei, weil die Parser-Tests des Reporting-Modus schon hier stehen -
+// dieselben Helfer, dieselbe Frage.
+//
+// Massgeblich fuer die Spaltennamen ist wieder die Query selbst: TDS_KOPF wird
+// unten gegen die erzeugte SELECT-Liste gehalten, statt eine zweite Handliste
+// zu pflegen. Die Fixture test/fixtures/reporting-tds-beispiel.csv ist von Hand
+// geschrieben und SYNTHETISCH - Space-IDs 90001/90002 wie in der bestehenden
+// Reporting-Fixture, Betraege, Bestellnummern und IDs frei erfunden. Aus den
+// Produktivdaten darf kein Wert in dieses oeffentliche Repo. Uebernommen ist
+// nur die Schreibweise der Athena-Ausgabe (NULL als unquotiertes Leerfeld,
+// jeder vorhandene Wert in Anfuehrungszeichen, LF, kein BOM). Einen Generator
+// wie bei der Aggregat-Fixture braucht sie nicht: dort halten sich die drei
+// Bloecke gegenseitig in der Summe, hier ist jede Zeile fuer sich.
+
+const TDS_KOPF = [
+  'space_id', 'attempt_id', 'transaction_id', 'created_on', 'merchant_reference',
+  'brand', 'wallet', 'waehrung', 'amount', 'failure_reason_id', 'response_code',
+  'issuer_country', 'funding', 'card_category', 'pan_type', 'eci',
+  'card_issuer_number', 'tds_version', 'attempt_retry', 'cryptogram_present',
+  'tds_started_on', 'tds_finished_on', 'tds_cavv', 'transaction_state',
+  'attempt_nr', 'attempts_der_transaktion',
+  'versuche_der_bestellung', 'bestellung_am_ende_bezahlt',
+];
+
+// Eine vollstaendige, unauffaellige Zeile als Ausgangspunkt; die Tests
+// ueberschreiben je genau das Feld, um das es ihnen geht.
+const TDS = {
+  space_id: '90001', attempt_id: '8000001', transaction_id: '7000001',
+  created_on: '2026-07-04 20:11:03.000', merchant_reference: 'ORD-1001',
+  brand: 'Visa', wallet: '-', waehrung: 'CHF', amount: '129.00000000',
+  failure_reason_id: '1568360440179', response_code: '05', issuer_country: 'CH',
+  funding: 'CREDIT', card_category: 'CLASSIC', pan_type: 'PAN_PLAIN', eci: '',
+  card_issuer_number: '424242', tds_version: '2.2.0', attempt_retry: 'No Retry',
+  cryptogram_present: 'false', tds_started_on: '2026-07-04T20:10:41+02:00',
+  tds_finished_on: '2026-07-04T20:11:02+02:00', tds_cavv: 'false',
+  transaction_state: 'FAILED', attempt_nr: '1', attempts_der_transaktion: '2',
+  versuche_der_bestellung: '3', bestellung_am_ende_bezahlt: 'true',
+};
+
+const tdsCsv = zeilen => csv(zeilen, TDS_KOPF);
+
+// Die Ausgabespalten des aeusseren SELECT von buildReportingTdsQuery. Anders
+// gebaut als spaltenAusQuery() oben, weil die Query kein UNION ALL ist: ihr
+// letzter SELECT-Block ist der, der zaehlt.
+function tdsSpaltenAusQuery(sql) {
+  const von = sql.lastIndexOf('\nSELECT\n');
+  const bis = sql.indexOf('\nFROM gezaehlt', von);
+  assert.ok(von >= 0 && bis > von, 'aeusserer SELECT-Block nicht gefunden');
+  return sql.slice(von + '\nSELECT\n'.length, bis).split('\n')
+    .map(z => z.replace(/--.*$/, '').trim().replace(/,$/, ''))
+    .filter(Boolean);
+}
+
+const TDS_QUERY_ARGS = {
+  spaceIds: ['90001'], start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00',
+};
+
+test('REPORTING_TDS_PFLICHT deckt sich mit der SELECT-Liste der 3DS-Query', () => {
+  const { buildReportingTdsQuery, REPORTING_TDS_PFLICHT } = loadBuilders();
+  // Vollstaendig UND in derselben Reihenfolge: der Parser loest zwar ueber den
+  // Namen auf, aber eine abweichende Liste hiesse, dass jemand die Query
+  // umgebaut hat, ohne den Parser mitzunehmen.
+  assert.deepStrictEqual(
+    plain([...REPORTING_TDS_PFLICHT]),
+    tdsSpaltenAusQuery(buildReportingTdsQuery(TDS_QUERY_ARGS)));
+});
+
+test('TDS_KOPF der Testzeilen deckt sich mit der SELECT-Liste der 3DS-Query', () => {
+  const { buildReportingTdsQuery } = loadBuilders();
+  assert.deepStrictEqual(
+    TDS_KOPF, tdsSpaltenAusQuery(buildReportingTdsQuery(TDS_QUERY_ARGS)));
+});
+
+test('parseReportingTdsCsv: leerer Text ergibt einen Fehler, wirft aber nicht', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const r = parseReportingTdsCsv('');
+  assert.ok(r.error, 'leerer Text muss einen Fehler ergeben');
+  assert.match(r.error.message, /leer/i);
+  assert.deepStrictEqual(plain(r.rows), []);
+  assert.strictEqual(r.unbrauchbareWerte, 0);
+});
+
+test('parseReportingTdsCsv: fehlende Pflichtspalte ergibt error statt Wurf', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const ohneTx = TDS_KOPF.filter(k => k !== 'transaction_id');
+  const r = parseReportingTdsCsv(csv([TDS], ohneTx));
+  assert.ok(r.error, 'fehlende Pflichtspalte muss einen Fehler ergeben');
+  assert.match(r.error.message, /transaction_id/);
+  assert.deepStrictEqual(plain(r.rows), []);
+});
+
+test('parseReportingTdsCsv: mehrere fehlende Pflichtspalten werden alle genannt', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const kopf = TDS_KOPF.filter(k => k !== 'tds_cavv' && k !== 'versuche_der_bestellung');
+  const r = parseReportingTdsCsv(csv([TDS], kopf));
+  assert.match(r.error.message, /tds_cavv/);
+  assert.match(r.error.message, /versuche_der_bestellung/);
+});
+
+test('parseReportingTdsCsv: das Aggregat-CSV wird nicht als 3DS-Liste gelesen', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  // Die beiden Queries teilen sich mehrere Spaltennamen; ohne die vollstaendige
+  // Pflichtliste liefe ein verwechseltes CSV halb durch.
+  const r = parseReportingTdsCsv(csv([DIM]));
+  assert.ok(r.error, 'ein Aggregat-CSV darf hier nicht durchgehen');
+  assert.match(r.error.message, /Pflichtspalten/);
+});
+
+test('parseReportingTdsCsv: eine Zeile je Attempt, Felder vollstaendig gelesen', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const r = parseReportingTdsCsv(tdsCsv([TDS]));
+  assert.strictEqual(r.error, null);
+  assert.strictEqual(r.rows.length, 1);
+  assert.deepStrictEqual(plain(r.rows[0]), {
+    spaceId: '90001', attemptId: '8000001', transactionId: '7000001',
+    createdOn: '2026-07-04 20:11:03.000', merchantReference: 'ORD-1001',
+    brand: 'Visa', wallet: '-', waehrung: 'CHF', betrag: 12900000000,
+    failureReasonId: '1568360440179', responseCode: '05', issuerCountry: 'CH',
+    funding: 'CREDIT', cardCategory: 'CLASSIC', panType: 'PAN_PLAIN',
+    eci: 'UNKNOWN', cardIssuerNumber: '424242', tdsVersion: '2.2.0',
+    attemptRetry: 'No Retry', cryptogramPresent: false,
+    tdsStartedOn: '2026-07-04T20:10:41+02:00',
+    tdsFinishedOn: '2026-07-04T20:11:02+02:00', tdsCavv: false,
+    transactionState: 'FAILED', attemptNr: 1, attemptsDerTransaktion: 2,
+    versucheDerBestellung: 3, bestellungAmEndeBezahlt: true,
+  });
+});
+
+test('parseReportingTdsCsv: Betraege werden zu 1e-8-Ganzzahlen zerlegt', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const r = parseReportingTdsCsv(tdsCsv([
+    Object.assign({}, TDS, { amount: '0.10000000' }),
+    Object.assign({}, TDS, { amount: '0.20000000' }),
+    Object.assign({}, TDS, { amount: '' }),
+  ]));
+  // Kein float: 0.1 + 0.2 muss hier exakt 0.3 ergeben.
+  assert.strictEqual(r.rows[0].betrag + r.rows[1].betrag, 30000000);
+  assert.strictEqual(r.rows[2].betrag, 0);
+});
+
+test('parseReportingTdsCsv: leere Dimensionen landen im UNKNOWN-Eimer', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const r = parseReportingTdsCsv(tdsCsv([
+    Object.assign({}, TDS, {
+      brand: '', wallet: '', waehrung: '', failure_reason_id: '',
+      response_code: '', issuer_country: '', funding: '', card_category: '',
+      pan_type: '', eci: '', card_issuer_number: '', tds_version: '',
+      attempt_retry: '', transaction_state: '',
+    }),
+  ]));
+  const z = r.rows[0];
+  ['brand', 'wallet', 'waehrung', 'failureReasonId', 'responseCode',
+    'issuerCountry', 'funding', 'cardCategory', 'panType', 'eci',
+    'cardIssuerNumber', 'tdsVersion', 'attemptRetry', 'transactionState'].forEach(k => {
+    assert.strictEqual(z[k], 'UNKNOWN', k + ' muss UNKNOWN sein, nicht ' + JSON.stringify(z[k]));
+  });
+});
+
+test('parseReportingTdsCsv: Schluessel und Bestellnummer bleiben roh, nie UNKNOWN', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  // space_id, attempt_id und transaction_id gehen in den Dashboard-Link. Ein
+  // 'UNKNOWN' darin ergaebe eine Adresse, die aussieht wie ein Link und ins
+  // Leere fuehrt - '' laesst sich pruefen. Die Bestellnummer ist ein
+  // Anzeigewert des Shops; eine erfundene waere schlimmer als eine leere.
+  const r = parseReportingTdsCsv(tdsCsv([
+    Object.assign({}, TDS, {
+      space_id: '', attempt_id: '', transaction_id: '', merchant_reference: '',
+    }),
+  ]));
+  const z = r.rows[0];
+  assert.deepStrictEqual(
+    [z.spaceId, z.attemptId, z.transactionId, z.merchantReference],
+    ['', '', '', '']);
+});
+
+test('parseReportingTdsCsv: boolesche Spalten ergeben true/false/null', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const r = parseReportingTdsCsv(tdsCsv([
+    Object.assign({}, TDS, { tds_cavv: 'true', cryptogram_present: 'true', bestellung_am_ende_bezahlt: 'true' }),
+    Object.assign({}, TDS, { tds_cavv: 'false', cryptogram_present: 'false', bestellung_am_ende_bezahlt: 'false' }),
+    Object.assign({}, TDS, { tds_cavv: '', cryptogram_present: '', bestellung_am_ende_bezahlt: '' }),
+  ]));
+  assert.deepStrictEqual(
+    plain(r.rows.map(z => [z.tdsCavv, z.cryptogramPresent, z.bestellungAmEndeBezahlt])),
+    [[true, true, true], [false, false, false], [null, null, null]]);
+  assert.strictEqual(r.unbrauchbareWerte, 0);
+});
+
+test('parseReportingTdsCsv: versuche_der_bestellung ohne Referenz ist null, nicht 0', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  // Ohne Bestellnummer gruppiert die Query nicht (§3.8). Weder 0 noch 1 waere
+  // gemessen - beides waere eine Behauptung ueber eine Bestellung, die es als
+  // Gruppe gar nicht gibt.
+  const r = parseReportingTdsCsv(tdsCsv([
+    Object.assign({}, TDS, {
+      merchant_reference: '', versuche_der_bestellung: '',
+      bestellung_am_ende_bezahlt: '',
+    }),
+  ]));
+  assert.strictEqual(r.rows[0].versucheDerBestellung, null);
+  assert.strictEqual(r.rows[0].bestellungAmEndeBezahlt, null);
+  // Die Zaehler der Transaktion dagegen sind immer gefuellt und bleiben Zahlen.
+  assert.strictEqual(r.rows[0].attemptNr, 1);
+  assert.strictEqual(r.rows[0].attemptsDerTransaktion, 2);
+  assert.strictEqual(r.unbrauchbareWerte, 0);
+});
+
+test('parseReportingTdsCsv: unlesbare Werte werden gezaehlt, nicht stumm zu 0', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  // Dieselbe Naht wie im Aggregat-Parser: schriebe Athena Booleans als 1/0
+  // oder Betraege mit Komma, stuenden die Kennzahlen dauerhaft auf 0 - und
+  // zwar als gemessen aussehende Nullen.
+  const r = parseReportingTdsCsv(tdsCsv([
+    Object.assign({}, TDS, { tds_cavv: '1', cryptogram_present: 'ja' }),
+    Object.assign({}, TDS, { amount: "129,00" }),
+    Object.assign({}, TDS, { attempts_der_transaktion: '2 Versuche', versuche_der_bestellung: 'drei' }),
+  ]));
+  assert.strictEqual(r.error, null);
+  // 2 Booleans + 1 Betrag + 2 Zaehler.
+  assert.strictEqual(r.unbrauchbareWerte, 5);
+  // Der Wert selbst bleibt der defensive - gemeldet wird zusaetzlich, nicht
+  // statt dessen.
+  assert.strictEqual(r.rows[0].tdsCavv, null);
+  assert.strictEqual(r.rows[1].betrag, 0);
+  assert.strictEqual(r.rows[2].attemptsDerTransaktion, 2);
+});
+
+test('parseReportingTdsCsv: unlesbare Zeitstempel werden gemeldet und durchgereicht', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  // Die Dauer-Eimer der Seite haengen an diesen beiden Feldern. Ein Wert, der
+  // kein Zeitstempel ist, wird trotzdem durchgereicht: in der Ausgabe steht
+  // dann, was in der Datei stand, statt eines leeren Feldes, das niemand mehr
+  // zuordnen kann.
+  const r = parseReportingTdsCsv(tdsCsv([
+    Object.assign({}, TDS, { tds_started_on: '04.07.2026 20:10', tds_finished_on: '' }),
+  ]));
+  assert.strictEqual(r.unbrauchbareWerte, 1);
+  assert.strictEqual(r.rows[0].tdsStartedOn, '04.07.2026 20:10');
+  assert.strictEqual(r.rows[0].tdsFinishedOn, '');
+});
+
+test('parseReportingTdsCsv: beide belegten Zeitschreibweisen sind lesbar', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  // created_on kommt aus Athena mit Leerzeichen und Millisekunden, die beiden
+  // 3DS-Zeitpunkte aus einem dateTimeContent-Label - dessen genaue
+  // Schreibweise ist nicht gemessen, deshalb ist das Muster grosszuegig.
+  const r = parseReportingTdsCsv(tdsCsv([
+    Object.assign({}, TDS, {
+      created_on: '2026-07-04 20:11:03.000',
+      tds_started_on: '2026-07-04T20:10:41+02:00',
+      tds_finished_on: '2026-07-04T18:11:02Z',
+    }),
+  ]));
+  assert.strictEqual(r.unbrauchbareWerte, 0);
+});
+
+test('parseReportingTdsCsv: zu kurze Zeile faellt zurueck, ohne Wurf', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const text = TDS_KOPF.map(q).join(',') + '\n"90001","8000001"\n';
+  const r = parseReportingTdsCsv(text);
+  assert.strictEqual(r.error, null);
+  assert.strictEqual(r.rows.length, 1);
+  assert.strictEqual(r.rows[0].attemptId, '8000001');
+  assert.strictEqual(r.rows[0].transactionId, '');
+  assert.strictEqual(r.rows[0].brand, 'UNKNOWN');
+  assert.strictEqual(r.rows[0].betrag, 0);
+  assert.strictEqual(r.rows[0].tdsCavv, null);
+  assert.strictEqual(r.rows[0].versucheDerBestellung, null);
+});
+
+test('parseReportingTdsCsv: Zeile aus lauter leeren Feldern wird uebersprungen', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const text = TDS_KOPF.map(q).join(',') + '\n' + TDS_KOPF.map(() => '').join(',') + '\n';
+  const r = parseReportingTdsCsv(text);
+  assert.strictEqual(r.error, null);
+  assert.strictEqual(r.rows.length, 0);
+});
+
+test('parseReportingTdsCsv: Kopfzeile wird case-insensitiv gelesen', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const r = parseReportingTdsCsv(csv([TDS], TDS_KOPF.map(k => k.toUpperCase())));
+  assert.strictEqual(r.error, null);
+  assert.strictEqual(r.rows.length, 1);
+  assert.strictEqual(r.rows[0].brand, 'Visa');
+});
+
+test('parseReportingTdsCsv: Fixture parst fehlerfrei und meldet nichts', () => {
+  const { parseReportingTdsCsv } = loadBuilders();
+  const text = fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'reporting-tds-beispiel.csv'), 'utf8');
+  const r = parseReportingTdsCsv(text);
+  assert.strictEqual(r.error, null);
+  // Sonst waere der Zaehler ein Dauerhinweis und damit wertlos.
+  assert.strictEqual(r.unbrauchbareWerte, 0);
+  assert.strictEqual(r.rows.length, text.trim().split('\n').length - 1);
+
+  // Die Faelle, die die Fixture bewusst abbildet.
+  const ohneReferenz = r.rows.filter(z => z.merchantReference === '');
+  assert.strictEqual(ohneReferenz.length, 1);
+  assert.strictEqual(ohneReferenz[0].versucheDerBestellung, null);
+  assert.strictEqual(ohneReferenz[0].bestellungAmEndeBezahlt, null);
+
+  // Beide Zweige der Definition aus §3.2 kommen vor: ein Ablehngrund aus
+  // TDS_FAILURE_REASONS, und ein anderer Grund mit gestartetem 3DS ohne CAVV.
+  const { TDS_FAILURE_REASONS } = loadBuilders();
+  const gruende = new Set([...TDS_FAILURE_REASONS]);
+  assert.ok(r.rows.some(z => gruende.has(z.failureReasonId)));
+  assert.ok(r.rows.some(z => !gruende.has(z.failureReasonId)
+    && z.tdsStartedOn !== '' && z.tdsCavv === false));
+
+  // Und eine Zeile ohne Karten-Labels: alles, was der Connector nicht
+  // geschrieben hat, kommt als UNKNOWN an - nicht als ''.
+  const ohneLabels = r.rows.filter(z => z.issuerCountry === 'UNKNOWN');
+  assert.strictEqual(ohneLabels.length, 1);
+  assert.strictEqual(ohneLabels[0].cardIssuerNumber, 'UNKNOWN');
+  assert.strictEqual(ohneLabels[0].cryptogramPresent, null);
+
+  // Ein Wiederholer ueber die Bestellung hinweg, der am Ende doch bezahlt hat.
+  assert.ok(r.rows.some(z => z.versucheDerBestellung >= 2 && z.bestellungAmEndeBezahlt === true));
+  // Und einer, der es nicht getan hat.
+  assert.ok(r.rows.some(z => z.versucheDerBestellung >= 2 && z.bestellungAmEndeBezahlt === false));
+});

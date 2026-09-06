@@ -1859,6 +1859,31 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Bewusst NICHT im Reporting-Modus verwendet (PII-Sperrliste, SPEC 9):
   // 1456765000789 (Card Holder Name) und DESC_MASKED_CARD (Masked Card Number).
 
+  // Zusaetzliche Descriptors der 3DS-Failure-Seite (SPEC-ITERATION-2 §3).
+  // Alle an Produktivdaten gemessen - DESC_TDS_FINISHED in Task 0, die vier
+  // uebrigen in Discovery Q2 am zweiten Haendler-Space (2026-09-04); beides
+  // ausgewertet in dashboard/discovery-results/DESCRIPTORS.md. Der Map-Key ist
+  // hier noch wichtiger als oben: drei der fuenf weichen vom Default
+  // shortTextContent ab, und ein falsch geratener Key wirft nicht - er liefert
+  // dauerhaft NULL. Die Spalte staende dann fuer immer auf "Unbekannt", ohne
+  // dass irgendwo etwas rot wird.
+  //
+  // Bewusst NICHT aufgenommen: die dreizehn EMVCo-3DS-Felder (Transaction
+  // Status, Transaction Status Reason, Challenge Cancel, ACS Reference Number
+  // in beiden Auspraegungen, ACS Transaction ID, Protocol Version, DS
+  // Transaction Id, ...), die SPEC-ITERATION-2 §3.3 unter dem Vorbehalt "nur,
+  // wenn Discovery Q2 sie fuer den Space belegt" fuehrt. Die Discovery ist
+  // gelaufen: KEINES dieser Labels kommt im Analytics-labels-Array an - der
+  // Haendler sieht sie im Backend, sie entstehen also im 3DS-Server, landen
+  // aber nicht in der Analytics-Tabelle. Sie vorsorglich mitzuschleppen waere
+  // genau der Fehler, vor dem der Absatz weiter oben warnt: eine Spalte, die
+  // dauerhaft NULL liefert, sieht aus wie eine Messung.
+  const DESC_TDS_FINISHED       = '1568637885195'; // 3-D Secure Process Finished, dateTimeContent (Task 0: 310 Attempts, gleiche Abdeckung wie Started)
+  const DESC_TDS_VERSION        = '1620379912010'; // 3-D Secure Version, staticValueContent - der Wert ist eine Static-Value-ID, kein Klartext
+  const DESC_CARD_ISSUER_NUMBER = '1458749261553'; // Card Issuer Number (BIN), integerContent - benennt den HERAUSGEBER, nicht die Karte: keine PII
+  const DESC_ATTEMPT_RETRY      = '1634723431551'; // Attempt Retry, shortTextContent ('No Retry' / 'Retry Later')
+  const DESC_CRYPTOGRAM_PRESENT = '1634723429554'; // Cryptogram Present, booleanContent - sauberes Ja/Nein statt der Existenzpruefung auf CAVV
+
   // Line-Item-Typ fuer Trinkgeld (lineitem.type). Trinkgeld wird von wallee nicht
   // als Feld auf transaction gefuehrt, sondern als eigene Line-Item-Position.
   const TIP_LINEITEM_TYPE = 'TIP';
@@ -3627,6 +3652,228 @@ GROUP BY
 ORDER BY block, channel, anzahl_attempts DESC;`;
   }
 
+  // --- SQL Generation: 3DS-Failures (zeilenweise) --------------------------
+  // Zweite Query des Reporting-Modus (SPEC-ITERATION-2 §3.3). Sie ist bewusst
+  // von buildReportingQuery getrennt und bekommt einen eigenen queryToken:
+  // dadurch bleibt das Aggregat-CSV PII-frei und im Kopieren-Modus
+  // importierbar, waehrend hier Bestellnummern und Transaktions-IDs stehen.
+
+  // Ablehngruende, die einen 3DS-Fehlschlag ausdruecklich benennen. Konstante
+  // und bewusst erweiterbar: der Katalog (dashboard/catalog/failure-reasons.json,
+  // Suche nach "3-D") kennt rund 40 weitere, connector-spezifische 3DS-Gruende,
+  // die bei einem anderen Acquirer relevant werden koennen. Hier stehen die
+  // beiden, die an Produktivdaten belegt sind (SPEC-ITERATION-2 §3.2).
+  const TDS_FAILURE_REASONS = [
+    '1568360440179', // 3-D Secure Failure
+    '1568360434240', // 3-D Secure Timeout
+  ];
+
+  // Obergrenze der Zeilenliste (SPEC-ITERATION-2 §3.3). Benannte Konstante,
+  // weil die Statuszeile sie mit ausweist ("n von maximal 20'000") und weil das
+  // bei rund 4'000 3DS-Fehlschlaegen im Monat fuer 90 Tage knapp reicht - wer
+  // den Zeitraum weiter aufzieht, muss die Zahl finden koennen.
+  const REPORTING_TDS_LIMIT = 20000;
+
+  // escapeSql kommt hier nicht vor, und das ist kein Versehen: der Helfer
+  // schuetzt Freitext-Eingaben (im Reporting-Modus die Terminal-Kennungen),
+  // und diese Query hat keine. Ihre einzigen Eingaben sind die Space-IDs, die
+  // durch spaceInClause laufen, und die beiden Zeitstempel - beide genau so
+  // behandelt wie in jedem anderen Builder dieser Datei.
+  //
+  // txCte/cardCte werden auch hier nicht verwendet, aus denselben Gruenden, die
+  // bei buildReportingQuery stehen (anderer Zeitschnitt, anderer Statusfilter,
+  // descriptorabhaengiger Map-Key) - sie werden dort begruendet und hier nicht
+  // wiederholt.
+  function buildReportingTdsQuery({ spaceIds, start, end }) {
+    const spaces = spaceIds || [];
+    const gruende = TDS_FAILURE_REASONS.map(id => `'${id}'`).join(', ');
+
+    return `WITH att AS (
+    -- ALLE Attempts des Zeitraums im Kanal E-Commerce - ohne den FAILED-Filter.
+    -- Das ist die Grundgesamtheit der Fensterfunktionen weiter unten; der
+    -- FAILED-Filter steht erst in der aeusseren WHERE-Klausel, hinter ihnen.
+    SELECT
+        ca.spaceid                                      AS space_id,
+        ca.id                                           AS attempt_id,
+        t.id                                            AS transaction_id,
+        ca.createdon                                    AS created_on,
+        -- Bestellnummer des Shops. Sie bleibt drin (SPEC-ITERATION-2 §3.3): der
+        -- Haendler braucht sie zur Zuordnung, und er nennt sie in seiner
+        -- Anfrage selbst. Leer und NULL meinen dasselbe ("keine Bestellnummer")
+        -- und werden hier einmal vereinheitlicht - sonst bildeten '' und NULL
+        -- zwei verschiedene Bestell-Eimer.
+        NULLIF(TRIM(t.merchantreference), '')           AS merchant_reference,
+        -- Brand ueber ca.connectorconfiguration wie im Aggregat: bei einem
+        -- Retry mit anderer Zahlungsmethode waere der Attempt sonst der
+        -- falschen Brand zugeordnet.
+        COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN') AS brand,
+        COALESCE(wt.name['en-US'], '-')                 AS wallet,
+        t.currency                                      AS waehrung,
+        -- Bei FAILED ist completedamount 0 (Task 0, Q6) - der abgelehnte Betrag
+        -- steht in authorizationamount, das auch bei FAILED gefuellt ist.
+        t.authorizationamount                           AS amount,
+        -- varchar wie im Aggregat: der Typ von chargeattempt.failurereason ist
+        -- nicht belegt, und die ID ist ohnehin nur ein Nachschlageschluessel.
+        -- Der Vergleich in der WHERE-Klausel laeuft ueber denselben CAST und
+        -- funktioniert damit unabhaengig vom Basistyp.
+        CAST(ca.failurereason AS varchar)               AS failure_reason_id,
+        -- Nur der E-Com-Descriptor, kein COALESCE mit dem POS-Gegenstueck: die
+        -- Query filtert fest auf den E-Commerce-Kanal.
+        ${labelExpr(DESC_AUTH_RESPONSE_ECOM)} AS response_code,
+        ${labelExpr(DESC_ISSUER_COUNTRY, 'countryContent')} AS issuer_country,
+        ${labelExpr(DESC_CARD_TYPE)} AS funding,
+        ${labelExpr(DESC_CARD_CATEGORY)} AS card_category,
+        ${labelExpr(DESC_PAN_TYPE)} AS pan_type,
+        ${labelExpr(DESC_ECI)} AS eci,
+        -- BIN: die Issuer-Achse, die ohne Scheme-BIN-Datei ueberhaupt moeglich
+        -- ist (SPEC-ITERATION-2 §5.1). Sie benennt den Herausgeber, nicht die
+        -- Karte, und faellt deshalb nicht unter die PII-Sperrliste.
+        ${labelExpr(DESC_CARD_ISSUER_NUMBER, 'integerContent')} AS card_issuer_number,
+        ${labelExpr(DESC_TDS_VERSION, 'staticValueContent')} AS tds_version,
+        ${labelExpr(DESC_ATTEMPT_RETRY)} AS attempt_retry,
+        ${labelExpr(DESC_CRYPTOGRAM_PRESENT, 'booleanContent')} AS cryptogram_present,
+        ${labelExpr(DESC_TDS_STARTED, 'dateTimeContent')} AS tds_started_on,
+        ${labelExpr(DESC_TDS_FINISHED, 'dateTimeContent')} AS tds_finished_on,
+        -- CAVV nur als Existenzpruefung, nie der Wert: das Kryptogramm ist ein
+        -- Sicherheitsmerkmal. Der Descriptor kommt deshalb in der GANZEN Query
+        -- genau einmal vor - ein Test zaehlt das nach.
+        ${labelExpr(DESC_TDS_CAVV, 'longTextContent')} IS NOT NULL AS tds_cavv,
+        ca.state                                        AS attempt_state,
+        -- Die zweite Haelfte der Wiederholer-Frage: FULFILL/COMPLETED heisst
+        -- "am Ende doch bezahlt", FAILED heisst "aufgegeben".
+        t.state                                         AS transaction_state
+    FROM chargeattempt ca
+    JOIN charge c
+      ON c.id      = ca.charge_id
+    JOIN transaction t
+      ON t.id      = c.transaction_id
+     AND t.spaceid = ca.spaceid
+    LEFT JOIN paymentconnectorconfiguration pcc
+           ON pcc.id      = ca.connectorconfiguration
+          AND pcc.spaceid = ca.spaceid
+    LEFT JOIN paymentconnector pc
+           ON pc.id       = pcc.connector
+    LEFT JOIN wallettype wt
+           ON wt.id       = ca.wallet
+    WHERE ${spaceInClause(spaces, 'ca.spaceid')}
+      AND ca.createdon >= TIMESTAMP '${start}'
+      AND ca.createdon <  TIMESTAMP '${end}'
+      AND ca.environment = '${ATTEMPT_ENVIRONMENT}'
+      AND ca.saleschannel = ${SALES_CHANNEL_ECOM}
+),
+bestellung AS (
+    -- Anker je (Space, Bestellnummer): der fruehste Versuch dieser Bestellung
+    -- im Zeitraum. Er macht aus dem "innerhalb von 24 h" aus §3.8 einen
+    -- deterministischen Schluessel - siehe naechstes CTE.
+    SELECT
+        space_id,
+        merchant_reference,
+        min(created_on)                                 AS erster_versuch
+    FROM att
+    WHERE merchant_reference IS NOT NULL
+    GROUP BY space_id, merchant_reference
+),
+bestell_fenster AS (
+    SELECT
+        a.*,
+        -- Partitionsschluessel der Bestellung. Fehlt die Bestellnummer, tritt
+        -- die Attempt-ID an ihre Stelle: jeder referenzlose Versuch bildet dann
+        -- seine EIGENE Partition. Ohne den Kniff faenden saemtliche
+        -- referenzlosen Bestellungen in einem Riesen-Eimer zusammen (PARTITION
+        -- BY gruppiert NULL-Werte miteinander) und versuche_der_bestellung
+        -- waere eine erfundene Zahl (§3.8). Ausgewiesen wird fuer diese Zeilen
+        -- trotzdem NULL - "nicht gruppierbar" ist keine 1.
+        COALESCE(a.merchant_reference,
+                 CONCAT('#attempt-', CAST(a.attempt_id AS varchar))) AS bestell_key,
+        -- "innerhalb von 24 h" ohne rollendes RANGE-Fenster mit
+        -- INTERVAL-Offset: der Abstand zum ersten Versuch derselben Bestellung,
+        -- in 24-h-Bloecke geteilt. Ein rollendes Fenster koennte Athena je nach
+        -- Engine-Version nicht, und ein Kalendertag-Bucket zerschnitte jede
+        -- Bestellung ueber Mitternacht. Der Abstand ist nie negativ, weil der
+        -- Anker das Minimum ist - die abschneidende Ganzzahldivision ist damit
+        -- dasselbe wie floor.
+        date_diff('second', b.erster_versuch, a.created_on) / 86400 AS bestell_fenster_nr
+    FROM att a
+    LEFT JOIN bestellung b
+           ON b.space_id           = a.space_id
+          AND b.merchant_reference = a.merchant_reference
+),
+gezaehlt AS (
+    SELECT
+        f.*,
+        -- Beide Zaehler laufen ueber att, also ueber ALLE Attempts des
+        -- Zeitraums - auch die erfolgreichen. Ueber der FAILED-gefilterten
+        -- Menge gerechnet zaehlten sie nur Fehlschlaege, und die Frage "hat der
+        -- Kunde es nochmal versucht und dann geklappt?" waere still falsch
+        -- beantwortet (§3.3). Genau deshalb steht der FAILED-Filter unten in
+        -- der aeusseren WHERE-Klausel und nicht in att.
+        ROW_NUMBER() OVER (PARTITION BY f.transaction_id
+                           ORDER BY f.created_on, f.attempt_id) AS attempt_nr,
+        COUNT(*)     OVER (PARTITION BY f.transaction_id)       AS attempts_der_transaktion,
+        -- §3.8, zweiter Wiederholer-Begriff: gleiche Bestellnummer innerhalb
+        -- von 24 h. Er ist noetig, weil ein Shop je Versuch eine NEUE
+        -- Transaktion anlegen kann - attempts_der_transaktion steht dann
+        -- konstant auf 1 und misst per Konstruktion nichts.
+        CASE WHEN f.merchant_reference IS NULL THEN NULL ELSE
+            COUNT(*) OVER (PARTITION BY f.space_id, f.bestell_key, f.bestell_fenster_nr)
+        END                                                     AS versuche_der_bestellung,
+        CASE WHEN f.merchant_reference IS NULL THEN NULL ELSE
+            max(CASE WHEN f.attempt_state = 'SUCCESSFUL' THEN 1 ELSE 0 END)
+                OVER (PARTITION BY f.space_id, f.bestell_key, f.bestell_fenster_nr) = 1
+        END                                                     AS bestellung_am_ende_bezahlt
+    FROM bestell_fenster f
+)
+SELECT
+    space_id,
+    attempt_id,
+    transaction_id,
+    created_on,
+    merchant_reference,
+    brand,
+    wallet,
+    waehrung,
+    amount,
+    failure_reason_id,
+    response_code,
+    issuer_country,
+    funding,
+    card_category,
+    pan_type,
+    eci,
+    card_issuer_number,
+    tds_version,
+    attempt_retry,
+    cryptogram_present,
+    tds_started_on,
+    tds_finished_on,
+    tds_cavv,
+    transaction_state,
+    attempt_nr,
+    attempts_der_transaktion,
+    versuche_der_bestellung,
+    bestellung_am_ende_bezahlt
+FROM gezaehlt
+-- Definition "3DS-Failure" (§3.2), woertlich: gescheitert UND (ein Ablehngrund
+-- aus TDS_FAILURE_REASONS ODER 3DS gestartet, aber ohne CAVV). Die
+-- Oder-Verknuepfung ist der Punkt: ein "3-D Secure Failure" ohne Started-Label
+-- (der Connector schreibt keines) gehoert genauso dazu wie ein abgebrochener
+-- 3DS-Prozess, der unter einem anderen Grund verbucht wurde.
+--
+-- Der zweite Zweig heisst im Modell seit v5.12.1 STARTED_NO_CAVV und nicht mehr
+-- FAILED_OR_ABANDONED: an Produktivdaten wurde gemessen, dass ein Sechstel
+-- dieses Eimers trotzdem autorisiert wurde, der alte Name behauptete also einen
+-- Ausgang, den die Daten nicht hergeben. Die BEDINGUNG (gestartet, kein CAVV)
+-- ist unveraendert richtig - nur der Name war es nicht.
+--
+-- tds_cavv ist an dieser Stelle bereits ein Boolean (Existenzpruefung im att-
+-- CTE), deshalb "= false" statt des "IS NULL" aus der Spec-Skizze.
+WHERE attempt_state = 'FAILED'
+  AND (failure_reason_id IN (${gruende})
+       OR (tds_started_on IS NOT NULL AND tds_cavv = false))
+ORDER BY created_on DESC
+LIMIT ${REPORTING_TDS_LIMIT};`;
+  }
+
   // --- Terminal-Report: CSV-Parser ----------------------------------------
   // Reine Funktionen, DOM-frei und ueber test/harness.js testbar.
 
@@ -3986,6 +4233,160 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
       }
     }
     return { rows, headers, unbekannteBloecke, unbrauchbareWerte, error: null };
+  }
+
+  // --- 3DS-Failures: CSV-Parser --------------------------------------------
+  // Vierter Parser im Haus, aus demselben Grund eigenstaendig wie die drei
+  // anderen: eigene Pflichtspalten, eigene Feldnamen. Gemeinsam bleiben
+  // csvZuZeilen als Zerleger und parseAmount fuer die 1e-8-Einheiten. Anders
+  // als parseReportingCsv kennt er nur EINE Zeilenform - buildReportingTdsQuery
+  // ist kein UNION ALL, sondern eine Zeile je Attempt; es gibt hier also weder
+  // eine block-Spalte noch unbekannte Bloecke.
+
+  // Die vollstaendige SELECT-Liste von buildReportingTdsQuery, in ihrer
+  // Reihenfolge. Bewusst vollstaendig statt nur "was das Modell braucht" -
+  // dieselbe Begruendung wie bei REPORTING_PFLICHT: die Query ist eine Einheit,
+  // ihre Spalten kommen gemeinsam oder gar nicht. Fehlt eine, stammt das CSV
+  // nicht aus dieser Query, und ein Report auf halben Spalten waere schlimmer
+  // als eine klare Fehlermeldung.
+  const REPORTING_TDS_PFLICHT = [
+    'space_id', 'attempt_id', 'transaction_id', 'created_on', 'merchant_reference',
+    'brand', 'wallet', 'waehrung', 'amount', 'failure_reason_id', 'response_code',
+    'issuer_country', 'funding', 'card_category', 'pan_type', 'eci',
+    'card_issuer_number', 'tds_version', 'attempt_retry', 'cryptogram_present',
+    'tds_started_on', 'tds_finished_on', 'tds_cavv', 'transaction_state',
+    'attempt_nr', 'attempts_der_transaktion',
+    'versuche_der_bestellung', 'bestellung_am_ende_bezahlt',
+  ];
+
+  // Zeitstempel werden als ISO-String durchgereicht, nicht in ein Date
+  // gewandelt: formatiert wird in der Ausgabeschicht, und ein Date im Modell
+  // brauchte eine Zeitzonen-Entscheidung, die hier niemand treffen kann.
+  // Gemessen wird trotzdem, ob der Wert ueberhaupt wie ein Zeitstempel
+  // aussieht - die Dauer-Eimer der Seite haengen daran. Bewusst grosszuegig:
+  // created_on kommt aus Athena als 'yyyy-mm-dd hh:mm:ss[.fff]', die beiden
+  // 3DS-Zeitpunkte aus einem dateTimeContent-Label, dessen genaue Schreibweise
+  // (T-Trenner, Zeitzone) nicht gemessen ist.
+  const REPORTING_TDS_MUSTER_ZEIT =
+    /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+
+  function parseReportingTdsCsv(text) {
+    const zeilen = csvZuZeilen(text);
+    if (!zeilen.length) {
+      return {
+        rows: [], headers: [], unbrauchbareWerte: 0,
+        error: new Error('Das Ergebnis ist leer – keine Kopfzeile gefunden.'),
+      };
+    }
+    const headers = zeilen[0].map(h => String(h || '').trim().toLowerCase());
+    const fehlend = REPORTING_TDS_PFLICHT.filter(s => headers.indexOf(s) === -1);
+    if (fehlend.length) {
+      return {
+        rows: [], headers, unbrauchbareWerte: 0,
+        error: new Error('Im Ergebnis fehlen Pflichtspalten: ' + fehlend.join(', ')),
+      };
+    }
+    const idx = {};
+    headers.forEach((h, i) => { idx[h] = i; });
+
+    const rows = [];
+    let unbrauchbareWerte = 0;
+
+    const roh = (z, name) => String(z[idx[name]] == null ? '' : z[idx[name]]).trim();
+    // Dimensionswert: leer -> UNKNOWN, wie im Aggregat-Parser. "Label fehlt" ist
+    // eine Aussage, '' ist keine.
+    const dim = (z, name) => roh(z, name) || REPORTING_UNBEKANNT;
+    // Schluessel dagegen bleiben roh. Das ist die eine bewusste Abweichung von
+    // parseReportingCsv, und sie hat einen konkreten Grund: space_id,
+    // attempt_id und transaction_id sind hier keine Gruppierungsdimensionen,
+    // sondern gehen in den Dashboard-Link (§3.4). Ein 'UNKNOWN' darin ergaebe
+    // eine Adresse, die aussieht wie ein Link und ins Leere fuehrt - '' laesst
+    // sich pruefen, 'UNKNOWN' sieht wie ein Wert aus.
+    const schluessel = (z, name) => roh(z, name);
+
+    // Leer ist erlaubt und bedeutet etwas (NULL aus der Query); nicht leer und
+    // trotzdem unlesbar ist der Fall, der gemeldet gehoert. Derselbe Gedanke wie
+    // in parseReportingCsv: ein Formatwechsel bei Athena soll sichtbar werden,
+    // statt sich als gemessene 0 bzw. als "nicht angefordert" zu tarnen.
+    const betrag = (z, name) => {
+      const s = roh(z, name);
+      if (s !== '' && !REPORTING_MUSTER_BETRAG.test(s)) unbrauchbareWerte++;
+      return parseAmount(s);
+    };
+    const zahl = (z, name) => {
+      const s = roh(z, name);
+      if (s !== '' && !REPORTING_MUSTER_ZAHL.test(s)) unbrauchbareWerte++;
+      return parseCount(s);
+    };
+    // Wie zahl(), aber leer ergibt null statt 0. Fuer versuche_der_bestellung:
+    // ohne Bestellnummer ist die Zahl NICHT 0 und auch nicht 1, sie ist nicht
+    // gruppierbar (§3.8). Eine 0 waere eine Behauptung.
+    const zahlNull = (z, name) => {
+      const s = roh(z, name);
+      if (s === '') return null;
+      if (!REPORTING_MUSTER_ZAHL.test(s)) unbrauchbareWerte++;
+      return parseCount(s);
+    };
+    const bool = (z, name) => {
+      const s = roh(z, name);
+      const b = parseBool(s);
+      if (s !== '' && b === null) unbrauchbareWerte++;
+      return b;
+    };
+    // Der unlesbare Wert wird durchgereicht, nicht geloescht: die Ausgabe zeigt
+    // dann, was tatsaechlich in der Datei stand, statt ein leeres Feld, das
+    // niemand mehr zuordnen kann. Gemeldet wird er trotzdem.
+    const zeit = (z, name) => {
+      const s = roh(z, name);
+      if (s !== '' && !REPORTING_TDS_MUSTER_ZEIT.test(s)) unbrauchbareWerte++;
+      return s;
+    };
+
+    for (let i = 1; i < zeilen.length; i++) {
+      const z = zeilen[i];
+      // Die Analytics-CSV endet mit einer Leerzeile; die faellt hier weg.
+      // Geprueft wird die ganze Zeile, nicht nur der Ein-Feld-Fall.
+      if (!z || z.every(f => String(f == null ? '' : f).trim() === '')) continue;
+      rows.push({
+        spaceId:          schluessel(z, 'space_id'),
+        attemptId:        schluessel(z, 'attempt_id'),
+        transactionId:    schluessel(z, 'transaction_id'),
+        createdOn:        zeit(z, 'created_on'),
+        // Die Bestellnummer ist ein Anzeigewert des Shops und darf leer sein
+        // (die Query fuehrt sie dann als NULL). UNKNOWN waere hier eine
+        // erfundene Bestellnummer.
+        merchantReference: roh(z, 'merchant_reference'),
+        brand:            dim(z, 'brand'),
+        wallet:           dim(z, 'wallet'),
+        waehrung:         dim(z, 'waehrung'),
+        betrag:           betrag(z, 'amount'),
+        failureReasonId:  dim(z, 'failure_reason_id'),
+        responseCode:     dim(z, 'response_code'),
+        issuerCountry:    dim(z, 'issuer_country'),
+        funding:          dim(z, 'funding'),
+        cardCategory:     dim(z, 'card_category'),
+        panType:          dim(z, 'pan_type'),
+        eci:              dim(z, 'eci'),
+        // BIN und 3DS-Version sind Nachschlage-/Gruppierungswerte, keine
+        // Rechenwerte - deshalb als Dimension und nicht als Zahl.
+        cardIssuerNumber: dim(z, 'card_issuer_number'),
+        tdsVersion:       dim(z, 'tds_version'),
+        attemptRetry:     dim(z, 'attempt_retry'),
+        // booleanContent ist als Typ gemessen, das Wertevokabular nicht. Kaeme
+        // etwas anderes als true/false, faellt es hier als unbrauchbarer Wert
+        // auf, statt sich als gemessenes "kein Kryptogramm" auszugeben.
+        cryptogramPresent: bool(z, 'cryptogram_present'),
+        tdsStartedOn:     zeit(z, 'tds_started_on'),
+        tdsFinishedOn:    zeit(z, 'tds_finished_on'),
+        tdsCavv:          bool(z, 'tds_cavv'),
+        transactionState: dim(z, 'transaction_state'),
+        attemptNr:        zahl(z, 'attempt_nr'),
+        attemptsDerTransaktion: zahl(z, 'attempts_der_transaktion'),
+        versucheDerBestellung:  zahlNull(z, 'versuche_der_bestellung'),
+        bestellungAmEndeBezahlt: bool(z, 'bestellung_am_ende_bezahlt'),
+      });
+    }
+    return { rows, headers, unbrauchbareWerte, error: null };
   }
 
   // --- Reporting-Modus: Klassifikation und Modell ---------------------------

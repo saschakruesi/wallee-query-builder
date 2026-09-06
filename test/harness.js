@@ -88,6 +88,20 @@ const EXPORTED = [
   'DESC_TDS_STARTED',
   'DESC_TDS_CAVV',
   'DESC_ECI',
+  // 3DS-Failure-Seite (Iteration 2, Task 4a): die zweite, zeilenweise Query.
+  // Die fuenf Descriptors kommen mit, weil ihr Map-Key vom Default abweicht -
+  // ein falscher Key wirft nicht, er liefert dauerhaft NULL, und das faellt nur
+  // auf, wenn ein Test die ID im erzeugten SQL zusammen mit ihrem Key sucht.
+  // TDS_FAILURE_REASONS und REPORTING_TDS_LIMIT sind die beiden Stellschrauben
+  // der Definition aus §3.2/§3.3 und gehoeren deshalb ebenfalls nach aussen.
+  'buildReportingTdsQuery',
+  'DESC_TDS_FINISHED',
+  'DESC_TDS_VERSION',
+  'DESC_CARD_ISSUER_NUMBER',
+  'DESC_ATTEMPT_RETRY',
+  'DESC_CRYPTOGRAM_PRESENT',
+  'TDS_FAILURE_REASONS',
+  'REPORTING_TDS_LIMIT',
   'EXPORT_COLUMNS',
   'defaultColumns',
   'spaceInClause',
@@ -106,6 +120,12 @@ const EXPORTED = [
   // Reporting-Modus (v5.11), reine Funktionen
   'parseReportingCsv',
   'REPORTING_PFLICHT',
+  // Parser der 3DS-Failure-Liste (Iteration 2, Task 4a). REPORTING_TDS_PFLICHT
+  // steht daneben, damit ein Test sie gegen die SELECT-Liste der Query halten
+  // kann statt gegen eine zweite Handliste - zwei von Hand gepflegte Listen
+  // bleiben zueinander konsistent, auch wenn beide gegen die Query falsch sind.
+  'parseReportingTdsCsv',
+  'REPORTING_TDS_PFLICHT',
   // Reporting-Modell (Task 3)
   'buildReportingModel',
   'klassifiziereHerkunft',
