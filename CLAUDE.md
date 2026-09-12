@@ -33,7 +33,7 @@ breit, Drucktitel).
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.14.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.58 MB** (1'581'163 Bytes, gemessen 2026-09-12 an v5.14.0; davor 1'551'431 Bytes an v5.13.0 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.14.1).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.58 MB** (1'583'222 Bytes, gemessen 2026-09-12 an v5.14.1; davor 1'551'431 Bytes an v5.13.0 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, `/failure-reasons` (öffentliche Doku, **keine** API-Route), **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -45,7 +45,7 @@ breit, Drucktitel).
 | `dashboard/SPEC-ITERATION-2.md` | Fachliche Vorgabe der **Iteration 2** (v5.12), datiert 2026-09-03: §1 Ablehngründe im Klartext, §2 Kuchendiagramme, §3 Seite «3DS-Failures», §4/§5 Discovery und die Antworten auf die Support-Anfrage aus Referenzfall B. **Umgesetzt sind §1 und §2**; was offen blieb und warum, steht unter „Offene Punkte". Der Fall selbst (Space-ID, Händler, Volumen, E-Mail-Wortlaut) steht **nicht** hier, sondern in `dashboard/discovery-results/FALL-B.md` (gitignored — das Repo ist öffentlich). |
 | `dashboard/catalog/` | Die beiden **gescrapten wallee-Kataloge** als JSON, im Git: `failure-reasons.json` (2'254 Einträge mit Name, Kategorie und Beschreibung, je englisch und deutsch) und `label-descriptors.json` (755 Einträge). Quelle ist die öffentliche Doku-Liste, **kein API-Dienst** (siehe „Ablehngründe"). Aktualisiert mit `dashboard/tools/scrape_wallee_catalogs.py` (Python 3, nur Standardbibliothek) — danach den Build-Schritt erneut laufen lassen. |
 | `tools/build-failure-reasons.mjs` | Erzeugt aus `dashboard/catalog/failure-reasons.json` die Konstante `FAILURE_REASONS` zwischen den Markerkommentaren in `wallee_query_builder.html`. **Der einzige Generator im Repo** — er läuft nie zur Laufzeit, die App bleibt eine Single-File-App ohne Build. Idempotent; bricht ab bei fehlenden oder doppelten Markern und bei einer Kategorie, die er nicht kennt. Details unter „Ablehngründe im Klartext (v5.12)". |
-| `sql/autorisiert_verifikation.sql` | Discovery-Queries (Task 0 der Iteration «Autorisierter Betrag», v5.14) — einzeln im Portal ausführen: `authorizedon` je Zustand gefüllt (Q1), Alter liegengebliebener Autorisierungen (Q2), `completedamount` vs. `authorizationamount` bei abgeschlossenen Transaktionen (Q3/Q3b), Nullwerte bei `AUTHORIZED` (Q4), Terminal-/Connector-Zuordnung bei `AUTHORIZED` (Q5). Ergebnisse gehören lokal nach `Terminal-Report-Tool/discovery-results/` und als Befund ins „Wallee-Referenzwissen" — **stehen noch aus** (siehe „Offene Punkte"). |
+| `sql/autorisiert_verifikation.sql` | Discovery-Queries (Task 0 der Iteration «Autorisierter Betrag», v5.14) — einzeln im Portal ausführen: `authorizedon` je Zustand gefüllt (Q1), Alter liegengebliebener Autorisierungen (Q2), `completedamount` vs. `authorizationamount` bei abgeschlossenen Transaktionen (Q3/Q3b), Nullwerte bei `AUTHORIZED` (Q4), Terminal-/Connector-Zuordnung bei `AUTHORIZED` (Q5). Gelaufen am 2026-09-12 an Space 73192 (90 Tage); Ergebnisse lokal in `Terminal-Report-Tool/discovery-results/` (gitignored), Befunde unter „Wallee-Referenzwissen" > „Autorisierter Betrag". |
 | `Terminal-Report-Tool/` | **Nur lokal, nicht im Git** (`.gitignore`): `SPEC-ITERATION-2.md` (Stand 2026-09-12) ist die fachliche Vorgabe der v5.14-Iteration — autorisierter Betrag, kondensierter Excel-Report, Druck- und Spaltenoptimierung —, daneben die ältere `SPEC.md` und der Prototyp `terminal-report.html`, aus dem der Terminal-Report entstand. Bei Änderungen an Terminal-Report oder Excel-Finalisierung zuerst dort nachlesen. |
 | `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
@@ -108,7 +108,7 @@ Seit v4 enthält die HTML-Datei mehrere `<script>`-Blöcke: den eingebetteten XL
 PDF-Vendor (`<script id="vendor-jspdf">`, jsPDF 2.5.2 + jspdf-autotable 3.8.4, UMD, nur für den
 Settlement-Report-PDF-Export) und den App-Code (`<script id="app-logic">`) — **drei** Blöcke
 insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch **~1.58 MB** gross
-(1'581'163 Bytes, gemessen 2026-09-12 an v5.14.0 — davor 1'551'431 Bytes an v5.13.0, „~1.41 MB"
+(1'583'222 Bytes, gemessen 2026-09-12 an v5.14.1 — davor 1'551'431 Bytes an v5.13.0, „~1.41 MB"
 aus v5.12.0 und lange „~1.06 MB" aus v5.8; **die Zahl veraltet mit jeder Version, deshalb
 steht das Messdatum dabei und beim Bump wird nachgemessen statt geschätzt**. Seit v5.12 kommen die
 ~107 KB des eingebetteten Ablehngrund-Katalogs dazu, siehe „Reporting-Report"). Der Vendor
@@ -136,11 +136,13 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
    nach ihrem Autorisierungszeitpunkt — wird eine später abgeschlossen, wandert sie in den
    Zeitraum ihres `completedon`, wird sie storniert (`VOIDED`), verschwindet sie. Damit die
    bisherigen Zahlen **byte-identisch** bleiben (SPEC A1), sind `anzahl_transaktionen` und
-   `unsettled_anzahl` per `CASE` auf `FULFILL`/`COMPLETED` geschützt (gemeinsame Konstante
-   `AGGREGAT_KENNZAHLEN`); `brutto_gross`, Fees, Netto und `tip_total` brauchen keinen Guard,
-   weil `completedamount`, `totalappliedfees` und Trinkgeld-Lineitems bei `AUTHORIZED`
-   0/NULL sind — **das ist die Annahme, die Task 0 (`sql/autorisiert_verifikation.sql`, Q4)
-   noch bestätigen muss.** Eine Gruppe nur aus `AUTHORIZED`-Transaktionen erscheint als Zeile
+   `unsettled_anzahl` **und seit v5.14.1 `tip_total`** per `CASE` auf `FULFILL`/`COMPLETED`
+   geschützt (gemeinsame Konstante `AGGREGAT_KENNZAHLEN`). Der Tip-Guard ist **gemessen**:
+   Discovery Q4 (Space 73192, 2026-09-12) fand unter 64 `AUTHORIZED`-Transaktionen eine mit
+   Trinkgeld-Lineitem — ohne Guard wäre `tip_total` nicht mehr byte-identisch gewesen.
+   `brutto_gross`, Fees und Netto brauchen keinen Guard: `completedamount` und
+   `totalappliedfees` waren bei allen 64 exakt 0 (derselbe Lauf, siehe
+   „Wallee-Referenzwissen"). Eine Gruppe nur aus `AUTHORIZED`-Transaktionen erscheint als Zeile
    mit `brutto_gross = 0`, `anzahl_transaktionen = 0`, `autorisiert_gross > 0` — genau die
    Zeile, die die fehlende Submission zeigt.
 2. **`terminal`** ("Terminal-Report" im Mode-Selector) – wie `brand`, zusätzlich
@@ -304,9 +306,11 @@ Fachliche Vorgabe der v5.14-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-2.
   also mit; eine eigene Fusszeilen-Mechanik gibt es hier nicht), CSV (letzte Zeile nach einer
   Leerzeile), Excel (unter „Erstellt am …" **und** als Fussnote nach dem letzten Block),
   Panel der Modi `brand`/`terminal` (`#autorisiertHint`, Text zur Laufzeit aus der
-  Konstante) und Verlaufs-Excel (siehe „Abfrage-Verlauf"). Die Ergänzung „… oder eine
-  Teil-Einreichung" (SPEC O3) kommt erst, wenn Q3 der Discovery Teil-Captures zeigt —
-  dann **nur** die Konstante ändern.
+  Konstante) und Verlaufs-Excel (siehe „Abfrage-Verlauf"). Die in SPEC O3 erwogene
+  Ergänzung „… oder eine Teil-Einreichung" ist **nicht nötig**: Discovery Q3 (Space 73192,
+  98'233 abgeschlossene Transaktionen) fand **null** Zeilen mit `completedamount ≠
+  authorizationamount`. Sollte ein anderer Space Teil-Captures zeigen, ist es **nur** die
+  Konstante.
 - **Excel-Varianten Full / Kondensiert (SPEC §5.1–5.2):** `reportExportBloecke(modell,
   { variante })` — `'full'` (Default, auch bei unbekanntem Wert; `reportVariante()`) ist
   byte-identisch zu vorher plus Authorized; `'kondensiert'` verdichtet das Detail auf **eine
@@ -332,9 +336,14 @@ Fachliche Vorgabe der v5.14-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-2.
    wechselnden Spaltentypen, Kachel-Blöcke mit gemischter Wert-Spalte); am fertigen Blatt
    stehen Zahlformat und Fettschrift je Zelle bereits fest, und die Funktion bleibt trotzdem
    vendorfrei (eigene `A1`-Zerlegung). Das Ergebnis ist dasselbe, der Vertrag ein anderer.
-   **Folge, die zu kennen ist:** die Blöcke eines Blatts **teilen sich die Spalten** — unter
-   „TID" steht im Block „Total Outlet-Gruppen" der Kopf „Complete Demand", die Spalte misst
-   den längsten Eintrag über alle Blöcke.
+   **Und die Breite ist nicht „Länge + 2"** (§5.4), sondern kalibriert — siehe
+   „Excel-Export: gemeinsame Finalisierung": mit „+ 2" waren die Spalten in v5.14.0 sichtbar
+   zu breit, an einem echten Export nachgemessen.
+   **Folge, die zu kennen ist:** die Blöcke eines Blatts **teilen sich die Spalten**. Deshalb
+   stehen im Terminal-Report-Excel seit v5.14.1 die Kennzahlen **jedes** Blocks rechtsbündig
+   unter denen des Detail-Blocks (`spalteIm`/`verteile` in `exportReportXlsx`, leere Zellen
+   dazwischen): vorher mass die TID-Spalte den Kopf „Complete Demand" des Blocks „Total
+   Outlet-Gruppen" darunter (19 statt 8 Zeichen). CSV bleibt blockweise ohne Auffüllung.
 2. **Die Orange-Zelle ist zusätzlich fett** (§4.3 nennt nur die Schriftfarbe) — Orange allein
    ist auf dem hellen Grund als Zahl schwer zu lesen; bewusst, nicht versehentlich.
 3. **Der PDF-Hinweis ist kein eigener Fusszeilen-Mechanismus** (§4.4 spricht von der
@@ -380,13 +389,18 @@ Verlaufs-Download) läuft unmittelbar vor `book_append_sheet` durch
 Reine Funktionen, vendorfrei testbar (`test/xlsx-layout.test.js`); End-to-End mit dem Vendor
 in `report-xlsx`, `history-xlsx`, `reporting-xlsx`, `reporting-tds-xlsx`.
 
-- **Spaltenbreite (§5.4):** `xlsxSpaltenbreiten(ws)` → `!cols`, je Spalte der längste
-  Anzeigetext + 2 Zeichen: Text wie er ist, Zahlen nach ihrem Zahlformat
-  (`xlsxZahlAnzeige(wert, fmt)`: Nachkommastellen aus dem Muster, Tausendertrennung bei
-  `,`, Literale in Anführungszeichen wie `" CHF"`/`"%"` angehängt), fette Zellen × 1.1.
-  Über mehrere Spalten **verbundene** Zellen (Titel, Hinweise) werden nicht gemessen —
-  sonst bläht ein Hinweis Spalte A auf; ein überlanger Text bekommt `wrapText` über den
-  Zellstil. Grenzen 6 … 60 Zeichen. Der Reader liefert `!cols` nur mit `cellStyles: true`.
+- **Spaltenbreite (§5.4, kalibriert in v5.14.1):** `xlsxSpaltenbreiten(ws)` → `!cols`, je
+  Spalte der längste Anzeigetext **in Excels Einheit, der Ziffernbreite der Standardschrift
+  (Calibri 11)**: Zahlen zählen voll (nach ihrem Zahlformat, `xlsxZahlAnzeige(wert, fmt)`:
+  Nachkommastellen aus dem Muster, Tausendertrennung bei `,`, Literale in Anführungszeichen
+  wie `" CHF"`/`"%"` angehängt), Fliesstext × `XLSX_TEXT_FAKTOR` 0.88, Schriftgrösse ×
+  `sz/11` (Datenzellen stehen in 10 pt), fett × 1.1, dazu 1 Zeichen Polster
+  (`XLSX_SPALTE_POLSTER`; SheetJS legt beim Schreiben von sich aus ~0.8 Einheiten Zellpolster
+  dazu). „Länge + 2" aus der Spec ergab an einem echten Export sichtbar zu breite Spalten —
+  die Spec rechnet in Zeichen, Excel in Ziffernbreiten. Über mehrere Spalten **verbundene**
+  Zellen (Titel, Hinweise) werden nicht gemessen — sonst bläht ein Hinweis Spalte A auf; ein
+  überlanger Text bekommt `wrapText` über den Zellstil. Grenzen 6 … 60 Zeichen. Der Reader
+  liefert `!cols` nur mit `cellStyles: true`.
 - **Ränder und Seitenlayout (§5.3):** `XLSX_RAENDER` (0.5"/0.75"/0.3"), `xlsxSeitenlayout
   (spalten)` = A4 (`paperSize` 9), `fitToWidth 1`, `fitToHeight 0` (automatisch),
   Hochformat bis 8 Spalten, **Querformat ab 9** (`XLSX_QUERFORMAT_AB_SPALTEN`); der Full-
@@ -2078,20 +2092,30 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     (SPEC 2.2). An den Referenzdaten hält die Heuristik: jedes `(spaceid, valuedate)`-Paar
     bildet auf **genau eine** Referenz ab (über alle 82 Settlements geprüft). Wer die
     Kosten sparen will, schaltet die Checkbox ab — der Report degradiert dann sauber.
-- **Autorisierter Betrag (v5.14) — Schema belegt, Discovery ausstehend.** `transaction`
-  führt laut Analytics-Schema (nachgelesen 2026-09-12) `authorizedon` als `timestamp`, dazu
+- **Autorisierter Betrag (v5.14) — an Produktivdaten gemessen (Discovery Task 0,
+  `sql/autorisiert_verifikation.sql`, Space 73192, POS, letzte 90 Tage, gelaufen
+  2026-09-12; Rohdaten in `Terminal-Report-Tool/discovery-results/`, gitignored).**
+  `transaction` führt laut Analytics-Schema `authorizedon` als `timestamp`, dazu
   `authorizationamount`, `completedon`, `failedon`, `confirmedon`, `totalsettledamount`; eine
-  `voidedon`-Spalte gibt es nicht. Task 1 (`COALESCE(t.completedon, t.authorizedon)`) war
-  damit nicht blockiert. **Nicht belegt** sind die vier Annahmen aus
-  `sql/autorisiert_verifikation.sql`: Q1 (`authorizedon` bei `AUTHORIZED` und
-  `FULFILL`/`COMPLETED` gefüllt — sonst Rückfall auf `t.createdon`), Q2 (gibt es
-  liegengebliebene Autorisierungen, wie alt), Q3 (`completedamount` = `authorizationamount`
-  bei abgeschlossenen Transaktionen — bisher nur auf Attempt-Ebene aus Task 0 v5.11
-  bekannt: „bei `SUCCESSFUL` sind beide identisch"; Teil-Captures oder
-  Trinkgeld-Nachbuchungen würden den Hinweis G2 um „… oder eine Teil-Einreichung"
-  erweitern), Q4 (`completedamount`, `totalappliedfees`, Trinkgeld bei `AUTHORIZED` 0/NULL —
-  der Grund, warum die Betragssummen keinen `CASE`-Guard tragen). Befunde hier nachtragen,
-  sobald die Queries im Portal gelaufen sind.
+  `voidedon`-Spalte gibt es nicht. Befunde — wie überall „bisher beobachtet", ein Space:
+  - **Q1:** `authorizedon` ist bei `FULFILL` (98'233) und `AUTHORIZED` (64) **durchgehend
+    gefüllt**, bei `FAILED` (1'773) durchgehend leer; `completedon` fehlt bei `AUTHORIZED`
+    ausnahmslos, und `authorizedon` liegt nie nach `completedon`. Der Zustand `COMPLETED`
+    kam gar nicht vor (nur `FULFILL`), `VOIDED` 10-mal. Kein Rückfall auf `createdon`.
+  - **Q2:** 64 offene Autorisierungen über CHF 2'336.70, **alle jünger als zwei Tage** (62
+    unter einem Tag). Liegengebliebene Autorisierungen sind also real, aber kurzlebig — die
+    `VOIDED`-Fälle (10 in 90 Tagen, bis über 30 Tage alt) zeigen, wo eine nie eingereichte
+    endet.
+  - **Q3/Q3b:** bei allen 98'233 abgeschlossenen Transaktionen ist `completedamount` **exakt**
+    gleich `authorizationamount` (Summe je 4'356'545.18, null Zeilen mit Differenz, keine
+    Nachbuchung, kein Teil-Capture). Der Hinweis G2 bleibt ohne den Zusatz aus SPEC O3.
+  - **Q4:** bei den 64 `AUTHORIZED` sind `completedamount`, `totalappliedfees` und
+    `totalsettledamount` **64-mal 0**, kein Settlement-Record — **aber eine trägt bereits ein
+    Trinkgeld-Lineitem.** Deshalb ist `tip_total` seit v5.14.1 wie die Zähler auf
+    `FULFILL`/`COMPLETED` geschützt; `brutto_gross`, Fees und Netto bleiben ohne Guard.
+  - **Q5:** `terminal_id` und `paymentconnectorconfiguration_id` sind bei allen 64
+    `AUTHORIZED` gesetzt, jeder Terminal-Treffer aufgelöst — eine offene Autorisierung
+    erscheint im Terminal-Report unter ihrem Terminal (SPEC A2).
 - **Charge-Attempt-Befunde (Task 0, v5.11) — bisher beobachtet, nicht „gibt es nicht".**
   Grundlage sind **zwei** Spaces über **einen** Monat: der **POS-Referenzspace** (12'537
   Attempts) und der **E-Com-Referenzspace** (1'855 Attempts), jeweils **Juli 2026**,
@@ -2347,21 +2371,19 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
 
 ## Offene Punkte / Ideen
 
-- **Autorisierter Betrag (v5.14) — was noch aussteht:**
-  - **Task 0 (Discovery) ist geschrieben, aber nicht gelaufen.** `sql/autorisiert_verifikation.sql`
-    Q1–Q5 an Space 40402 im Portal ausführen; Ergebnisse lokal nach
-    `Terminal-Report-Tool/discovery-results/`, Befunde ins „Wallee-Referenzwissen". Zeigt Q4
-    bei `AUTHORIZED` doch Beträge/Gebühren/Trinkgeld ≠ 0, brauchen `brutto_gross`,
-    `transaction_fee_total`, `netto` und `tip_total` denselben `CASE`-Guard wie die Zähler
-    (`AGGREGAT_KENNZAHLEN`). Zeigt Q1 ein leeres `authorizedon`, Rückfall auf `t.createdon`
-    in `txBasisBedingungen`.
-  - **O3:** zeigt Q3 Zeilen mit `completedamount ≠ authorizationamount`, wird
-    `AUTORISIERT_HINWEIS` um „… oder eine Teil-Einreichung" ergänzt — eine Konstante, alle
-    Ausgaben. Bis dahin steht G2 wörtlich (Entscheid vom 2026-09-12).
-  - **A2 und A4 sind nicht am echten Excel/Portal geprüft:** dass eine `AUTHORIZED`-Transaktion
-    aus Space 40402 tatsächlich unter ihrem Terminal erscheint (Q5 prüft `terminal_id`), und
-    der Ausdruck in Excel/Numbers/LibreOffice — die Tests belegen `fitToWidth="1"`,
-    `fitToPage="1"` und die Breiten im XML, nicht das Druckbild.
+- **Autorisierter Betrag (v5.14/v5.14.1) — was noch aussteht:**
+  - ~~Task 0 (Discovery) ist geschrieben, aber nicht gelaufen.~~ **Gelaufen am 2026-09-12**
+    (Space 73192 statt des in der Spec genannten 40402), Befunde unter
+    „Wallee-Referenzwissen"; die eine Abweichung (Trinkgeld bei `AUTHORIZED`) ist in v5.14.1
+    als Guard eingebaut, O3 ist erledigt (keine Teil-Captures, Hinweis bleibt G2).
+  - **A4 ist nicht am Druckbild geprüft:** die Tests belegen `fitToWidth="1"`,
+    `fitToPage="1"` und die Breiten im XML; die Kalibrierung der Breiten stammt aus einem
+    echten Export (Spalten waren mit „Länge + 2" sichtbar zu breit), der Ausdruck selbst in
+    Excel/Numbers/LibreOffice wurde nicht angeschaut.
+  - **Die Breiten-Kalibrierung ist ein Richtwert für Calibri.** Text × 0.88 stimmt für
+    gemischten Fliesstext; eine Spalte aus lauter Grossbuchstaben (z. B. `TWINT`, `VISA`)
+    kann knapp werden, bisher aber nur bei kurzen Werten unter der Untergrenze 6. Zeigt ein
+    Export abgeschnittenen Text, `XLSX_TEXT_FAKTOR` anheben, nicht die Untergrenze.
   - **Kein Filter-/Variantenwahl für CSV und PDF** (SPEC §9, Folge-Iteration).
 - Auszahlungsreferenz-Zuordnung über Withdrawals (`payoutref`-CTE) ist heuristisch
   (zeitbasiert) — beobachten, ob es einen direkten Verknüpfungspfad gibt. Betrifft seit v5.10

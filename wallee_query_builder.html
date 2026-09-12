@@ -855,7 +855,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.14.0</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.14.1</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -2630,7 +2630,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.14.0';
+  const APP_VERSION = '5.14.1';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -8279,7 +8279,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // --- Balken als inline-SVG ------------------------------------------------
   // Kein Chart-Vendor (SPEC 5): die Datei ist mit den beiden bestehenden
   // Vendor-Bloecken und dem eingebetteten Ablehngrund-Katalog bereits ~1.58 MB
-  // gross (gemessen 2026-09-12 an v5.14.0; davor "~1.48 MB" aus v5.13.0,
+  // gross (gemessen 2026-09-12 an v5.14.1; davor "~1.48 MB" aus v5.13.0,
   // "~1.41 MB" aus v5.12.0 und "~1.06 MB" aus v5.8 - die Zahl veraltet mit
   // jeder Version, deshalb steht das Messdatum dabei), und ein Balkendiagramm
   // sind ein paar <rect>. Das
