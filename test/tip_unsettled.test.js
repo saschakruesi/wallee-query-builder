@@ -126,9 +126,11 @@ test('Brand-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GROUP 
   assertTipPreAggregated(sql);
 });
 
-test('Brand-Query: COUNT(*) und SUM(t.completedamount) unveraendert', () => {
+test('Brand-Query: geschuetzter Zaehler und SUM(t.completedamount) unveraendert', () => {
   const sql = B.buildBrandQuery(RANGE);
-  assert.match(sql, /COUNT\(\*\)\s+AS anzahl_transaktionen/);
+  // Seit v5.14 zaehlt anzahl_transaktionen nur abgeschlossene Transaktionen
+  // (AUTHORIZED ist in der Basis, aber nicht im Zaehler - SPEC-ITERATION-2 §2.3).
+  assert.match(sql, /SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN 1 ELSE 0 END\)\s+AS anzahl_transaktionen/);
   assert.match(sql, /SUM\(t\.completedamount\)\s+AS brutto_gross/);
 });
 
@@ -145,9 +147,11 @@ test('Terminal-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GRO
   assertTipPreAggregated(sql);
 });
 
-test('Terminal-Query: COUNT(*) und SUM(t.completedamount) unveraendert', () => {
+test('Terminal-Query: geschuetzter Zaehler und SUM(t.completedamount) unveraendert', () => {
   const sql = B.buildTerminalQuery({ ...RANGE, terminalIds: ['T-1'] });
-  assert.match(sql, /COUNT\(\*\)\s+AS anzahl_transaktionen/);
+  // Seit v5.14 zaehlt anzahl_transaktionen nur abgeschlossene Transaktionen
+  // (AUTHORIZED ist in der Basis, aber nicht im Zaehler - SPEC-ITERATION-2 §2.3).
+  assert.match(sql, /SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN 1 ELSE 0 END\)\s+AS anzahl_transaktionen/);
   assert.match(sql, /SUM\(t\.completedamount\)\s+AS brutto_gross/);
 });
 

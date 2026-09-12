@@ -18,8 +18,10 @@ test('Harness laedt die Builder', () => {
 
 test('Brand-Query: korrektes Zeitfenster, keine 23:59:59-Falle', () => {
   const sql = B.buildBrandQuery(RANGE);
-  assert.match(sql, /t\.completedon >= TIMESTAMP '2026-07-01 00:00:00'/);
-  assert.match(sql, /t\.completedon <  TIMESTAMP '2026-07-02 00:00:00'/);
+  // Seit v5.14 liegt das Fenster auf COALESCE(completedon, authorizedon) - fuer
+  // abgeschlossene Transaktionen exakt das alte completedon-Fenster.
+  assert.match(sql, /COALESCE\(t\.completedon, t\.authorizedon\) >= TIMESTAMP '2026-07-01 00:00:00'/);
+  assert.match(sql, /COALESCE\(t\.completedon, t\.authorizedon\) <  TIMESTAMP '2026-07-02 00:00:00'/);
   assert.doesNotMatch(sql, /<= TIMESTAMP/);
 });
 
@@ -491,4 +493,108 @@ test('Settlement-Query ohne Referenz ist byte-identisch zum Default', () => {
   assert.doesNotMatch(ohne, /payoutref/i);
   assert.doesNotMatch(ohne, /settlement_reference/i);
   assert.strictEqual((ohne.match(/GROUP BY/g) || []).length, 1);
+});
+
+// --- Autorisierter Betrag (v5.14, Terminal-Report-Tool/SPEC-ITERATION-2.md §2) ---
+//
+// brand und terminal nehmen Transaktionen im Zustand AUTHORIZED in die Basis auf,
+// eingeordnet nach authorizedon, und weisen SUM(t.authorizationamount) aus. Die
+// bestehenden Zaehler sind auf FULFILL/COMPLETED geschuetzt, damit die alten
+// Zahlen byte-identisch bleiben (SPEC A1). Alle uebrigen Builder bleiben beim
+// completedon-Fenster und beim engen State-Filter.
+
+const AUTORISIERT_BUILDER = {
+  brand: () => B.buildBrandQuery(RANGE),
+  terminal: () => B.buildTerminalQuery({ ...RANGE, terminalIds: ['T-001'] }),
+};
+
+for (const [name, bauen] of Object.entries(AUTORISIERT_BUILDER)) {
+  test(`${name}: autorisiert_gross = SUM(t.authorizationamount), direkt hinter brutto_gross`, () => {
+    const sql = bauen();
+    assert.match(sql, /SUM\(t\.authorizationamount\)\s+AS autorisiert_gross/);
+    const brutto = sql.indexOf('AS brutto_gross');
+    const autorisiert = sql.indexOf('AS autorisiert_gross');
+    const fee = sql.indexOf('AS transaction_fee_total');
+    assert.ok(brutto !== -1 && autorisiert !== -1 && fee !== -1);
+    assert.ok(brutto < autorisiert && autorisiert < fee,
+      'autorisiert_gross muss im SELECT direkt rechts von brutto_gross stehen');
+    // Aggregat, nicht Gruppierungsschluessel.
+    // lastIndexOf: das erste GROUP BY sitzt im tip-CTE.
+    const groupBy = sql.slice(sql.lastIndexOf('GROUP BY'));
+    assert.doesNotMatch(groupBy, /authorizationamount|autorisiert_gross/);
+  });
+
+  test(`${name}: Fenster auf COALESCE(completedon, authorizedon) in CTE und Hauptselect`, () => {
+    const sql = bauen();
+    const von = sql.match(/COALESCE\(t\.completedon, t\.authorizedon\) >= TIMESTAMP '2026-07-01 00:00:00'/g) || [];
+    const bis = sql.match(/COALESCE\(t\.completedon, t\.authorizedon\) <  TIMESTAMP '2026-07-02 00:00:00'/g) || [];
+    assert.strictEqual(von.length, 2, 'Untergrenze einmal im tx-CTE, einmal im Hauptselect');
+    assert.strictEqual(bis.length, 2, 'Obergrenze einmal im tx-CTE, einmal im Hauptselect');
+    // Kein nacktes completedon-Fenster mehr - CTE und Hauptselect beschreiben
+    // dieselbe Menge.
+    assert.doesNotMatch(sql, /\bt\.completedon >= TIMESTAMP/);
+    assert.doesNotMatch(sql, /\bt\.completedon <  TIMESTAMP/);
+  });
+
+  test(`${name}: State-Filter mit AUTHORIZED, ebenfalls in CTE und Hauptselect`, () => {
+    const sql = bauen();
+    const erweitert = sql.match(/t\.state IN \('AUTHORIZED', 'FULFILL', 'COMPLETED'\)/g) || [];
+    assert.strictEqual(erweitert.length, 2);
+    // Der enge Filter darf nur noch als Schutz der Zaehler vorkommen (innerhalb
+    // eines CASE, gefolgt von THEN), nie als WHERE-Bedingung am Zeilenende.
+    assert.doesNotMatch(sql, /AND t\.state IN \('FULFILL', 'COMPLETED'\)\s*$/m);
+  });
+
+  test(`${name}: anzahl_transaktionen zaehlt nur abgeschlossene, kein COUNT(*)`, () => {
+    const sql = bauen();
+    assert.match(sql, /SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN 1 ELSE 0 END\)\s+AS anzahl_transaktionen/);
+    assert.doesNotMatch(sql, /COUNT\(\*\)/);
+  });
+
+  test(`${name}: unsettled_anzahl zaehlt eine offene Autorisierung nicht mit`, () => {
+    const sql = bauen();
+    const m = sql.match(/SUM\(CASE WHEN([\s\S]*?)THEN 1 ELSE 0 END\)\s+AS unsettled_anzahl/);
+    assert.ok(m, 'CASE-Ausdruck fuer unsettled_anzahl nicht gefunden');
+    const cond = m[1];
+    assert.match(cond, /\(t\.totalappliedfees IS NULL OR t\.totalappliedfees = 0\)\s*AND\s*se\.transaction_id IS NULL\s*AND\s*t\.state IN \('FULFILL', 'COMPLETED'\)/);
+  });
+
+  test(`${name}: Betragssummen unveraendert (brutto, fee, netto, tip ohne CASE)`, () => {
+    const sql = bauen();
+    assert.match(sql, /SUM\(t\.completedamount\)\s+AS brutto_gross/);
+    assert.match(sql, /SUM\(t\.totalappliedfees\)\s+AS transaction_fee_total/);
+    assert.match(sql, /SUM\(t\.completedamount\) - COALESCE\(SUM\(t\.totalappliedfees\), 0\) AS netto/);
+    assert.match(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)\s+AS tip_total/);
+  });
+}
+
+test('txCte: nur mit autorisiert=true kommt das COALESCE-Fenster und AUTHORIZED', () => {
+  const alt = B.txCte(RANGE);
+  const neu = B.txCte({ ...RANGE, autorisiert: true });
+  assert.doesNotMatch(alt, /authorizedon|AUTHORIZED/);
+  assert.match(neu, /COALESCE\(t\.completedon, t\.authorizedon\) >= TIMESTAMP '2026-07-01 00:00:00'/);
+  assert.match(neu, /COALESCE\(t\.completedon, t\.authorizedon\) <  TIMESTAMP '2026-07-02 00:00:00'/);
+  assert.match(neu, /t\.state IN \('AUTHORIZED', 'FULFILL', 'COMPLETED'\)/);
+  assert.match(neu, /t\.spaceid = 12345/);
+});
+
+test('Schnappschuss: export, card, settlement bleiben beim completedon-Fenster und engen State-Filter', () => {
+  const cols = { ...B.defaultColumns(), maskedcard: true, settlestate: true };
+  const sqls = {
+    export: B.buildExportQuery({ ...RANGE, terminalIds: [], cols }),
+    card: B.buildCardQuery({ ...RANGE, terminalIds: [], last4: '1234' }),
+    settlement: B.buildSettlementQuery({ start: RANGE.start, end: RANGE.end, reference: true }),
+  };
+  for (const [name, sql] of Object.entries(sqls)) {
+    assert.match(sql, /t\.state IN \('FULFILL', 'COMPLETED'\)/, name);
+    assert.match(sql, /t\.completedon >= TIMESTAMP/, name);
+    assert.doesNotMatch(sql, /authorizedon|AUTHORIZED|authorizationamount/, name);
+  }
+});
+
+test('Schnappschuss: die Reporting-Queries kennen weder authorizedon noch AUTHORIZED', () => {
+  const agg = B.buildReportingQuery({ ...RANGE, channels: [], byTerminal: false, terminalIds: [] });
+  const tds = B.buildReportingTdsQuery(RANGE);
+  assert.doesNotMatch(agg, /authorizedon|'AUTHORIZED'/);
+  assert.doesNotMatch(tds, /authorizedon|'AUTHORIZED'/);
 });

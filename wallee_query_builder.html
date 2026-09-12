@@ -2881,25 +2881,47 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     return `${col} IN (${ids.join(', ')})`;
   }
 
+  // Kennzahlen der Aggregat-Modi brand und terminal (identisch in beiden).
+  // Reihenfolge = CSV-Spaltenreihenfolge; autorisiert_gross steht bewusst
+  // direkt rechts von brutto_gross (SPEC-ITERATION-2 §3).
+  //
+  // anzahl_transaktionen und unsettled_anzahl zaehlen nur FULFILL/COMPLETED:
+  // eine offene Autorisierung (AUTHORIZED, seit v5.14 in der Basis) ist weder
+  // eine abgeschlossene Transaktion noch "wartet auf Abrechnung" - sie ist noch
+  // gar nicht eingereicht. Ohne diesen Schutz wuerden die alten Zahlen bei
+  // jeder liegengebliebenen Autorisierung anders aussehen als in v5.13.
+  // autorisiert_gross laeuft dagegen ueber alle Zustaende der Basis - genau die
+  // Differenz zu brutto_gross ist die fehlende Submission.
+  const AGGREGAT_KENNZAHLEN = `SUM(CASE WHEN t.state IN ('FULFILL', 'COMPLETED') THEN 1 ELSE 0 END)
+                                                                 AS anzahl_transaktionen,
+    SUM(CASE WHEN (t.totalappliedfees IS NULL OR t.totalappliedfees = 0)
+              AND se.transaction_id IS NULL
+              AND t.state IN ('FULFILL', 'COMPLETED') THEN 1 ELSE 0 END)
+                                                                 AS unsettled_anzahl,
+    SUM(t.completedamount)                                       AS brutto_gross,
+    SUM(t.authorizationamount)                                   AS autorisiert_gross,
+    SUM(t.totalappliedfees)                                      AS transaction_fee_total,
+    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto,
+    COALESCE(SUM(tip.tip_amount), 0)                             AS tip_total`;
+
   // --- SQL Generation: Brand ----------------------------------------------
   function buildBrandQuery({ spaceIds, start, end }) {
     // WITH-Klausel fuer unsettled_anzahl (Erweiterung 2) und tip_total
     // (Erweiterung 1). Beide CTEs sind ueber tx eingegrenzt, damit sie nicht die
     // gesamte payfacsettlementrecord- bzw. lineitem-Historie des Space scannen.
-    return `WITH ${txCte({ spaceIds, start, end })},
+    // Basis inkl. AUTHORIZED (autorisiert: true, siehe txBasisBedingungen):
+    // die Zaehler unten sind deshalb auf FULFILL/COMPLETED geschuetzt, die
+    // Betragssummen brauchen keinen Guard (bei AUTHORIZED sind completedamount,
+    // totalappliedfees und Trinkgeld 0/NULL - sql/autorisiert_verifikation.sql).
+    const basis = { start, end, autorisiert: true };
+    return `WITH ${txCte({ spaceIds, ...basis })},
 ${settleExistsCte()},
 ${tipCte({ spaceIds })}
 SELECT
     t.spaceid                                                    AS space_id,
     COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')              AS brand,
     t.currency                                                   AS waehrung,
-    COUNT(*)                                                     AS anzahl_transaktionen,
-    SUM(CASE WHEN (t.totalappliedfees IS NULL OR t.totalappliedfees = 0)
-              AND se.transaction_id IS NULL THEN 1 ELSE 0 END)  AS unsettled_anzahl,
-    SUM(t.completedamount)                                       AS brutto_gross,
-    SUM(t.totalappliedfees)                                      AS transaction_fee_total,
-    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto,
-    COALESCE(SUM(tip.tip_amount), 0)                             AS tip_total
+    ${AGGREGAT_KENNZAHLEN}
 FROM transaction t
 LEFT JOIN paymentconnectorconfiguration pcc
        ON pcc.id      = t.paymentconnectorconfiguration_id
@@ -2909,9 +2931,7 @@ LEFT JOIN paymentconnector pc
 LEFT JOIN settle_exists se ON se.transaction_id = t.id
 LEFT JOIN tip           ON tip.transaction_id   = t.id
 WHERE ${spaceInClause(spaceIds, 't.spaceid')}
-  AND t.completedon >= TIMESTAMP '${start}'
-  AND t.completedon <  TIMESTAMP '${end}'
-  AND t.state IN ('FULFILL', 'COMPLETED')
+  AND ${txBasisBedingungen(basis).join('\n  AND ')}
 GROUP BY
     t.spaceid,
     COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN'),
@@ -2931,7 +2951,8 @@ ORDER BY
       : `pt.identifier IN (${idList})`;
     // WITH-Klausel fuer unsettled_anzahl (Erweiterung 2) und tip_total
     // (Erweiterung 1) - siehe Kommentar in buildBrandQuery.
-    return `WITH ${txCte({ spaceIds, start, end })},
+    const basis = { start, end, autorisiert: true };
+    return `WITH ${txCte({ spaceIds, ...basis })},
 ${settleExistsCte()},
 ${tipCte({ spaceIds })}
 SELECT
@@ -2940,13 +2961,7 @@ SELECT
     pt.name                                                      AS terminal_name,
     COALESCE(pc.name['en-US'], pcc.name, 'UNKNOWN')              AS brand,
     t.currency                                                   AS waehrung,
-    COUNT(*)                                                     AS anzahl_transaktionen,
-    SUM(CASE WHEN (t.totalappliedfees IS NULL OR t.totalappliedfees = 0)
-              AND se.transaction_id IS NULL THEN 1 ELSE 0 END)  AS unsettled_anzahl,
-    SUM(t.completedamount)                                       AS brutto_gross,
-    SUM(t.totalappliedfees)                                      AS transaction_fee_total,
-    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto,
-    COALESCE(SUM(tip.tip_amount), 0)                             AS tip_total
+    ${AGGREGAT_KENNZAHLEN}
 FROM transaction t
 LEFT JOIN paymentconnectorconfiguration pcc
        ON pcc.id      = t.paymentconnectorconfiguration_id
@@ -2959,9 +2974,7 @@ LEFT JOIN paymentterminal pt
 LEFT JOIN settle_exists se ON se.transaction_id = t.id
 LEFT JOIN tip           ON tip.transaction_id   = t.id
 WHERE ${spaceInClause(spaceIds, 't.spaceid')}
-  AND t.completedon >= TIMESTAMP '${start}'
-  AND t.completedon <  TIMESTAMP '${end}'
-  AND t.state IN ('FULFILL', 'COMPLETED')
+  AND ${txBasisBedingungen(basis).join('\n  AND ')}
   AND ${inClause}
 GROUP BY
     t.spaceid,
@@ -2975,17 +2988,41 @@ ORDER BY
     brutto_gross DESC;`;
   }
 
+  // Zeitfenster + Statusfilter der Transaktionsbasis, als Liste von
+  // Bedingungen (der Aufrufer haengt sie mit seiner Einrueckung per AND an).
+  //
+  // Standard: t.completedon im Zeitraum und t.state IN (FULFILL, COMPLETED) -
+  // der Grundsatz aller Modi ("Tagesabschluss, nicht Erstellung").
+  //
+  // autorisiert: true (nur brand/terminal, seit v5.14): zusaetzlich Transaktionen
+  // im Zustand AUTHORIZED, eingeordnet nach t.authorizedon. Fuer abgeschlossene
+  // Transaktionen ist COALESCE(completedon, authorizedon) = completedon, die
+  // Menge also exakt die alte; dazu kommen offene Autorisierungen (freigegeben,
+  // aber ohne Submission/Tagesabschluss) - genau die Differenz, die die Spalte
+  // autorisiert_gross sichtbar macht. Wird eine solche Transaktion spaeter
+  // abgeschlossen, wandert sie in den Zeitraum ihres completedon; wird sie
+  // storniert (VOIDED), verschwindet sie. Die Zaehler der beiden Queries sind
+  // auf FULFILL/COMPLETED geschuetzt, damit die alten Zahlen unveraendert bleiben.
+  function txBasisBedingungen({ start, end, autorisiert }) {
+    const zeitpunkt = autorisiert ? 'COALESCE(t.completedon, t.authorizedon)' : 't.completedon';
+    const zustaende = autorisiert ? "('AUTHORIZED', 'FULFILL', 'COMPLETED')" : "('FULFILL', 'COMPLETED')";
+    return [
+      `${zeitpunkt} >= TIMESTAMP '${start}'`,
+      `${zeitpunkt} <  TIMESTAMP '${end}'`,
+      `t.state IN ${zustaende}`,
+    ];
+  }
+
   // Gemeinsame Eingrenzung der Transaktionen (Space + Zeitraum + Status).
-  // Wird von card-, settle-, payoutref-CTE und vom Settlement-Modus genutzt,
-  // damit die teuren Joins nie ueber die gesamte Historie laufen.
-  function txCte({ spaceIds, start, end }) {
+  // Wird von card-, settle-, payoutref-CTE, von brand/terminal (mit
+  // autorisiert: true) und vom Settlement-Modus genutzt, damit die teuren Joins
+  // nie ueber die gesamte Historie laufen.
+  function txCte({ spaceIds, start, end, autorisiert }) {
     return `tx AS (
     SELECT t.id
     FROM transaction t
     WHERE ${spaceInClause(spaceIds, 't.spaceid')}
-      AND t.completedon >= TIMESTAMP '${start}'
-      AND t.completedon <  TIMESTAMP '${end}'
-      AND t.state IN ('FULFILL', 'COMPLETED')
+      AND ${txBasisBedingungen({ start, end, autorisiert }).join('\n      AND ')}
 )`;
   }
 
