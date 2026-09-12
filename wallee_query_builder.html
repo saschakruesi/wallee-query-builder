@@ -10284,52 +10284,102 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Kennzahl-Reihenfolge, ueberall identisch (SPEC-ITERATION-2 §4.2). Im Kopf
   // englisch wie die bestehenden Spalten ("Authorized", Entscheid O1);
   // "Autorisiert" heisst die Kennzahl nur im Hinweistext.
-  const KENNZAHL_SPALTEN = ['Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.'];
-  const kennzahlWerte = k => [unitsZuZahl(k.completeDemand), unitsZuZahl(k.authorized),
-    unitsZuZahl(k.tip), k.unmatched, k.count];
+  // Jede Kennzahl mit Kopf, Spaltentyp (der XLSX-Export haengt daran das
+  // Zahlformat: 'betrag' | 'zahl') und Zugriff auf die Modell-Kennzahlen.
+  const KENNZAHL_DEFS = [
+    { label: 'Complete Demand', typ: 'betrag', wert: k => unitsZuZahl(k.completeDemand) },
+    { label: 'Authorized',      typ: 'betrag', wert: k => unitsZuZahl(k.authorized) },
+    { label: 'Tip',             typ: 'betrag', wert: k => unitsZuZahl(k.tip) },
+    { label: 'Unmatched',       typ: 'zahl',   wert: k => k.unmatched },
+    { label: 'Anz.',            typ: 'zahl',   wert: k => k.count },
+  ];
+  const KENNZAHL_SPALTEN = KENNZAHL_DEFS.map(d => d.label);
 
-  // Spaltentypen je Block - der XLSX-Export haengt daran das Zahlformat.
-  // 'text' | 'betrag' | 'zahl'
-  function spaltenTypen(anzahlText) {
-    return [...Array(anzahlText).fill('text'), 'betrag', 'betrag', 'betrag', 'zahl', 'zahl'];
+  // Varianten des Excel-Exports (SPEC-ITERATION-2 §5): 'full' = alle Ebenen und
+  // Kennzahlen; 'kondensiert' = Detail nur je Terminal x Brand-Gruppe (keine
+  // einzelnen Marken) und ohne die Spalten Unmatched und Anz. - in ALLEN
+  // Bloecken. Die Verdichtung ist eine Export-Entscheidung (G4): ein Modell,
+  // die Blockschicht verdichtet. CSV und PDF bleiben Full.
+  const REPORT_VARIANTE_DEFAULT = 'full';
+  const REPORT_VARIANTEN = ['full', 'kondensiert'];
+  const KENNZAHLEN_KONDENSIERT = ['Complete Demand', 'Authorized', 'Tip'];
+
+  function reportVariante(wert) {
+    return REPORT_VARIANTEN.includes(wert) ? wert : REPORT_VARIANTE_DEFAULT;
   }
 
-  function reportExportBloecke(modell) {
+  function kennzahlDefs(variante) {
+    return variante === 'kondensiert'
+      ? KENNZAHL_DEFS.filter(d => KENNZAHLEN_KONDENSIERT.includes(d.label))
+      : KENNZAHL_DEFS;
+  }
+
+  // Marken eines Terminals je Brand-Gruppe summiert - in 1e-8-Einheiten, erst
+  // danach unitsZuZahl (sonst Gleitkomma-Rauschen). Reihenfolge nachName.
+  function brandGruppenSummen(brands) {
+    const summen = new Map();
+    brands.forEach(b => {
+      if (!summen.has(b.brandGroup)) summen.set(b.brandGroup, leereKennzahlen());
+      const z = summen.get(b.brandGroup);
+      z.completeDemand += b.completeDemand;
+      z.authorized += b.authorized;
+      z.tip += b.tip;
+      z.unmatched += b.unmatched;
+      z.count += b.count;
+    });
+    return [...summen.keys()].sort(nachName).map(bg => Object.assign({ brandGroup: bg }, summen.get(bg)));
+  }
+
+  function reportExportBloecke(modell, optionen) {
     const m = modell || { detail: [], outletTotals: [], brandTotals: [],
       grandTotal: leereKennzahlen() };
+    const variante = reportVariante(optionen && optionen.variante);
+    const defs = kennzahlDefs(variante);
+    const kopf = defs.map(d => d.label);
+    const werte = k => defs.map(d => d.wert(k));
+    const typen = anzahlText => [...Array(anzahlText).fill('text'), ...defs.map(d => d.typ)];
 
     const detailRows = [];
     m.detail.forEach(o => {
       o.terminals.forEach(t => {
-        t.brands.forEach(b => {
-          detailRows.push([o.outlet, t.name, t.tid, b.brand, b.brandGroup, ...kennzahlWerte(b)]);
-        });
+        if (variante === 'kondensiert') {
+          brandGruppenSummen(t.brands).forEach(g => {
+            detailRows.push([o.outlet, t.name, t.tid, g.brandGroup, ...werte(g)]);
+          });
+        } else {
+          t.brands.forEach(b => {
+            detailRows.push([o.outlet, t.name, t.tid, b.brand, b.brandGroup, ...werte(b)]);
+          });
+        }
       });
     });
+    const detailKopf = variante === 'kondensiert'
+      ? ['Outlet-Gruppe', 'Terminal', 'TID', 'Brand-Gruppe']
+      : ['Outlet-Gruppe', 'Terminal', 'TID', 'Marke', 'Brand-Gruppe'];
 
     return [
       {
         name: 'Total Outlet-Gruppen',
-        header: ['Outlet-Gruppe', 'Brand-Gruppe', ...KENNZAHL_SPALTEN],
-        typen: spaltenTypen(2),
-        rows: m.outletTotals.map(o => [o.outlet, o.brandGroup, ...kennzahlWerte(o)]),
+        header: ['Outlet-Gruppe', 'Brand-Gruppe', ...kopf],
+        typen: typen(2),
+        rows: m.outletTotals.map(o => [o.outlet, o.brandGroup, ...werte(o)]),
       },
       {
         name: 'Total Brand-Gruppen',
-        header: ['Brand-Gruppe', ...KENNZAHL_SPALTEN],
-        typen: spaltenTypen(1),
-        rows: m.brandTotals.map(b => [b.brandGroup, ...kennzahlWerte(b)]),
+        header: ['Brand-Gruppe', ...kopf],
+        typen: typen(1),
+        rows: m.brandTotals.map(b => [b.brandGroup, ...werte(b)]),
       },
       {
         name: 'Gesamttotal',
-        header: ['', ...KENNZAHL_SPALTEN],
-        typen: spaltenTypen(1),
-        rows: [['Total', ...kennzahlWerte(m.grandTotal)]],
+        header: ['', ...kopf],
+        typen: typen(1),
+        rows: [['Total', ...werte(m.grandTotal)]],
       },
       {
         name: 'Detail',
-        header: ['Outlet-Gruppe', 'Terminal', 'TID', 'Marke', 'Brand-Gruppe', ...KENNZAHL_SPALTEN],
-        typen: spaltenTypen(5),
+        header: [...detailKopf, ...kopf],
+        typen: typen(detailKopf.length),
         rows: detailRows,
       },
     ];

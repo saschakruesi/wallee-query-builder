@@ -340,6 +340,8 @@ const EXPORTED = [
   'ingestReportCsv',
   'renderReport',
   'reportExportBloecke',
+  'reportVariante',
+  'REPORT_VARIANTEN',
   'buildReportCsv',
   'exportReportXlsx',
   // API-Anbindung (Task 11), reine Helfer
