@@ -235,3 +235,25 @@ test('XLSX: kein Blatt traegt eine Zeile aus block.kuchen', async () => {
     });
   }));
 });
+
+// --- v5.14: gemeinsame XLSX-Finalisierung (SPEC-ITERATION-2 §5.5) -----------
+// Nur die Zusicherung, dass die Blaetter durch xlsxBlattFinalisieren und
+// xlsxSchreibenUndLaden laufen: Spaltenbreiten nicht mehr konstant, Raender
+// gesetzt, Seitenlayout in jedem sheetN.xml eingebettet.
+test('XLSX: jedes Blatt hat gemessene Spaltenbreiten, Raender und Seitenlayout', async () => {
+  const { bytes, wb } = await exportiereUndLies();
+  const cfb = XLSX.CFB.read(bytes, { type: 'buffer' });
+  wb.SheetNames.forEach((name, i) => {
+    const ws = wb.Sheets[name];
+    const cols = (ws['!cols'] || []).map(c => Math.round(c.wch));
+    assert.ok(cols.length > 0, name + ': !cols fehlt');
+    assert.ok(!cols.every((w, c) => w === (c === 0 ? 26 : 15)), name + ': feste Breiten 26/15 sind Geschichte');
+    assert.ok(cols.every(w => w >= 6 && w <= 60), name + ': Breiten in [6, 60]');
+    assert.deepStrictEqual(plain(ws['!margins']),
+      { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 }, name + ': Raender');
+    const datei = XLSX.CFB.find(cfb, `/xl/worksheets/sheet${i + 1}.xml`);
+    const xml = new TextDecoder().decode(datei.content);
+    assert.match(xml, /<sheetPr><pageSetUpPr fitToPage="1"\/><\/sheetPr>/, name + ': fitToPage');
+    assert.match(xml, /<pageSetup paperSize="9" orientation="(portrait|landscape)" fitToWidth="1" fitToHeight="0"\/>/, name + ': pageSetup');
+  });
+});

@@ -74,25 +74,64 @@ vm.runInContext(
   blockInhalt('app-logic') +
   '\n;globalThis.__x.parseReportCsv = parseReportCsv;' +
   '\n;globalThis.__x.buildReportModel = buildReportModel;' +
-  '\n;globalThis.__x.exportReportXlsx = exportReportXlsx;',
+  '\n;globalThis.__x.exportReportXlsx = exportReportXlsx;' +
+  '\n;globalThis.__x.xlsxSeitenlayoutEinbetten = xlsxSeitenlayoutEinbetten;',
   sandbox, { filename: 'app-logic.js' },
 );
 
-const { parseReportCsv, buildReportModel, exportReportXlsx } = sandbox.__x;
+const { parseReportCsv, buildReportModel, exportReportXlsx, xlsxSeitenlayoutEinbetten } = sandbox.__x;
 const XLSX = sandbox.XLSX;
 const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'beispiel-daten.csv'), 'utf8');
 
-async function exportiereUndLies() {
+// Faengt zusaetzlich den Dateinamen ab (a.download), den downloadDatei setzt.
+const dateinamen = [];
+sandbox.document.createElement = () => {
+  const el = stubElement();
+  Object.defineProperty(el, 'download', { set(v) { dateinamen.push(v); }, get() { return ''; } });
+  return el;
+};
+
+async function exportiereUndLies(csv, variante) {
   downloads.length = 0;
-  const res = parseReportCsv(FIXTURE);
+  dateinamen.length = 0;
+  const res = parseReportCsv(csv || FIXTURE);
   assert.strictEqual(res.error, null);
-  exportReportXlsx(buildReportModel(res.rows, {}));
+  exportReportXlsx(buildReportModel(res.rows, {}), variante);
 
   assert.strictEqual(downloads.length, 1, 'Export muss genau eine Datei erzeugen');
   const bytes = new Uint8Array(await downloads[0].arrayBuffer());
   // cellNF: true, sonst fuellt SheetJS beim Lesen das Feld .z gar nicht -
   // das Format steht dann trotzdem in der Datei, nur unsichtbar fuer den Test.
-  return { bytes, wb: XLSX.read(bytes, { type: 'array', cellNF: true }) };
+  // cellStyles: dasselbe fuer .s (Orange-Markierung).
+  return { bytes, wb: XLSX.read(bytes, { type: 'array', cellNF: true, cellStyles: true }),
+    dateiname: dateinamen[0] };
+}
+
+// Das rohe Blatt-XML aus dem ZIP - fuer alles, was der Reader nicht zurueckgibt
+// (pageSetup, sheetPr). CFB liest ZIP-Container, der Pfad braucht das '/'.
+function sheetXml(bytes, n) {
+  const cfb = XLSX.CFB.read(bytes, { type: 'buffer' });
+  const datei = XLSX.CFB.find(cfb, `/xl/worksheets/sheet${n || 1}.xml`);
+  assert.ok(datei, 'sheet' + (n || 1) + '.xml fehlt im ZIP');
+  return new TextDecoder().decode(datei.content);
+}
+function workbookXml(bytes) {
+  const cfb = XLSX.CFB.read(bytes, { type: 'buffer' });
+  return new TextDecoder().decode(XLSX.CFB.find(cfb, '/xl/workbook.xml').content);
+}
+// Schriftfarbe einer Zelle: der Reader liefert in .s nur die Fuellung, die
+// Schrift steht in xl/styles.xml (Zelle s="N" -> cellXfs[N].fontId -> fonts).
+function zellenSchriftfarbe(bytes, ref) {
+  const cfb = XLSX.CFB.read(bytes, { type: 'buffer' });
+  const sheet = new TextDecoder().decode(XLSX.CFB.find(cfb, '/xl/worksheets/sheet1.xml').content);
+  const styles = new TextDecoder().decode(XLSX.CFB.find(cfb, '/xl/styles.xml').content);
+  const zelle = new RegExp(`<c r="${ref}"[^>]*\\bs="(\\d+)"`).exec(sheet);
+  assert.ok(zelle, `Zelle ${ref} ohne Stilindex`);
+  const xfs = (styles.match(/<cellXfs[\s\S]*?<\/cellXfs>/) || [''])[0].match(/<xf\b[^>]*>/g);
+  const fontId = /fontId="(\d+)"/.exec(xfs[Number(zelle[1])])[1];
+  const fonts = (styles.match(/<fonts[\s\S]*?<\/fonts>/) || [''])[0].match(/<font>[\s\S]*?<\/font>/g);
+  const farbe = /<color rgb="([0-9A-Fa-f]+)"/.exec(fonts[Number(fontId)]);
+  return farbe ? farbe[1].toUpperCase().slice(-6) : null;
 }
 
 // --- Tests -----------------------------------------------------------------
@@ -171,4 +210,143 @@ test('XLSX: Summe der Outlet-Totals ergibt das Gesamttotal', async () => {
   const daten = abschnittDaten(blattZeilen(wb), 'Total Outlet-Gruppen');
   const summe = daten.reduce((a, r) => a + r[2], 0);
   assert.strictEqual(Math.round(summe * 100) / 100, 62756.16);
+});
+
+// --- v5.14: Variante, Spaltenbreite, Druckbild, Autorisiert (SPEC-ITERATION-2 §4.3-5.4) ---
+
+const G2 = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. Weicht sie vom '
+  + 'Complete Demand ab, fehlt für die Differenz eine Submission (Einreichung/Tagesabschluss am '
+  + 'Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+
+const HEADER_V514 = '"space_id","terminal_identifier","terminal_name","brand","waehrung",'
+  + '"anzahl_transaktionen","unsettled_anzahl","brutto_gross","autorisiert_gross","transaction_fee_total","netto","tip_total"';
+// Ueberlange Terminal-Bezeichnung, siebenstelliger Betrag, offene Autorisierung.
+const CSV_LANG = [
+  HEADER_V514,
+  '"1","T1","Terrasse Ost, Gartenpavillon beim Brunnen 12","Visa","CHF","3","0","1234567.89000000","1234567.89000000","0","0","0.00000000"',
+  '"1","T1","Terrasse Ost, Gartenpavillon beim Brunnen 12","Mastercard","CHF","0","0","0.00000000","42.50000000","0","0","0.00000000"',
+  '"1","T2","Bar 2","Visa","CHF","1","0","10.00000000","10.00000000","0","0","0.00000000"',
+].join('\n');
+
+test('XLSX: Dateiname und Titel je Variante', async () => {
+  const full = await exportiereUndLies(FIXTURE, 'full');
+  assert.match(full.dateiname, /^terminal-report_\d{4}-\d{2}-\d{2}\.xlsx$/);
+  assert.strictEqual(blattZeilen(full.wb)[0][0], 'wallee — Terminal-Report');
+  const kond = await exportiereUndLies(FIXTURE, 'kondensiert');
+  assert.match(kond.dateiname, /^terminal-report-kondensiert_\d{4}-\d{2}-\d{2}\.xlsx$/);
+  assert.strictEqual(blattZeilen(kond.wb)[0][0], 'wallee — Terminal-Report (kondensiert)');
+  const standard = await exportiereUndLies(FIXTURE);
+  assert.strictEqual(standard.dateiname, full.dateiname, 'ohne Angabe = Full');
+});
+
+test('XLSX kondensiert: keine Marke, kein Unmatched, kein Anz., Summen wie Full (A3)', async () => {
+  const { wb } = await exportiereUndLies(FIXTURE, 'kondensiert');
+  const zeilen = blattZeilen(wb);
+  const t = titelZeile(zeilen, 'Detail');
+  assert.deepStrictEqual(plain(zeilen[t + 1]),
+    ['Outlet-Gruppe', 'Terminal', 'TID', 'Brand-Gruppe', 'Complete Demand', 'Authorized', 'Tip']);
+  const alleZellen = zeilen.flat().map(String);
+  ['Marke', 'Unmatched', 'Anz.'].forEach(k => assert.ok(!alleZellen.includes(k), k + ' darf nicht vorkommen'));
+  const brands = abschnittDaten(zeilen, 'Total Brand-Gruppen');
+  assert.deepStrictEqual(plain(brands), [
+    ['Lunch-Check', 31, 31, 0],
+    ['Wallee', 62725.16, 62725.16, 793.46],
+  ]);
+  const g = titelZeile(zeilen, 'Gesamttotal');
+  assert.deepStrictEqual(plain(zeilen[g + 2]), ['Total', 62756.16, 62756.16, 793.46]);
+});
+
+test('XLSX: Hinweis G2 unter "Erstellt am" und als Fussnote nach dem letzten Block', async () => {
+  const { wb } = await exportiereUndLies();
+  const ws = wb.Sheets['Terminal-Report'];
+  const zeilen = blattZeilen(wb);
+  assert.match(String(zeilen[1][0]), /^Erstellt am /);
+  assert.strictEqual(zeilen[2][0], G2, 'direkt unter Erstellt am');
+  assert.strictEqual(zeilen[3].length, 0, 'Leerzeile danach');
+  const letzte = zeilen.map(z => z[0]).filter(v => v !== undefined && v !== '');
+  assert.strictEqual(letzte[letzte.length - 1], G2, 'Fussnote nach dem letzten Block');
+  // ueber die Blattbreite verbunden
+  const breite = Math.max(...zeilen.map(z => z.length));
+  const merges = ws['!merges'].map(m => `${m.s.r}:${m.s.c}-${m.e.r}:${m.e.c}`);
+  assert.ok(merges.includes(`2:0-2:${breite - 1}`), 'Hinweiszeile 2 ist verbunden');
+});
+
+test('XLSX: Authorized orange nur bei Differenz, Differenz-Zelle rechts vom Gesamttotal', async () => {
+  const { bytes, wb } = await exportiereUndLies(CSV_LANG);
+  const ws = wb.Sheets['Terminal-Report'];
+  const zeilen = blattZeilen(wb);
+  const d = titelZeile(zeilen, 'Detail');
+  const cAuth = zeilen[d + 1].indexOf('Authorized');
+  const zeileMc = zeilen.findIndex((z, i) => i > d && z[3] === 'Mastercard');
+  const zeileT2 = zeilen.findIndex((z, i) => i > d && z[1] === 'Bar 2');
+  const refMc = XLSX.utils.encode_cell({ r: zeileMc, c: cAuth });
+  const refT2 = XLSX.utils.encode_cell({ r: zeileT2, c: cAuth });
+  assert.strictEqual(ws[refMc].v, 42.5);
+  assert.strictEqual(zellenSchriftfarbe(bytes, refMc), 'FF4D00');
+  assert.strictEqual(ws[refT2].v, 10);
+  assert.strictEqual(zellenSchriftfarbe(bytes, refT2), '225956', 'ohne Differenz die normale Textfarbe');
+
+  const g = titelZeile(zeilen, 'Gesamttotal');
+  const total = zeilen[g + 2];
+  // ['Total', CD, Auth, Tip, Unmatched, Anz., 'Differenz:', 42.5]
+  assert.strictEqual(total[6], 'Differenz:');
+  assert.strictEqual(total[7], 42.5);
+  const refDiff = XLSX.utils.encode_cell({ r: g + 2, c: 7 });
+  assert.strictEqual(ws[refDiff].z, '#,##0.00');
+  assert.strictEqual(zellenSchriftfarbe(bytes, refDiff), 'FF4D00');
+});
+
+test('XLSX: ohne Differenz keine Differenz-Zelle', async () => {
+  const { wb } = await exportiereUndLies();
+  const zeilen = blattZeilen(wb);
+  const g = titelZeile(zeilen, 'Gesamttotal');
+  assert.strictEqual(zeilen[g + 2].length, 6);
+  assert.ok(!zeilen.flat().includes('Differenz:'));
+});
+
+test('XLSX: Spaltenbreiten nach §5.4 - so schmal wie moeglich, nie abgeschnitten', async () => {
+  const { wb } = await exportiereUndLies(CSV_LANG);
+  const ws = wb.Sheets['Terminal-Report'];
+  const cols = ws['!cols'].map(c => Math.round(c.wch));
+  const zeilen = blattZeilen(wb);
+  const d = titelZeile(zeilen, 'Detail');
+  const kopf = zeilen[d + 1];
+  // Terminal-Spalte: laengster Eintrag (44 Zeichen) + 2
+  assert.strictEqual(cols[kopf.indexOf('Terminal')], 46);
+  // Complete Demand: fetter Kopf 15 * 1.1 + 2 = 18.5 -> 19 schlaegt den Betrag '1’234’567.89' (14)
+  assert.strictEqual(cols[kopf.indexOf('Complete Demand')], 19);
+  // Die Bloecke teilen sich die Spalten: unter 'TID' steht im Block "Total
+  // Outlet-Gruppen" der Kopf 'Complete Demand' (19) - die Spalte misst den
+  // laengsten Eintrag ueber ALLE Bloecke.
+  assert.strictEqual(cols[kopf.indexOf('TID')], 19);
+  // Anz.: fetter Kopf 4*1.1+2 = 6.4 -> 7, die Werte sind kuerzer
+  assert.strictEqual(cols[kopf.indexOf('Anz.')], 7);
+  // nicht mehr die festen 18/15
+  assert.ok(!cols.every((w, i) => w === (i < 3 ? 18 : 15)), 'feste Breiten sind Geschichte');
+  // verbundene Hinweiszeile blaeht Spalte A nicht auf
+  assert.ok(cols[0] < 60, 'Spalte A darf nicht auf Hinweislaenge wachsen');
+});
+
+test('XLSX: Raender, Seitenlayout (fitToWidth/fitToHeight/fitToPage/orientation) und Drucktitel', async () => {
+  const { bytes, wb } = await exportiereUndLies();
+  const ws = wb.Sheets['Terminal-Report'];
+  assert.deepStrictEqual(plain(ws['!margins']),
+    { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 });
+  const xml = sheetXml(bytes);
+  assert.match(xml, /<worksheet[^>]*><sheetPr><pageSetUpPr fitToPage="1"\/><\/sheetPr>/);
+  assert.match(xml, /<pageMargins[^>]*\/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"\/>/,
+    'Full hat 10 Spalten -> Querformat');
+  assert.match(workbookXml(bytes), /<definedName name="_xlnm\.Print_Titles" localSheetId="0">&apos;Terminal-Report&apos;!\$6:\$6<\/definedName>/,
+    'die erste tuerkise Kopfzeile (Zeile 6) als Drucktitel');
+  // kondensiert: 7 Spalten -> Hochformat
+  const kond = await exportiereUndLies(FIXTURE, 'kondensiert');
+  assert.match(sheetXml(kond.bytes), /orientation="portrait"/);
+});
+
+test('XLSX: die Nachbearbeitung ist der Vendor-Pfad plus xlsxSeitenlayoutEinbetten - Datei bleibt lesbar', async () => {
+  const { bytes, wb } = await exportiereUndLies();
+  assert.strictEqual(bytes[0], 0x50);
+  assert.deepStrictEqual(plain(wb.SheetNames), ['Terminal-Report']);
+  const xml = sheetXml(bytes);
+  assert.strictEqual(xlsxSeitenlayoutEinbetten(xml, { orientation: 'landscape' }), xml, 'idempotent auf der echten Datei');
 });

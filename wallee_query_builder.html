@@ -10085,10 +10085,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       try {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, styledSheetAusZeilen(zeilen), 'Ergebnis');
-        const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-        downloadDatei(
-          new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-          ergebnisDateiname(mode, 'xlsx'));
+        xlsxSchreibenUndLaden(wb, ergebnisDateiname(mode, 'xlsx'));
       } catch (e) {
         zeigeFortschritt('Excel-Export fehlgeschlagen. Bitte den CSV-Export nutzen.', 'fehler');
       }
@@ -10427,7 +10424,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     zebra: 'F1FBFA',    // sehr helles Tuerkis fuer jede zweite Zeile
     linie: 'D6E4E3',    // feine Rahmenlinie
     text: '225956',     // --accent-dark, gut lesbar auf hellem Grund
+    hinweis: '6B7A79',  // Nebentext (Erstellt am, Hinweise)
+    orange: 'FF4D00',   // --wallee-orange: Differenz Autorisiert <> Complete Demand
   };
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   const XLSX_DUENN = { style: 'thin', color: { rgb: XLSX_FARBE.linie } };
   const XLSX_RAHMEN = { top: XLSX_DUENN, bottom: XLSX_DUENN, left: XLSX_DUENN, right: XLSX_DUENN };
 
@@ -10456,6 +10456,221 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       const zelle = ws[XLSX.utils.encode_cell({ r: kopfZeile, c })];
       if (zelle) zelle.s = xlsxKopfStil();
     }
+  }
+
+  // --- XLSX: gemeinsame Finalisierung jedes Blatts (SPEC-ITERATION-2 §5.3-5.5)
+  //
+  // Jeder Excel-Export der App (Terminal-, Settlement-, Reporting-Report, die
+  // 3DS-Seite, der Verlaufs-Download) laeuft vor book_append_sheet durch
+  // xlsxBlattFinalisieren und schreibt die Mappe ueber xlsxSchreibenUndLaden.
+  // Drei Dinge passieren dort, an EINER Stelle statt je Export:
+  //   1. Spaltenbreite = laengster Anzeigetext der Spalte + 2 Zeichen (§5.4),
+  //      gemessen am fertigen Blatt: Zahlen nach ihrem Zahlformat, fette
+  //      Koepfe x 1.1; ueber mehrere Spalten verbundene Zellen (Titel,
+  //      Hinweise) werden nicht gemessen, sonst blaehte ein Hinweis Spalte A auf.
+  //   2. Raender und Seitenlayout (§5.3): A4, genau eine Seite breit, beliebig
+  //      viele Seiten hoch; Querformat ab XLSX_QUERFORMAT_AB_SPALTEN Spalten.
+  //   3. Die (erste) tuerkise Kopfzeile als Drucktitel (_xlnm.Print_Titles),
+  //      damit jede Seite einer langen Tabelle einen Kopf hat.
+  // Der eingebettete Writer (xlsx-js-style auf SheetJS 0.18.5) schreibt !cols,
+  // !margins und Defined Names selbst, aber KEIN pageSetup und kein fitToPage
+  // (Machbarkeit gemessen, §5.3 Schritt 1) - deshalb die ZIP-Nachbearbeitung
+  // in xlsxSchreibenUndLaden ueber XLSX.CFB, das ZIP-Container liest und
+  // schreibt. xlsxSeitenlayoutEinbetten ist reiner String-Code und ohne
+  // Vendor testbar (test/xlsx-layout.test.js); der Vendor bleibt unangetastet.
+  const XLSX_RAENDER = { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 };
+  const XLSX_SPALTE_MIN = 6;
+  const XLSX_SPALTE_MAX = 60;
+  const XLSX_SPALTE_POLSTER = 2;
+  const XLSX_FETT_FAKTOR = 1.1;           // Fettschrift ist breiter
+  const XLSX_QUERFORMAT_AB_SPALTEN = 9;   // mehr als 8 Spalten -> Querformat
+  const XLSX_PAPIER_A4 = 9;               // ECMA-376 paperSize 9 = A4
+
+  // 'AB12' -> { r: 11, c: 27 } (0-basiert); ungueltig -> { r: -1, c: -1 }.
+  function xlsxZellAdresse(ref) {
+    const m = /^([A-Z]+)(\d+)$/.exec(String(ref));
+    if (!m) return { r: -1, c: -1 };
+    let c = 0;
+    for (const ch of m[1]) c = c * 26 + (ch.charCodeAt(0) - 64);
+    return { r: parseInt(m[2], 10) - 1, c: c - 1 };
+  }
+
+  // Anzeigetext einer Zahl nach ihrem Excel-Zahlformat, nur fuer die Breite:
+  // Nachkommastellen aus dem Muster, Tausendertrennung bei ',', Literale in
+  // Anfuehrungszeichen (Waehrungssuffix, '%') angehaengt. Deckt die Formate
+  // der App ab (#,##0.00 / #,##0.00" CHF" / #,##0 / 0.0"%" / 0.00); alles
+  // andere faellt auf String(wert) zurueck.
+  function xlsxZahlAnzeige(wert, fmt) {
+    const abschnitt = String(fmt || 'General').split(';')[0];
+    const literale = (abschnitt.match(/"[^"]*"/g) || []).map(l => l.slice(1, -1)).join('');
+    const muster = abschnitt.replace(/"[^"]*"/g, '');
+    if (!/[0#]/.test(muster) || !Number.isFinite(wert)) return String(wert) + literale;
+    const dez = (muster.split('.')[1] || '').replace(/[^0#]/g, '').length;
+    const fest = Math.abs(wert).toFixed(dez).split('.');
+    const ganz = muster.includes(',') ? gruppiere(fest[0]) : fest[0];
+    return (wert < 0 ? '-' : '') + ganz + (fest[1] ? '.' + fest[1] : '') + literale;
+  }
+
+  function xlsxAnzeigetext(zelle) {
+    if (!zelle || zelle.v == null) return '';
+    if (zelle.t === 'n') return xlsxZahlAnzeige(zelle.v, zelle.z || (zelle.s && zelle.s.numFmt));
+    if (zelle.t === 'b') return zelle.v ? 'TRUE' : 'FALSE';
+    return String(zelle.w != null ? zelle.w : zelle.v);
+  }
+
+  // Spaltenzahl eines Blatts aus !ref ('A1:H20' -> 8); ohne !ref 1.
+  function xlsxSpaltenzahl(ws) {
+    const ref = String(ws['!ref'] || '');
+    const ende = ref.split(':')[1] || ref.split(':')[0];
+    return Math.max(1, xlsxZellAdresse(ende).c + 1);
+  }
+
+  // ws['!cols'] nach §5.4: so schmal wie moeglich, nie abgeschnitten.
+  function xlsxSpaltenbreiten(ws) {
+    const verbunden = new Set();
+    (ws['!merges'] || []).forEach(m => {
+      if (m && m.s && m.e && m.e.c > m.s.c) verbunden.add(m.s.r + ',' + m.s.c);
+    });
+    const breiten = [];
+    Object.keys(ws).forEach(ref => {
+      if (ref[0] === '!') return;
+      const { r, c } = xlsxZellAdresse(ref);
+      if (c < 0) return;
+      const zelle = ws[ref];
+      const text = xlsxAnzeigetext(zelle);
+      const laengste = text.split(/\r?\n/).reduce((a, z) => Math.max(a, z.length), 0);
+      const istText = zelle.t !== 'n' && zelle.t !== 'b';
+      if (verbunden.has(r + ',' + c)) {
+        // Laeuft ueber die Verbindung; nur ein ueberlanger Text bekommt den
+        // Umbruch ueber den Zellstil, nicht ueber die Spaltenbreite.
+        if (istText && laengste > XLSX_SPALTE_MAX) xlsxUmbruchSetzen(zelle);
+        return;
+      }
+      const fett = !!(zelle.s && zelle.s.font && zelle.s.font.bold);
+      const breite = laengste * (fett ? XLSX_FETT_FAKTOR : 1) + XLSX_SPALTE_POLSTER;
+      breiten[c] = Math.max(breiten[c] || 0, breite);
+      if (istText && breite > XLSX_SPALTE_MAX) xlsxUmbruchSetzen(zelle);
+    });
+    const anzahl = Math.max(breiten.length, xlsxSpaltenzahl(ws));
+    return Array.from({ length: anzahl }, (_, c) => ({
+      wch: Math.min(XLSX_SPALTE_MAX, Math.max(XLSX_SPALTE_MIN, Math.ceil(breiten[c] || 0))),
+    }));
+  }
+
+  function xlsxUmbruchSetzen(zelle) {
+    zelle.s = Object.assign({}, zelle.s);
+    zelle.s.alignment = Object.assign({}, zelle.s.alignment, { wrapText: true });
+  }
+
+  // Seitenlayout nach §5.3: eine Seite breit (fitToWidth 1), beliebig hoch
+  // (fitToHeight 0 = automatisch), A4, Hochformat bis 8 Spalten.
+  function xlsxSeitenlayout(spalten, querformat) {
+    const quer = typeof querformat === 'boolean' ? querformat : spalten >= XLSX_QUERFORMAT_AB_SPALTEN;
+    return { paperSize: XLSX_PAPIER_A4, orientation: quer ? 'landscape' : 'portrait',
+      fitToWidth: 1, fitToHeight: 0 };
+  }
+
+  // Drucktitel-Referenz fuer _xlnm.Print_Titles: Blattname in einfachen
+  // Anfuehrungszeichen (verdoppelt, falls enthalten), Zeile 1-basiert absolut.
+  function xlsxDruckTitelRef(blattName, zeile) {
+    return `'${String(blattName).replace(/'/g, "''")}'!$${zeile + 1}:$${zeile + 1}`;
+  }
+
+  // Unmittelbar vor book_append_sheet auf JEDES Blatt anwenden.
+  // optionen.kopfZeile: 0-basierte Zeile der (ersten) tuerkisen Kopfzeile, wird
+  // als Drucktitel wiederholt; optionen.querformat: Ausrichtung erzwingen.
+  // !pageSetup und !druckTitel wertet der Writer nicht aus - sie tragen die
+  // Angaben bis zu xlsxSchreibenUndLaden, das sie ins ZIP bzw. in die
+  // Defined Names bringt.
+  function xlsxBlattFinalisieren(ws, optionen) {
+    const o = optionen || {};
+    ws['!cols'] = xlsxSpaltenbreiten(ws);
+    ws['!margins'] = Object.assign({}, XLSX_RAENDER);
+    ws['!pageSetup'] = xlsxSeitenlayout(ws['!cols'].length, o.querformat);
+    if (Number.isInteger(o.kopfZeile) && o.kopfZeile >= 0) ws['!druckTitel'] = o.kopfZeile;
+    else delete ws['!druckTitel'];
+    return ws;
+  }
+
+  // Reine String-Nachbearbeitung eines xl/worksheets/sheetN.xml (§5.3 Schritt 2):
+  //   <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr> als erstes Kind von
+  //   <worksheet> (ein vorhandenes <sheetPr> wird ergaenzt, nicht verdoppelt;
+  //   pageSetUpPr ist laut Schema sein letztes Kind), und <pageSetup .../>
+  //   direkt nach <pageMargins/>. Ohne das fitToPage-Flag ignoriert Excel
+  //   fitToWidth. Idempotent: zweimal anwenden = einmal.
+  // Replacer-Funktionen statt Ersatz-Strings - dieselbe $&-Falle wie beim
+  // Einbetten des Vendor-Codes (test/embedding.test.js).
+  function xlsxSeitenlayoutEinbetten(sheetXml, layout) {
+    const l = Object.assign(xlsxSeitenlayout(1), layout || {});
+    let xml = String(sheetXml);
+    const fit = '<pageSetUpPr fitToPage="1"/>';
+    if (/<sheetPr\b[^>]*\/>/.test(xml)) {
+      xml = xml.replace(/<sheetPr\b([^>]*?)\/>/, (m, attrs) => `<sheetPr${attrs}>${fit}</sheetPr>`);
+    } else if (/<sheetPr\b/.test(xml)) {
+      if (/<pageSetUpPr\b/.test(xml)) xml = xml.replace(/<pageSetUpPr\b[^>]*\/>/, () => fit);
+      else xml = xml.replace(/<\/sheetPr>/, () => fit + '</sheetPr>');
+    } else {
+      xml = xml.replace(/<worksheet\b[^>]*>/, m => m + `<sheetPr>${fit}</sheetPr>`);
+    }
+    const pageSetup = `<pageSetup paperSize="${l.paperSize}" orientation="${l.orientation}"`
+      + ` fitToWidth="${l.fitToWidth}" fitToHeight="${l.fitToHeight}"/>`;
+    if (/<pageSetup\b[^>]*\/>/.test(xml)) {
+      xml = xml.replace(/<pageSetup\b[^>]*\/>/, () => pageSetup);
+    } else if (/<pageMargins\b[^>]*\/>/.test(xml)) {
+      xml = xml.replace(/<pageMargins\b[^>]*\/>/, m => m + pageSetup);
+    } else {
+      // Schemaposition: nach sheetData/printOptions, vor headerFooter & Co.
+      const folgende = /<(headerFooter|rowBreaks|colBreaks|drawing|legacyDrawing|tableParts|extLst)\b|<\/worksheet>/;
+      xml = xml.replace(folgende, m => pageSetup + m);
+    }
+    return xml;
+  }
+
+  // Mappe schreiben, Seitenlayout ins ZIP einbetten, Drucktitel eintragen,
+  // Download ausloesen - die EINE Stelle fuer XLSX.write + downloadDatei.
+  // Schlaegt die Nachbearbeitung fehl, geht die Datei unveraendert raus
+  // (Rueckfall statt Blockade): ein Excel ohne Druckoptimierung ist mehr wert
+  // als gar keines.
+  function xlsxSchreibenUndLaden(wb, dateiname) {
+    const namen = [];
+    wb.SheetNames.forEach((name, i) => {
+      const ws = wb.Sheets[name];
+      if (ws && Number.isInteger(ws['!druckTitel'])) {
+        namen.push({ Name: '_xlnm.Print_Titles', Sheet: i, Ref: xlsxDruckTitelRef(name, ws['!druckTitel']) });
+      }
+    });
+    if (namen.length) {
+      wb.Workbook = wb.Workbook || {};
+      wb.Workbook.Names = (wb.Workbook.Names || []).filter(n => n.Name !== '_xlnm.Print_Titles').concat(namen);
+    }
+    let bytes = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    try {
+      bytes = xlsxSeitenlayoutNachbearbeiten(bytes, wb);
+    } catch (e) {
+      console.warn('Seitenlayout konnte nicht eingebettet werden - Datei ohne Druckoptimierung.', e);
+    }
+    downloadDatei(new Blob([bytes], { type: XLSX_MIME }), dateiname);
+  }
+
+  // SheetJS schreibt die Blaetter in der Reihenfolge von wb.SheetNames als
+  // sheet1.xml, sheet2.xml, ... - darueber findet die Nachbearbeitung zu jedem
+  // Blatt sein XML. CFB.find erwartet den Pfad mit fuehrendem '/'.
+  function xlsxSeitenlayoutNachbearbeiten(bytes, wb) {
+    const cfb = XLSX.CFB.read(new Uint8Array(bytes), { type: 'buffer' });
+    const dec = new TextDecoder('utf-8');
+    const enc = new TextEncoder();
+    let geaendert = false;
+    wb.SheetNames.forEach((name, i) => {
+      const layout = wb.Sheets[name] && wb.Sheets[name]['!pageSetup'];
+      if (!layout) return;
+      const datei = XLSX.CFB.find(cfb, `/xl/worksheets/sheet${i + 1}.xml`);
+      if (!datei) return;
+      const neu = enc.encode(xlsxSeitenlayoutEinbetten(dec.decode(datei.content), layout));
+      datei.content = neu;
+      datei.size = neu.length;
+      geaendert = true;
+    });
+    return geaendert ? XLSX.CFB.write(cfb, { fileType: 'zip', type: 'array' }) : bytes;
   }
 
   // Rohzeilen (Kopf + Datenzeilen als Strings, z. B. aus csvZuZeilen) in ein
@@ -10515,37 +10730,60 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       }
     }
 
-    ws['!cols'] = kopf.map((h, c) =>
-      ({ wch: typ[c] === 'text' ? Math.max(12, String(h).length + 2) : 16 }));
-    return ws;
+    return xlsxBlattFinalisieren(ws, { kopfZeile: 0 });
   }
 
-  function exportReportXlsx(modell) {
+  // Titel und Dateiname je Variante (§5.2).
+  const REPORT_XLSX_TITEL = {
+    full: 'wallee — Terminal-Report',
+    kondensiert: 'wallee — Terminal-Report (kondensiert)',
+  };
+
+  function exportReportXlsx(modell, varianteWahl) {
+    const variante = reportVariante(varianteWahl);
     const wb = XLSX.utils.book_new();
     const d = new Date();
     const datum = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 
     // Alles in EIN Blatt, die Abschnitte untereinander gestapelt - genau wie der
     // PDF-/Bildschirm-Report (Detail, dann die Totale), statt mehrerer Tabs.
-    const bloecke = reportExportBloecke(modell);
+    const bloecke = reportExportBloecke(modell, { variante });
     const REIHENFOLGE = ['Detail', 'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal'];
     const sortiert = REIHENFOLGE.map(n => bloecke.find(b => b.name === n)).filter(Boolean);
-    const maxCols = Math.max(1, ...sortiert.map(b => b.header.length));
+
+    // Differenz Autorisiert - Complete Demand (§4.3): steht als Zellenpaar
+    // rechts neben dem Gesamttotal, nur wenn sie ungleich 0 ist. Die beiden
+    // Spalten zaehlen dann zur Blattbreite (Titel-Verbindung, Drucklayout).
+    const spalteVon = (block, label) => block.header.indexOf(label);
+    const gesamt = sortiert.find(b => b.name === 'Gesamttotal');
+    const differenz = gesamt
+      ? Math.round((gesamt.rows[0][spalteVon(gesamt, 'Authorized')]
+        - gesamt.rows[0][spalteVon(gesamt, 'Complete Demand')]) * 100) / 100
+      : 0;
+    const maxCols = Math.max(1, ...sortiert.map(b => b.header.length)) + (differenz !== 0 ? 2 : 0);
 
     const aoa = [];
     const stile = [];    // { r, c, s, z } - nach aoa_to_sheet angewandt
     const merges = [];
     const spanne = (r) => merges.push({ s: { r, c: 0 }, e: { r, c: maxCols - 1 } });
+    const hinweisStil = { font: { color: { rgb: XLSX_FARBE.hinweis }, italic: true, sz: 9 },
+      alignment: { horizontal: 'left', vertical: 'top', wrapText: true } };
 
-    aoa.push(['wallee — Terminal-Report']); spanne(0);
+    aoa.push([REPORT_XLSX_TITEL[variante]]); spanne(0);
     stile.push({ r: 0, c: 0, s: { font: { bold: true, sz: 14, color: { rgb: XLSX_FARBE.text } },
       alignment: { horizontal: 'left', vertical: 'center' } } });
     aoa.push([`Erstellt am ${datum}`]); spanne(1);
-    stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: '6B7A79' } } } });
+    stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: XLSX_FARBE.hinweis } } } });
+    // Hinweis G2 direkt unter "Erstellt am" (§4.4) ...
+    aoa.push([AUTORISIERT_HINWEIS]); spanne(2);
+    stile.push({ r: 2, c: 0, s: hinweisStil });
     aoa.push([]);
-    let r = 3;
+    let r = 4;
+    let kopfZeile = -1;    // erste tuerkise Kopfzeile -> Drucktitel
 
     sortiert.forEach(block => {
+      const cAuth = spalteVon(block, 'Authorized');
+      const cCd = spalteVon(block, 'Complete Demand');
       // Abschnittstitel
       aoa.push([block.name]); spanne(r);
       stile.push({ r, c: 0, s: { font: { bold: true, sz: 12, color: { rgb: XLSX_FARBE.text } } } });
@@ -10553,6 +10791,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       // Spaltenkopf (tuerkis)
       aoa.push(block.header.slice());
       for (let c = 0; c < block.header.length; c++) stile.push({ r, c, s: xlsxKopfStil() });
+      if (kopfZeile < 0) kopfZeile = r;
       r++;
       // Datenzeilen (Zahlformat + Zebra + Rahmen)
       block.rows.forEach((row, i) => {
@@ -10560,12 +10799,32 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         const zebra = i % 2 === 1;
         block.typen.forEach((typ, c) => {
           const format = (typ === 'betrag' || typ === 'zahl') ? XLSX_FORMAT[typ] : null;
-          stile.push({ r, c, s: xlsxZellStil(zebra, !!format, format || null), z: format });
+          const stil = xlsxZellStil(zebra, !!format, format || null);
+          // Authorized in wallee-Orange, sobald der Wert vom Complete Demand
+          // abweicht - dieselbe Regel wie auf dem Bildschirm (§4.3).
+          if (c === cAuth && cAuth >= 0 && cCd >= 0 && row[cAuth] !== row[cCd]) {
+            stil.font = Object.assign({}, stil.font, { color: { rgb: XLSX_FARBE.orange }, bold: true });
+          }
+          stile.push({ r, c, s: stil, z: format });
         });
+        if (block.name === 'Gesamttotal' && differenz !== 0) {
+          const c0 = block.header.length;
+          aoa[aoa.length - 1][c0] = 'Differenz:';
+          aoa[aoa.length - 1][c0 + 1] = differenz;
+          stile.push({ r, c: c0, s: { font: { bold: true, color: { rgb: XLSX_FARBE.orange }, sz: 10 },
+            alignment: { horizontal: 'right', vertical: 'center' } } });
+          const stil = xlsxZellStil(false, true, XLSX_FORMAT.betrag);
+          stil.font = Object.assign({}, stil.font, { color: { rgb: XLSX_FARBE.orange }, bold: true });
+          stile.push({ r, c: c0 + 1, s: stil, z: XLSX_FORMAT.betrag });
+        }
         r++;
       });
       aoa.push([]); r++;   // Leerzeile zwischen den Abschnitten
     });
+
+    // ... und nochmals als Fussnote nach dem letzten Block.
+    aoa.push([AUTORISIERT_HINWEIS]); spanne(r);
+    stile.push({ r, c: 0, s: hinweisStil });
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!merges'] = merges;
@@ -10575,21 +10834,17 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       if (op.s) zelle.s = op.s;
       if (op.z && zelle.t === 'n') zelle.z = op.z;
     });
-    // Erste Spalten breiter (Text), die Kennzahl-Spalten schmaler.
-    ws['!cols'] = Array.from({ length: maxCols }, (_, i) => ({ wch: i < 3 ? 18 : 15 }));
+    xlsxBlattFinalisieren(ws, { kopfZeile });
 
     XLSX.utils.book_append_sheet(wb, ws, 'Terminal-Report');
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-    downloadDatei(
-      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-      reportDateiname('xlsx'),
-    );
+    xlsxSchreibenUndLaden(wb, reportDateiname('xlsx', variante));
   }
 
-  function reportDateiname(endung) {
+  function reportDateiname(endung, variante) {
     const d = new Date();
     const stempel = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    return `terminal-report_${stempel}.${endung}`;
+    const basis = reportVariante(variante) === 'kondensiert' ? 'terminal-report-kondensiert' : 'terminal-report';
+    return `${basis}_${stempel}.${endung}`;
   }
 
   // --- Settlement-Report: Excel- und PDF-Export -----------------------------
@@ -10644,9 +10899,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         }]);
       }
       const name = xlsxBlattName(block.name);
+      xlsxBlattFinalisieren(ws, { kopfZeile: 0 });
       XLSX.utils.book_append_sheet(wb, ws, name);
     });
-    XLSX.writeFile(wb, `settlement-report-${(settlementZeitraum.start || '').slice(0, 10)}.xlsx`);
+    xlsxSchreibenUndLaden(wb, `settlement-report-${(settlementZeitraum.start || '').slice(0, 10)}.xlsx`);
   }
 
   function exportSettlementPdf() {
@@ -11654,6 +11910,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: '6B7A79' } } } });
     aoa.push([]);
     let r = 3;
+    let kopfZeile = -1;               // erste tuerkise Kopfzeile -> Drucktitel
 
     bloecke.forEach(block => {
       aoa.push([block.titel]); spanne(r);
@@ -11665,6 +11922,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         // Aufforderung an eine Tabelle.
         aoa.push(block.kopf.map(k => reportingKopfLabel(k, true)));
         for (let c = 0; c < block.kopf.length; c++) stile.push({ r, c, s: xlsxKopfStil() });
+        if (kopfZeile < 0) kopfZeile = r;
         r++;
         block.zeilen.forEach((zeile, i) => {
           const zebra = i % 2 === 1;
@@ -11705,7 +11963,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       const zelle = ws[XLSX.utils.encode_cell({ r: op.r, c: op.c })];
       if (zelle) zelle.l = { Target: op.ziel, Tooltip: 'Im wallee-Dashboard öffnen' };
     });
-    ws['!cols'] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 26 : 15 }));
+    xlsxBlattFinalisieren(ws, { kopfZeile });
     XLSX.utils.book_append_sheet(wb, ws, xlsxBlattName(blattName));
   }
 
@@ -11744,11 +12002,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         'wallee — Reporting-Report', gruppe.bloecke, datum);
     });
 
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-    downloadDatei(
-      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-      reportingDateiname('xlsx'),
-    );
+    xlsxSchreibenUndLaden(wb, reportingDateiname('xlsx'));
   }
 
   // Muster exportSettlementPdf. Bewusst eine eigene Schleife statt einer
@@ -12139,11 +12393,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     if (!reportingTdsModell) return;
     const wb = XLSX.utils.book_new();
     reportingTdsXlsxBlatt(wb, reportingTdsModell, reportingTdsExportOptionen());
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-    downloadDatei(
-      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-      reportingTdsDateiname('xlsx'),
-    );
+    xlsxSchreibenUndLaden(wb, reportingTdsDateiname('xlsx'));
   }
 
   function exportReportingTdsPdf() {
