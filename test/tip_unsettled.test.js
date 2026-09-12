@@ -114,7 +114,8 @@ test('Brand-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GROUP 
   const sql = B.buildBrandQuery(RANGE);
   const tipCteCount = (sql.match(/tip AS \(/g) || []).length;
   assert.strictEqual(tipCteCount, 1, 'genau ein tip-CTE erwartet');
-  assert.match(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)\s+AS tip_total/);
+  // seit v5.14.1 auf FULFILL/COMPLETED geschuetzt (Discovery Q4, siehe queries.test.js)
+  assert.match(sql, /COALESCE\(SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN tip\.tip_amount END\), 0\)\s+AS tip_total/);
   const groupByIdx = sql.lastIndexOf('GROUP BY');
   const orderByIdx = sql.indexOf('ORDER BY', groupByIdx);
   const groupBySection = sql.slice(groupByIdx, orderByIdx === -1 ? undefined : orderByIdx);
@@ -138,7 +139,8 @@ test('Terminal-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GRO
   const sql = B.buildTerminalQuery({ ...RANGE, terminalIds: ['T-1'] });
   const tipCteCount = (sql.match(/tip AS \(/g) || []).length;
   assert.strictEqual(tipCteCount, 1, 'genau ein tip-CTE erwartet');
-  assert.match(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)\s+AS tip_total/);
+  // seit v5.14.1 auf FULFILL/COMPLETED geschuetzt (Discovery Q4, siehe queries.test.js)
+  assert.match(sql, /COALESCE\(SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN tip\.tip_amount END\), 0\)\s+AS tip_total/);
   const groupByIdx = sql.lastIndexOf('GROUP BY');
   const orderByIdx = sql.indexOf('ORDER BY', groupByIdx);
   const groupBySection = sql.slice(groupByIdx, orderByIdx === -1 ? undefined : orderByIdx);

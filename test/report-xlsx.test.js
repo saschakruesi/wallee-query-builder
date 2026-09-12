@@ -172,8 +172,11 @@ test('XLSX: Gesamttotal steht mit den richtigen Zahlen drin', async () => {
   const { wb } = await exportiereUndLies();
   const zeilen = blattZeilen(wb);
   const t = titelZeile(zeilen, 'Gesamttotal');
-  assert.deepStrictEqual(plain(zeilen[t + 1]), ['', 'Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.']);
-  assert.deepStrictEqual(plain(zeilen[t + 2]), ['Total', 62756.16, 62756.16, 793.46, 889, 2070]);
+  // Seit v5.14.1 stehen die Kennzahlen jedes Blocks rechtsbuendig unter denen
+  // des Detail-Blocks (10 Spalten im Full-Report), die Luecke ist leer.
+  const PAD = ['', '', '', ''];
+  assert.deepStrictEqual(plain(zeilen[t + 1]), ['', ...PAD, 'Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.']);
+  assert.deepStrictEqual(plain(zeilen[t + 2]), ['Total', ...PAD, 62756.16, 62756.16, 793.46, 889, 2070]);
 });
 
 test('XLSX: Betraege sind Zahlen mit Schweizer Zahlformat', async () => {
@@ -181,8 +184,8 @@ test('XLSX: Betraege sind Zahlen mit Schweizer Zahlformat', async () => {
   const ws = wb.Sheets['Terminal-Report'];
   const t = titelZeile(blattZeilen(wb), 'Gesamttotal');
   const datenR = t + 2;                 // 0-basierter Zeilenindex der Total-Zeile
-  const b = ws[XLSX.utils.encode_cell({ r: datenR, c: 1 })];   // Complete Demand
-  const d = ws[XLSX.utils.encode_cell({ r: datenR, c: 4 })];   // Anz.
+  const b = ws[XLSX.utils.encode_cell({ r: datenR, c: 5 })];   // Complete Demand (rechtsbuendig zum Detail)
+  const d = ws[XLSX.utils.encode_cell({ r: datenR, c: 9 })];   // Anz.
   assert.strictEqual(b.t, 'n', 'Betrag muss als Zahl gespeichert sein, sonst kann Excel nicht rechnen');
   assert.strictEqual(b.v, 62756.16);
   assert.strictEqual(b.z, '#,##0.00', 'Betrag ohne Zahlformat');
@@ -193,8 +196,8 @@ test('XLSX: Brand-Totals vollstaendig und korrekt', async () => {
   const { wb } = await exportiereUndLies();
   const daten = abschnittDaten(blattZeilen(wb), 'Total Brand-Gruppen');
   assert.deepStrictEqual(plain(daten), [
-    ['Lunch-Check', 31, 31, 0, 1, 2],
-    ['Wallee', 62725.16, 62725.16, 793.46, 888, 2068],
+    ['Lunch-Check', '', '', '', '', 31, 31, 0, 1, 2],
+    ['Wallee', '', '', '', '', 62725.16, 62725.16, 793.46, 888, 2068],
   ]);
 });
 
@@ -207,8 +210,10 @@ test('XLSX: Detail-Abschnitt hat eine Zeile je Terminal und Marke', async () => 
 
 test('XLSX: Summe der Outlet-Totals ergibt das Gesamttotal', async () => {
   const { wb } = await exportiereUndLies();
-  const daten = abschnittDaten(blattZeilen(wb), 'Total Outlet-Gruppen');
-  const summe = daten.reduce((a, r) => a + r[2], 0);
+  const zeilen = blattZeilen(wb);
+  const cCd = zeilen[titelZeile(zeilen, 'Total Outlet-Gruppen') + 1].indexOf('Complete Demand');
+  const daten = abschnittDaten(zeilen, 'Total Outlet-Gruppen');
+  const summe = daten.reduce((a, r) => a + r[cCd], 0);
   assert.strictEqual(Math.round(summe * 100) / 100, 62756.16);
 });
 
@@ -249,11 +254,11 @@ test('XLSX kondensiert: keine Marke, kein Unmatched, kein Anz., Summen wie Full 
   ['Marke', 'Unmatched', 'Anz.'].forEach(k => assert.ok(!alleZellen.includes(k), k + ' darf nicht vorkommen'));
   const brands = abschnittDaten(zeilen, 'Total Brand-Gruppen');
   assert.deepStrictEqual(plain(brands), [
-    ['Lunch-Check', 31, 31, 0],
-    ['Wallee', 62725.16, 62725.16, 793.46],
+    ['Lunch-Check', '', '', '', 31, 31, 0],
+    ['Wallee', '', '', '', 62725.16, 62725.16, 793.46],
   ]);
   const g = titelZeile(zeilen, 'Gesamttotal');
-  assert.deepStrictEqual(plain(zeilen[g + 2]), ['Total', 62756.16, 62756.16, 793.46]);
+  assert.deepStrictEqual(plain(zeilen[g + 2]), ['Total', '', '', '', 62756.16, 62756.16, 793.46]);
 });
 
 test('XLSX: Hinweis G2 unter "Erstellt am" und als Fussnote nach dem letzten Block', async () => {
@@ -288,10 +293,10 @@ test('XLSX: Authorized orange nur bei Differenz, Differenz-Zelle rechts vom Gesa
 
   const g = titelZeile(zeilen, 'Gesamttotal');
   const total = zeilen[g + 2];
-  // ['Total', CD, Auth, Tip, Unmatched, Anz., 'Differenz:', 42.5]
-  assert.strictEqual(total[6], 'Differenz:');
-  assert.strictEqual(total[7], 42.5);
-  const refDiff = XLSX.utils.encode_cell({ r: g + 2, c: 7 });
+  // ['Total', '', '', '', '', CD, Auth, Tip, Unmatched, Anz., 'Differenz:', 42.5]
+  assert.strictEqual(total[10], 'Differenz:');
+  assert.strictEqual(total[11], 42.5);
+  const refDiff = XLSX.utils.encode_cell({ r: g + 2, c: 11 });
   assert.strictEqual(ws[refDiff].z, '#,##0.00');
   assert.strictEqual(zellenSchriftfarbe(bytes, refDiff), 'FF4D00');
 });
@@ -300,7 +305,7 @@ test('XLSX: ohne Differenz keine Differenz-Zelle', async () => {
   const { wb } = await exportiereUndLies();
   const zeilen = blattZeilen(wb);
   const g = titelZeile(zeilen, 'Gesamttotal');
-  assert.strictEqual(zeilen[g + 2].length, 6);
+  assert.strictEqual(zeilen[g + 2].length, 10);
   assert.ok(!zeilen.flat().includes('Differenz:'));
 });
 
@@ -311,16 +316,18 @@ test('XLSX: Spaltenbreiten nach §5.4 - so schmal wie moeglich, nie abgeschnitte
   const zeilen = blattZeilen(wb);
   const d = titelZeile(zeilen, 'Detail');
   const kopf = zeilen[d + 1];
-  // Terminal-Spalte: laengster Eintrag (44 Zeichen) + 2
-  assert.strictEqual(cols[kopf.indexOf('Terminal')], 46);
-  // Complete Demand: fetter Kopf 15 * 1.1 + 2 = 18.5 -> 19 schlaegt den Betrag '1’234’567.89' (14)
-  assert.strictEqual(cols[kopf.indexOf('Complete Demand')], 19);
-  // Die Bloecke teilen sich die Spalten: unter 'TID' steht im Block "Total
-  // Outlet-Gruppen" der Kopf 'Complete Demand' (19) - die Spalte misst den
-  // laengsten Eintrag ueber ALLE Bloecke.
-  assert.strictEqual(cols[kopf.indexOf('TID')], 19);
-  // Anz.: fetter Kopf 4*1.1+2 = 6.4 -> 7, die Werte sind kuerzer
-  assert.strictEqual(cols[kopf.indexOf('Anz.')], 7);
+  // Terminal-Spalte: laengster Eintrag (44 Zeichen, Datenzelle 10 pt):
+  // 44 * 0.88 * 10/11 + 1 = 36.2 -> 37
+  assert.strictEqual(cols[kopf.indexOf('Terminal')], 37);
+  // Complete Demand: fetter Kopf 11 pt 15 * 0.88 * 1.1 + 1 = 15.5 -> 16 schlaegt
+  // den Betrag '1’234’567.89' (12 * 10/11 + 1 = 11.9 -> 12)
+  assert.strictEqual(cols[kopf.indexOf('Complete Demand')], 16);
+  // TID traegt nur noch TIDs: die Kennzahlen der Total-Bloecke stehen
+  // rechtsbuendig unter denen des Detail-Blocks, nicht mehr in Spalte C.
+  // 'T1' und der fette Kopf 'TID' (3 * 0.88 * 1.1 + 1 = 3.9) -> Untergrenze 6
+  assert.strictEqual(cols[kopf.indexOf('TID')], 6);
+  // Anz.: fetter Kopf 4 * 0.88 * 1.1 + 1 = 4.9 -> Untergrenze 6
+  assert.strictEqual(cols[kopf.indexOf('Anz.')], 6);
   // nicht mehr die festen 18/15
   assert.ok(!cols.every((w, i) => w === (i < 3 ? 18 : 15)), 'feste Breiten sind Geschichte');
   // verbundene Hinweiszeile blaeht Spalte A nicht auf
@@ -349,4 +356,17 @@ test('XLSX: die Nachbearbeitung ist der Vendor-Pfad plus xlsxSeitenlayoutEinbett
   assert.deepStrictEqual(plain(wb.SheetNames), ['Terminal-Report']);
   const xml = sheetXml(bytes);
   assert.strictEqual(xlsxSeitenlayoutEinbetten(xml, { orientation: 'landscape' }), xml, 'idempotent auf der echten Datei');
+});
+
+test('XLSX: Kennzahlen aller Bloecke stehen in denselben Spalten wie im Detail-Block', async () => {
+  const { wb } = await exportiereUndLies();
+  const zeilen = blattZeilen(wb);
+  const detailKopf = zeilen[titelZeile(zeilen, 'Detail') + 1];
+  const cCd = detailKopf.indexOf('Complete Demand');
+  ['Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal'].forEach(name => {
+    const kopf = zeilen[titelZeile(zeilen, name) + 1];
+    assert.strictEqual(kopf.indexOf('Complete Demand'), cCd, name);
+    assert.strictEqual(kopf.indexOf('Anz.'), detailKopf.indexOf('Anz.'), name);
+    abschnittDaten(zeilen, name).forEach(r => assert.strictEqual(typeof r[cCd], 'number', name + ': Betrag unter Betrag'));
+  });
 });

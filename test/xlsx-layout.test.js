@@ -35,25 +35,36 @@ test('xlsxZahlAnzeige: Formate der App ergeben den Excel-Anzeigetext', () => {
   assert.strictEqual(xlsxZahlAnzeige(42, 'General'), '42');
 });
 
-test('xlsxSpaltenbreiten: laengster Anzeigetext + 2, Zahlen nach Zahlformat, fette Koepfe x 1.1', () => {
+// Einheit ist Excels Ziffernbreite (Calibri 11): Text x 0.88, Schrift sz/11,
+// fett x 1.1, dazu 1 Polster (v5.14.1 - "laenge + 2" war sichtbar zu breit).
+test('xlsxSpaltenbreiten: laengster Anzeigetext in Ziffernbreiten, Zahlen voll, Text 0.88, fett x 1.1', () => {
   const ws = blatt({
-    A1: { t: 's', v: 'Terminal', s: { font: { bold: true } } },            // 8 * 1.1 + 2 = 10.8 -> 11
-    B1: { t: 's', v: 'Complete Demand', s: { font: { bold: true } } },     // 15 * 1.1 + 2 = 18.5 -> 19
-    A2: { t: 's', v: 'Terrasse Ost, Gartenpavillon beim Brunnen 12' },     // 44 + 2 = 46
-    B2: { t: 'n', v: 1234567.89, z: '#,##0.00' },                          // '1’234’567.89' = 12 + 2 = 14
+    A1: { t: 's', v: 'Terminal', s: { font: { bold: true } } },            // 8 * 0.88 * 1.1 + 1 = 8.74 -> 9
+    B1: { t: 's', v: 'Complete Demand', s: { font: { bold: true } } },     // 15 * 0.88 * 1.1 + 1 = 15.52 -> 16
+    A2: { t: 's', v: 'Terrasse Ost, Gartenpavillon beim Brunnen 12' },     // 44 * 0.88 + 1 = 39.72 -> 40
+    B2: { t: 'n', v: 1234567.89, z: '#,##0.00' },                          // '1’234’567.89' = 12 + 1 = 13
     A3: { t: 's', v: 'Bar 1' },
-    B3: { t: 'n', v: 7.5, s: { numFmt: '#,##0.00" CHF"' } },               // '7.50 CHF' = 8 + 2 = 10
+    B3: { t: 'n', v: 7.5, s: { numFmt: '#,##0.00" CHF"' } },               // '7.50 CHF' = 8 + 1 = 9
     '!ref': 'A1:B3',
   });
-  assert.deepStrictEqual(plain(xlsxSpaltenbreiten(ws)), [{ wch: 46 }, { wch: 19 }]);
+  assert.deepStrictEqual(plain(xlsxSpaltenbreiten(ws)), [{ wch: 40 }, { wch: 16 }]);
+});
+
+test('xlsxSpaltenbreiten: kleinere Schrift skaliert mit sz/11, Zahlen zaehlen voll', () => {
+  const ws = blatt({
+    A1: { t: 's', v: 'Mastercard Maestro', s: { font: { sz: 10 } } },     // 18 * 0.88 * 10/11 + 1 = 15.4 -> 16
+    B1: { t: 'n', v: 1234567.89, z: '#,##0.00', s: { font: { sz: 10 } } }, // 12 * 10/11 + 1 = 11.9 -> 12
+    '!ref': 'A1:B1',
+  });
+  assert.deepStrictEqual(plain(xlsxSpaltenbreiten(ws)), [{ wch: 16 }, { wch: 12 }]);
 });
 
 test('xlsxSpaltenbreiten: verbundene Zellen werden nicht gemessen, Unter- und Obergrenze greifen', () => {
   const hinweis = 'H'.repeat(120);
   const ws = blatt({
     A1: { t: 's', v: hinweis },                    // ueber A1:D1 verbunden -> nicht gemessen
-    A2: { t: 's', v: 'x' },                        // 3 -> Untergrenze 6
-    B2: { t: 's', v: 'y'.repeat(70) },             // 72 -> Obergrenze 60 + wrapText
+    A2: { t: 's', v: 'x' },                        // 1.88 -> Untergrenze 6
+    B2: { t: 's', v: 'y'.repeat(70) },             // 62.6 -> Obergrenze 60 + wrapText
     C2: { t: 'n', v: 1 },
     '!ref': 'A1:D2',
     '!merges': [{ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } }],
@@ -71,7 +82,7 @@ test('xlsxSpaltenbreiten: eine Verbindung ueber nur eine Spalte zaehlt als norma
     '!ref': 'A1:A2',
     '!merges': [{ s: { r: 0, c: 0 }, e: { r: 1, c: 0 } }],
   });
-  assert.deepStrictEqual(plain(xlsxSpaltenbreiten(ws)), [{ wch: 22 }]);
+  assert.deepStrictEqual(plain(xlsxSpaltenbreiten(ws)), [{ wch: 19 }]);   // 20 * 0.88 + 1
 });
 
 test('xlsxSeitenlayout: Hochformat bis 8 Spalten, Querformat ab 9, Override moeglich', () => {
@@ -86,7 +97,7 @@ test('xlsxBlattFinalisieren: !cols, !margins, !pageSetup und Drucktitel', () => 
   const ws = blatt({ A1: { t: 's', v: 'Kopf', s: { font: { bold: true } } }, A2: { t: 's', v: 'a' }, '!ref': 'A1:A2' });
   const ergebnis = xlsxBlattFinalisieren(ws, { kopfZeile: 0 });
   assert.strictEqual(ergebnis, ws);
-  assert.deepStrictEqual(plain(ws['!cols']), [{ wch: 7 }]);
+  assert.deepStrictEqual(plain(ws['!cols']), [{ wch: 6 }]);   // 4 * 0.88 * 1.1 + 1 = 4.9 -> Untergrenze
   assert.deepStrictEqual(plain(ws['!margins']), plain(XLSX_RAENDER));
   assert.deepStrictEqual(plain(XLSX_RAENDER), { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 });
   assert.deepStrictEqual(plain(ws['!pageSetup']), { paperSize: 9, orientation: 'portrait', fitToWidth: 1, fitToHeight: 0 });

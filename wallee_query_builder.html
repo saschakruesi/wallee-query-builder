@@ -2942,11 +2942,16 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Reihenfolge = CSV-Spaltenreihenfolge; autorisiert_gross steht bewusst
   // direkt rechts von brutto_gross (SPEC-ITERATION-2 §3).
   //
-  // anzahl_transaktionen und unsettled_anzahl zaehlen nur FULFILL/COMPLETED:
-  // eine offene Autorisierung (AUTHORIZED, seit v5.14 in der Basis) ist weder
-  // eine abgeschlossene Transaktion noch "wartet auf Abrechnung" - sie ist noch
-  // gar nicht eingereicht. Ohne diesen Schutz wuerden die alten Zahlen bei
-  // jeder liegengebliebenen Autorisierung anders aussehen als in v5.13.
+  // anzahl_transaktionen, unsettled_anzahl und tip_total zaehlen nur
+  // FULFILL/COMPLETED: eine offene Autorisierung (AUTHORIZED, seit v5.14 in der
+  // Basis) ist weder eine abgeschlossene Transaktion noch "wartet auf
+  // Abrechnung" - sie ist noch gar nicht eingereicht. Ohne diesen Schutz
+  // wuerden die alten Zahlen bei jeder liegengebliebenen Autorisierung anders
+  // aussehen als in v5.13. Der tip-Guard ist gemessen, nicht vorsorglich:
+  // Discovery Q4 (sql/autorisiert_verifikation.sql, Space 73192, 2026-09-12)
+  // fand unter 64 AUTHORIZED-Transaktionen eine mit Trinkgeld-Lineitem -
+  // completedamount und totalappliedfees waren dagegen 64-mal 0, deshalb
+  // tragen brutto_gross, transaction_fee_total und netto keinen Guard.
   // autorisiert_gross laeuft dagegen ueber alle Zustaende der Basis - genau die
   // Differenz zu brutto_gross ist die fehlende Submission.
   const AGGREGAT_KENNZAHLEN = `SUM(CASE WHEN t.state IN ('FULFILL', 'COMPLETED') THEN 1 ELSE 0 END)
@@ -2959,7 +2964,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     SUM(t.authorizationamount)                                   AS autorisiert_gross,
     SUM(t.totalappliedfees)                                      AS transaction_fee_total,
     SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto,
-    COALESCE(SUM(tip.tip_amount), 0)                             AS tip_total`;
+    COALESCE(SUM(CASE WHEN t.state IN ('FULFILL', 'COMPLETED') THEN tip.tip_amount END), 0)
+                                                                 AS tip_total`;
 
   // --- SQL Generation: Brand ----------------------------------------------
   function buildBrandQuery({ spaceIds, start, end }) {
@@ -2967,9 +2973,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     // (Erweiterung 1). Beide CTEs sind ueber tx eingegrenzt, damit sie nicht die
     // gesamte payfacsettlementrecord- bzw. lineitem-Historie des Space scannen.
     // Basis inkl. AUTHORIZED (autorisiert: true, siehe txBasisBedingungen):
-    // die Zaehler unten sind deshalb auf FULFILL/COMPLETED geschuetzt, die
-    // Betragssummen brauchen keinen Guard (bei AUTHORIZED sind completedamount,
-    // totalappliedfees und Trinkgeld 0/NULL - sql/autorisiert_verifikation.sql).
+    // Zaehler und tip_total sind deshalb auf FULFILL/COMPLETED geschuetzt (siehe
+    // AGGREGAT_KENNZAHLEN), brutto/fees/netto brauchen keinen Guard.
     const basis = { start, end, autorisiert: true };
     return `WITH ${txCte({ spaceIds, ...basis })},
 ${settleExistsCte()},
@@ -10551,9 +10556,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // 3DS-Seite, der Verlaufs-Download) laeuft vor book_append_sheet durch
   // xlsxBlattFinalisieren und schreibt die Mappe ueber xlsxSchreibenUndLaden.
   // Drei Dinge passieren dort, an EINER Stelle statt je Export:
-  //   1. Spaltenbreite = laengster Anzeigetext der Spalte + 2 Zeichen (§5.4),
-  //      gemessen am fertigen Blatt: Zahlen nach ihrem Zahlformat, fette
-  //      Koepfe x 1.1; ueber mehrere Spalten verbundene Zellen (Titel,
+  //   1. Spaltenbreite = laengster Anzeigetext der Spalte, in Ziffernbreiten
+  //      (§5.4, kalibriert: Text x 0.88, Schriftgroesse sz/11, fett x 1.1,
+  //      + 1), gemessen am fertigen Blatt: Zahlen nach ihrem Zahlformat;
+  //      ueber mehrere Spalten verbundene Zellen (Titel,
   //      Hinweise) werden nicht gemessen, sonst blaehte ein Hinweis Spalte A auf.
   //   2. Raender und Seitenlayout (§5.3): A4, genau eine Seite breit, beliebig
   //      viele Seiten hoch; Querformat ab XLSX_QUERFORMAT_AB_SPALTEN Spalten.
@@ -10568,8 +10574,15 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   const XLSX_RAENDER = { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 };
   const XLSX_SPALTE_MIN = 6;
   const XLSX_SPALTE_MAX = 60;
-  const XLSX_SPALTE_POLSTER = 2;
+  // Excels Breiteneinheit ist die ZIFFERNBREITE der Standardschrift (Calibri
+  // 11). Ziffern zaehlen deshalb voll, Fliesstext ist proportional schmaler
+  // (gemessen: "laenge + 2" ergab sichtbar zu breite Spalten, v5.14.0), und
+  // eine kleinere Schrift skaliert mit sz/11. SheetJS legt beim Schreiben von
+  // sich aus ~0.8 Einheiten Zellpolster dazu, deshalb hier nur noch 1.
+  const XLSX_SPALTE_POLSTER = 1;
+  const XLSX_TEXT_FAKTOR = 0.88;          // Fliesstext gegen Ziffernbreite
   const XLSX_FETT_FAKTOR = 1.1;           // Fettschrift ist breiter
+  const XLSX_STANDARD_SZ = 11;            // Standardschrift der Mappe (Calibri 11)
   const XLSX_QUERFORMAT_AB_SPALTEN = 9;   // mehr als 8 Spalten -> Querformat
   const XLSX_PAPIER_A4 = 9;               // ECMA-376 paperSize 9 = A4
 
@@ -10633,8 +10646,11 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         if (istText && laengste > XLSX_SPALTE_MAX) xlsxUmbruchSetzen(zelle);
         return;
       }
-      const fett = !!(zelle.s && zelle.s.font && zelle.s.font.bold);
-      const breite = laengste * (fett ? XLSX_FETT_FAKTOR : 1) + XLSX_SPALTE_POLSTER;
+      const font = (zelle.s && zelle.s.font) || {};
+      let faktor = (font.sz || XLSX_STANDARD_SZ) / XLSX_STANDARD_SZ;
+      if (istText) faktor *= XLSX_TEXT_FAKTOR;
+      if (font.bold) faktor *= XLSX_FETT_FAKTOR;
+      const breite = laengste * faktor + XLSX_SPALTE_POLSTER;
       breiten[c] = Math.max(breiten[c] || 0, breite);
       if (istText && breite > XLSX_SPALTE_MAX) xlsxUmbruchSetzen(zelle);
     });
@@ -10861,7 +10877,24 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       ? Math.round((gesamt.rows[0][spalteVon(gesamt, 'Authorized')]
         - gesamt.rows[0][spalteVon(gesamt, 'Complete Demand')]) * 100) / 100
       : 0;
-    const maxCols = Math.max(1, ...sortiert.map(b => b.header.length)) + (differenz !== 0 ? 2 : 0);
+    // Die Bloecke stehen untereinander und teilen sich die Spalten. Damit eine
+    // Spalte nur gleichartigen Inhalt traegt (TID unter TID, Betrag unter
+    // Betrag - sonst misst die TID-Spalte den Kopf "Complete Demand" des
+    // naechsten Blocks, v5.14.0), stehen die Kennzahlen JEDES Blocks
+    // rechtsbuendig unter denen des Detail-Blocks; die Textspalten bleiben
+    // links, dazwischen leere Zellen.
+    const blattBreite = Math.max(1, ...sortiert.map(b => b.header.length));
+    const kennzahlen = kennzahlDefs(variante).length;
+    const spalteIm = (block, c) => {
+      const text = block.header.length - kennzahlen;
+      return c < text ? c : c + (blattBreite - block.header.length);
+    };
+    const verteile = (block, zeile) => {
+      const ausgabe = new Array(blattBreite).fill('');
+      zeile.forEach((wert, c) => { ausgabe[spalteIm(block, c)] = wert; });
+      return ausgabe;
+    };
+    const maxCols = blattBreite + (differenz !== 0 ? 2 : 0);
 
     const aoa = [];
     const stile = [];    // { r, c, s, z } - nach aoa_to_sheet angewandt
@@ -10889,14 +10922,14 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       aoa.push([block.name]); spanne(r);
       stile.push({ r, c: 0, s: { font: { bold: true, sz: 12, color: { rgb: XLSX_FARBE.text } } } });
       r++;
-      // Spaltenkopf (tuerkis)
-      aoa.push(block.header.slice());
-      for (let c = 0; c < block.header.length; c++) stile.push({ r, c, s: xlsxKopfStil() });
+      // Spaltenkopf (tuerkis), Kennzahlen rechtsbuendig zum Detail-Block
+      aoa.push(verteile(block, block.header));
+      for (let c = 0; c < block.header.length; c++) stile.push({ r, c: spalteIm(block, c), s: xlsxKopfStil() });
       if (kopfZeile < 0) kopfZeile = r;
       r++;
       // Datenzeilen (Zahlformat + Zebra + Rahmen)
       block.rows.forEach((row, i) => {
-        aoa.push(row.slice());
+        aoa.push(verteile(block, row));
         const zebra = i % 2 === 1;
         block.typen.forEach((typ, c) => {
           const format = (typ === 'betrag' || typ === 'zahl') ? XLSX_FORMAT[typ] : null;
@@ -10906,10 +10939,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
           if (c === cAuth && cAuth >= 0 && cCd >= 0 && row[cAuth] !== row[cCd]) {
             stil.font = Object.assign({}, stil.font, { color: { rgb: XLSX_FARBE.orange }, bold: true });
           }
-          stile.push({ r, c, s: stil, z: format });
+          stile.push({ r, c: spalteIm(block, c), s: stil, z: format });
         });
         if (block.name === 'Gesamttotal' && differenz !== 0) {
-          const c0 = block.header.length;
+          const c0 = blattBreite;
           aoa[aoa.length - 1][c0] = 'Differenz:';
           aoa[aoa.length - 1][c0 + 1] = differenz;
           stile.push({ r, c: c0, s: { font: { bold: true, color: { rgb: XLSX_FARBE.orange }, sz: 10 },

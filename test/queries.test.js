@@ -559,12 +559,15 @@ for (const [name, bauen] of Object.entries(AUTORISIERT_BUILDER)) {
     assert.match(cond, /\(t\.totalappliedfees IS NULL OR t\.totalappliedfees = 0\)\s*AND\s*se\.transaction_id IS NULL\s*AND\s*t\.state IN \('FULFILL', 'COMPLETED'\)/);
   });
 
-  test(`${name}: Betragssummen unveraendert (brutto, fee, netto, tip ohne CASE)`, () => {
+  test(`${name}: brutto, fee, netto ohne CASE; tip_total auf FULFILL/COMPLETED geschuetzt`, () => {
     const sql = bauen();
     assert.match(sql, /SUM\(t\.completedamount\)\s+AS brutto_gross/);
     assert.match(sql, /SUM\(t\.totalappliedfees\)\s+AS transaction_fee_total/);
     assert.match(sql, /SUM\(t\.completedamount\) - COALESCE\(SUM\(t\.totalappliedfees\), 0\) AS netto/);
-    assert.match(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)\s+AS tip_total/);
+    // Discovery Q4 (Space 73192): eine AUTHORIZED-Transaktion trug bereits ein
+    // Trinkgeld-Lineitem - ohne Guard waere tip_total nicht mehr byte-identisch.
+    assert.match(sql, /COALESCE\(SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN tip\.tip_amount END\), 0\)\s+AS tip_total/);
+    assert.doesNotMatch(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)/);
   });
 }
 
