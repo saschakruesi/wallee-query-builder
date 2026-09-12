@@ -133,8 +133,8 @@ test('XLSX: Gesamttotal steht mit den richtigen Zahlen drin', async () => {
   const { wb } = await exportiereUndLies();
   const zeilen = blattZeilen(wb);
   const t = titelZeile(zeilen, 'Gesamttotal');
-  assert.deepStrictEqual(plain(zeilen[t + 1]), ['', 'Complete Demand', 'Tip', 'Unmatched', 'Anz.']);
-  assert.deepStrictEqual(plain(zeilen[t + 2]), ['Total', 62756.16, 793.46, 889, 2070]);
+  assert.deepStrictEqual(plain(zeilen[t + 1]), ['', 'Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.']);
+  assert.deepStrictEqual(plain(zeilen[t + 2]), ['Total', 62756.16, 62756.16, 793.46, 889, 2070]);
 });
 
 test('XLSX: Betraege sind Zahlen mit Schweizer Zahlformat', async () => {
@@ -143,7 +143,7 @@ test('XLSX: Betraege sind Zahlen mit Schweizer Zahlformat', async () => {
   const t = titelZeile(blattZeilen(wb), 'Gesamttotal');
   const datenR = t + 2;                 // 0-basierter Zeilenindex der Total-Zeile
   const b = ws[XLSX.utils.encode_cell({ r: datenR, c: 1 })];   // Complete Demand
-  const d = ws[XLSX.utils.encode_cell({ r: datenR, c: 3 })];   // Anz.
+  const d = ws[XLSX.utils.encode_cell({ r: datenR, c: 4 })];   // Anz.
   assert.strictEqual(b.t, 'n', 'Betrag muss als Zahl gespeichert sein, sonst kann Excel nicht rechnen');
   assert.strictEqual(b.v, 62756.16);
   assert.strictEqual(b.z, '#,##0.00', 'Betrag ohne Zahlformat');
@@ -154,8 +154,8 @@ test('XLSX: Brand-Totals vollstaendig und korrekt', async () => {
   const { wb } = await exportiereUndLies();
   const daten = abschnittDaten(blattZeilen(wb), 'Total Brand-Gruppen');
   assert.deepStrictEqual(plain(daten), [
-    ['Lunch-Check', 31, 0, 1, 2],
-    ['Wallee', 62725.16, 793.46, 888, 2068],
+    ['Lunch-Check', 31, 31, 0, 1, 2],
+    ['Wallee', 62725.16, 62725.16, 793.46, 888, 2068],
   ]);
 });
 

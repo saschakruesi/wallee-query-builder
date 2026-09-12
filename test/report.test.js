@@ -8,7 +8,7 @@ const { loadBuilders, plain } = require('./harness');
 const app = loadBuilders();
 const { parseReportCsv, autoOutletGroup, autoBrandGroup, buildReportModel,
   formatAmountCH, formatIntCH, mergeReportConfig,
-  reportExportBloecke, buildReportCsv, autorisiertDifferenz } = app;
+  reportExportBloecke, buildReportCsv, autorisiertDifferenz, AUTORISIERT_HINWEIS } = app;
 
 // Kopfzeile so, wie sie der Terminal-Modus des Generators liefert (unsettled_anzahl).
 const HEADER_APP = '"space_id","terminal_identifier","terminal_name","brand","waehrung",' +
@@ -597,15 +597,15 @@ test('Export-Bloecke: Betraege sind Zahlen, keine Strings', () => {
 
 test('Export-Bloecke: Gesamttotal traegt die Sollzahlen', () => {
   const gesamt = reportExportBloecke(modell()).find(b => b.name === 'Gesamttotal');
-  assert.deepStrictEqual(plain(gesamt.header), ['', 'Complete Demand', 'Tip', 'Unmatched', 'Anz.']);
-  assert.deepStrictEqual(plain(gesamt.rows), [['Total', 62756.16, 793.46, 889, 2070]]);
+  assert.deepStrictEqual(plain(gesamt.header), ['', 'Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.']);
+  assert.deepStrictEqual(plain(gesamt.rows), [['Total', 62756.16, 62756.16, 793.46, 889, 2070]]);
 });
 
 test('Export-Bloecke: Brand-Totals vollstaendig', () => {
   const brands = reportExportBloecke(modell()).find(b => b.name === 'Total Brand-Gruppen');
   assert.deepStrictEqual(plain(brands.rows), [
-    ['Lunch-Check', 31, 0, 1, 2],
-    ['Wallee', 62725.16, 793.46, 888, 2068],
+    ['Lunch-Check', 31, 31, 0, 1, 2],
+    ['Wallee', 62725.16, 62725.16, 793.46, 888, 2068],
   ]);
 });
 
@@ -664,4 +664,45 @@ test('CSV-Export: Felder mit Semikolon oder Quote werden maskiert', () => {
   const csv = buildReportCsv(buildReportModel(rows, {}));
 
   assert.ok(csv.includes('"Bar; ""Eck"" 1"'), 'Semikolon und Quotes muessen maskiert sein');
+});
+
+// --- Autorisiert in den Ausgaben (v5.14, SPEC-ITERATION-2 §4.2-4.4) ---------
+
+const G2 = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. Weicht sie vom '
+  + 'Complete Demand ab, fehlt für die Differenz eine Submission (Einreichung/Tagesabschluss am '
+  + 'Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+
+test('Hinweis G2 ist wortgleich die Vorgabe der Spec', () => {
+  assert.strictEqual(AUTORISIERT_HINWEIS, G2);
+});
+
+test('Export-Bloecke: Kennzahl-Reihenfolge Complete Demand · Authorized · Tip · Unmatched · Anz. in allen Bloecken', () => {
+  reportExportBloecke(modell()).forEach(b => {
+    const kennzahlen = b.header.slice(-5);
+    assert.deepStrictEqual(plain(kennzahlen), ['Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.'], b.name);
+    assert.deepStrictEqual(plain(b.typen.slice(-5)), ['betrag', 'betrag', 'betrag', 'zahl', 'zahl'], b.name);
+    assert.strictEqual(b.typen.length, b.header.length, b.name + ': typen passt zur Header-Laenge');
+    b.rows.forEach(r => assert.strictEqual(r.length, b.header.length, b.name + ': Zeilenbreite'));
+  });
+});
+
+test('Export-Bloecke: Authorized traegt die Differenz, Detail-Zeile mit offener Autorisierung', () => {
+  const rows = [
+    row('T1', 'Bar 1', 'Visa', 100000000, 100000000),
+    row('T1', 'Bar 1', 'Mastercard', 0, 250000000, { count: 0 }),
+  ];
+  const bloecke = reportExportBloecke(buildReportModel(rows, {}));
+  const detail = bloecke.find(b => b.name === 'Detail');
+  const mc = detail.rows.find(r => r[3] === 'Mastercard');
+  assert.deepStrictEqual(plain(mc), ['Bar', 'Bar 1', 'T1', 'Mastercard', 'Wallee', 0, 2.5, 0, 0, 0]);
+  const gesamt = bloecke.find(b => b.name === 'Gesamttotal');
+  assert.deepStrictEqual(plain(gesamt.rows[0]), ['Total', 1, 3.5, 0, 0, 1]);
+});
+
+test('CSV-Export: Hinweis G2 als letzte Zeile nach einer Leerzeile', () => {
+  const csv = buildReportCsv(modell());
+  const zeilen = csv.replace(/\r\n$/, '').split('\r\n');
+  assert.strictEqual(zeilen[zeilen.length - 1], G2);
+  assert.strictEqual(zeilen[zeilen.length - 2], '');
+  assert.ok(zeilen.slice(0, -2).some(z => /;Authorized;/.test(z)), 'Kopfzeile mit Authorized');
 });

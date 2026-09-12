@@ -329,6 +329,7 @@ const EXPORTED = [
   'autoBrandGroup',
   'buildReportModel',
   'autorisiertDifferenz',
+  'AUTORISIERT_HINWEIS',
   'formatAmountCH',
   'formatIntCH',
   'mergeReportConfig',

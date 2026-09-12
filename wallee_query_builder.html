@@ -21,6 +21,12 @@
     --warn: #b45309;
     --code-bg: #eff6f5;
     --code-text: #2b3a3d;
+    /* wallee-Orange: Markierung einer Differenz Autorisiert <> Complete Demand
+       im Terminal-Report (SPEC-ITERATION-2 §4.3). Derselbe Wert wie --kuchen-2,
+       aber bewusst eine eigene, semantische Variable - die Kuchenfarben sind
+       eine Palette, dies ist eine Warnfarbe. Der XLSX-Export fuehrt den Hexwert
+       separat (XLSX_FARBE.orange), weil Zellstile keine CSS-Variablen kennen. */
+    --wallee-orange: #ff4d00;
     /* Kuchendiagramme des Reporting-Reports (SPEC-ITERATION-2 §2.2): sechs
        Farben plus Grau. --kuchen-1 traegt bewusst denselben Wert wie --accent
        und nicht var(--accent): die sieben stehen als EINE ablesbare Tabelle
@@ -393,6 +399,7 @@
   .report-table td.num, .report-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .report-table tr.subtotal td { font-weight: 600; background: var(--panel-2); }
   .report-table tr.grand td { font-weight: 700; border-top: 2px solid var(--accent); }
+  .report-table td.autorisiert-diff { color: var(--wallee-orange); font-weight: 600; }
   .report-output { margin-top: 10px; }
 
   /* Reporting-Report: Kanal-Abschnitte, KPI-Kacheln und Balken. Alle Farben
@@ -10265,18 +10272,31 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return Math.round(units / 1e6) / 100;
   }
 
-  const KENNZAHL_SPALTEN = ['Complete Demand', 'Tip', 'Unmatched', 'Anz.'];
-  const kennzahlWerte = k => [unitsZuZahl(k.completeDemand), unitsZuZahl(k.tip), k.unmatched, k.count];
+  // Hinweis zum autorisierten Betrag (SPEC-ITERATION-2 §1 G2). Der Wortlaut ist
+  // Vorgabe und steht ueberall identisch: Bildschirm (unter Detail und
+  // Gesamttotal, damit auch im Druck/PDF), CSV (letzte Zeile), Excel und im
+  // Panel der Modi brand/terminal. Ergaenzung "... oder eine Teil-Einreichung"
+  // erst, wenn Q3 aus sql/autorisiert_verifikation.sql Teil-Captures zeigt (O3).
+  const AUTORISIERT_HINWEIS = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. '
+    + 'Weicht sie vom Complete Demand ab, fehlt für die Differenz eine Submission '
+    + '(Einreichung/Tagesabschluss am Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+
+  // Kennzahl-Reihenfolge, ueberall identisch (SPEC-ITERATION-2 §4.2). Im Kopf
+  // englisch wie die bestehenden Spalten ("Authorized", Entscheid O1);
+  // "Autorisiert" heisst die Kennzahl nur im Hinweistext.
+  const KENNZAHL_SPALTEN = ['Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.'];
+  const kennzahlWerte = k => [unitsZuZahl(k.completeDemand), unitsZuZahl(k.authorized),
+    unitsZuZahl(k.tip), k.unmatched, k.count];
 
   // Spaltentypen je Block - der XLSX-Export haengt daran das Zahlformat.
   // 'text' | 'betrag' | 'zahl'
   function spaltenTypen(anzahlText) {
-    return [...Array(anzahlText).fill('text'), 'betrag', 'betrag', 'zahl', 'zahl'];
+    return [...Array(anzahlText).fill('text'), 'betrag', 'betrag', 'betrag', 'zahl', 'zahl'];
   }
 
   function reportExportBloecke(modell) {
     const m = modell || { detail: [], outletTotals: [], brandTotals: [],
-      grandTotal: { completeDemand: 0, tip: 0, unmatched: 0, count: 0 } };
+      grandTotal: leereKennzahlen() };
 
     const detailRows = [];
     m.detail.forEach(o => {
@@ -10335,6 +10355,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       zeilen.push(block.header.map(csvFeld).join(';'));
       block.rows.forEach(r => zeilen.push(r.map(csvFeld).join(';')));
     });
+    // Hinweis G2 als letzte Zeile nach einer Leerzeile, damit die Datei fuer
+    // sich allein erklaert, was "Authorized" bedeutet (SPEC-ITERATION-2 §4.4).
+    zeilen.push('');
+    zeilen.push(csvFeld(AUTORISIERT_HINWEIS));
     return CSV_BOM + zeilen.join('\r\n') + '\r\n';
   }
 
@@ -10741,6 +10765,12 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
 
   function kennzahlZellen(reihe, k) {
     zelle(reihe, formatAmountCH(k.completeDemand), true);
+    // Authorized: orange, sobald der Wert vom Complete Demand abweicht - die
+    // Zelle markiert die fehlende Submission (SPEC-ITERATION-2 §4.3). Gilt auf
+    // jeder Ebene, auch fuer Zwischensummen und Totale, weil dort die Differenz
+    // der darunterliegenden Zeilen durchschlaegt.
+    const autorisiert = zelle(reihe, formatAmountCH(k.authorized), true);
+    if (autorisiertDifferenz(k) !== 0) autorisiert.className = 'num autorisiert-diff';
     zelle(reihe, formatAmountCH(k.tip), true);
     zelle(reihe, formatIntCH(k.unmatched), true);
     zelle(reihe, formatIntCH(k.count), true);
@@ -10763,7 +10793,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return table;
   }
 
-  const KENNZAHL_KOPF = [['Complete Demand', true], ['Tip', true], ['Unmatched', true], ['Anz.', true]];
+  const KENNZAHL_KOPF = [['Complete Demand', true], ['Authorized', true], ['Tip', true],
+    ['Unmatched', true], ['Anz.', true]];
 
   function renderReport() {
     // Datum fuer den PDF-/Druck-Kopf (nur dort sichtbar).
@@ -10783,23 +10814,30 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     reportOutput.appendChild(blockGesamttotal(modell));
   }
 
-  function block(titel, hinweis) {
+  // Ein Block mit Titel und beliebig vielen Hinweis-Absaetzen in Reihenfolge.
+  function block(titel, ...hinweise) {
     const div = document.createElement('div');
     div.className = 'report-block';
     const h = document.createElement('h3');
     h.textContent = titel;
     div.appendChild(h);
-    if (hinweis) {
+    hinweise.filter(Boolean).forEach(hinweis => {
       const p = document.createElement('p');
       p.className = 'hint';
       p.textContent = hinweis;
       div.appendChild(p);
-    }
+    });
     return div;
   }
 
+  // Der Hinweis G2 steht direkt unter "Detail" und nochmals unter "Gesamttotal"
+  // (SPEC-ITERATION-2 §4.4). Der Druck/PDF-Pfad des Terminal-Reports ist
+  // window.print() ueber die Bildschirmansicht - die Absaetze drucken also mit,
+  // der Detail-Absatz auf der ersten Seite; eine eigene Fusszeilen-Mechanik
+  // gibt es hier nicht (anders als beim Settlement-/Reporting-PDF via jsPDF).
   function blockDetail(modell) {
-    const div = block('Detail', 'Je Outlet-Gruppe die einzelnen Terminals und Kartenmarken, darunter die Zwischensumme je Brand-Gruppe.');
+    const div = block('Detail', AUTORISIERT_HINWEIS,
+      'Je Outlet-Gruppe die einzelnen Terminals und Kartenmarken, darunter die Zwischensumme je Brand-Gruppe.');
 
     modell.detail.forEach(o => {
       const wrap = document.createElement('div');
@@ -10868,7 +10906,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   }
 
   function blockGesamttotal(modell) {
-    const div = block('Gesamttotal');
+    const div = block('Gesamttotal', AUTORISIERT_HINWEIS);
     const t = tabelle([['', false], ...KENNZAHL_KOPF]);
     const tbody = t.querySelector('tbody');
     const tr = document.createElement('tr');

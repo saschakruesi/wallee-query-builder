@@ -156,3 +156,64 @@ test('leerer Gruppenname faellt auf den Auto-Vorschlag zurueck', () => {
   assert.ok(reportOutput.textContent.includes('Galerie'),
     'nach leerem Namen muss der Auto-Vorschlag zurueckkommen');
 });
+
+// --- Autorisiert (v5.14, SPEC-ITERATION-2 §4.2-4.4) --------------------------
+
+const G2 = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. Weicht sie vom '
+  + 'Complete Demand ab, fehlt für die Differenz eine Submission (Einreichung/Tagesabschluss am '
+  + 'Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+
+const HEADER_V514 = '"space_id","terminal_identifier","terminal_name","brand","waehrung",'
+  + '"anzahl_transaktionen","unsettled_anzahl","brutto_gross","autorisiert_gross","transaction_fee_total","netto","tip_total"';
+const CSV_MIT_DIFFERENZ = [
+  HEADER_V514,
+  '"1","T1","Bar 1","Visa","CHF","3","0","100.00000000","100.00000000","0","0","0.00000000"',
+  '"1","T1","Bar 1","Mastercard","CHF","0","0","0.00000000","42.50000000","0","0","0.00000000"',
+  '"1","T2","Bar 2","Visa","CHF","1","0","10.00000000","10.00000000","0","0","0.00000000"',
+].join('\n');
+
+function kopfTexte(table) {
+  return alleTags(table.children[0], 'th').map(th => th.textContent);
+}
+
+test('Gerenderter Report: fuenf Kennzahl-Spalten in jeder Tabelle, Authorized rechts von Complete Demand', () => {
+  ingestReportCsv(FIXTURE);
+  const tabellen = alleTags(reportOutput, 'table');
+  assert.ok(tabellen.length >= 4);
+  tabellen.forEach(t => {
+    const kopf = kopfTexte(t);
+    assert.deepStrictEqual(kopf.slice(-5), ['Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.']);
+  });
+});
+
+test('Gerenderter Report: ohne Differenz keine orange Markierung', () => {
+  ingestReportCsv(FIXTURE);
+  const markiert = alleTags(reportOutput, 'td').filter(td => /\bautorisiert-diff\b/.test(td.className));
+  assert.strictEqual(markiert.length, 0);
+});
+
+test('Gerenderter Report: Differenz markiert die Authorized-Zelle in Zeile, Zwischensumme und Totalen', () => {
+  ingestReportCsv(CSV_MIT_DIFFERENZ);
+  const markiert = alleTags(reportOutput, 'td').filter(td => /\bautorisiert-diff\b/.test(td.className));
+  const texte = markiert.map(td => td.textContent);
+  // Detail-Zeile Mastercard (42.50), Zwischensumme Bar/Wallee (152.50),
+  // Outlet-Total Bar (152.50), Brand-Total Wallee (152.50), Gesamttotal (152.50).
+  assert.deepStrictEqual(texte, ['42.50', '152.50', '152.50', '152.50', '152.50']);
+  markiert.forEach(td => assert.ok(/\bnum\b/.test(td.className), 'bleibt rechtsbuendig'));
+  // Terminal T2 ohne Differenz bleibt unmarkiert: sein Authorized-Wert 10.00
+  // darf nicht unter den markierten stehen.
+  assert.ok(!texte.includes('10.00'));
+});
+
+test('Gerenderter Report: Hinweis G2 wortgleich unter Detail und unter Gesamttotal', () => {
+  ingestReportCsv(FIXTURE);
+  const hinweise = alleTags(reportOutput, 'p').filter(p => p.textContent === G2);
+  assert.strictEqual(hinweise.length, 2, 'genau zweimal: Detail und Gesamttotal');
+  hinweise.forEach(p => assert.strictEqual(p.className, 'hint'));
+  const bloecke = reportOutput.children;
+  const detail = bloecke[0], gesamt = bloecke[bloecke.length - 1];
+  assert.strictEqual(detail.children[0].textContent, 'Detail');
+  assert.strictEqual(detail.children[1].textContent, G2, 'direkt unter dem Titel Detail');
+  assert.strictEqual(gesamt.children[0].textContent, 'Gesamttotal');
+  assert.strictEqual(gesamt.children[1].textContent, G2, 'direkt unter dem Titel Gesamttotal');
+});
