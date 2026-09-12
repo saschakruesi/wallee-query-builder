@@ -157,3 +157,14 @@ test('Kuchenfarben: auch die Textfarben zeigen auf definierte CSS-Variablen', ()
     assert.ok(vars.has(name[1]), `${e.schluessel}: ${name[1]} fehlt im :root`);
   });
 });
+
+test('Excel-Dialog des Terminal-Reports: alle IDs vorhanden, Radios teilen den Namen (v5.14)', () => {
+  ['reportXlsxDialogOverlay', 'reportXlsxVarianteFull', 'reportXlsxVarianteKondensiert',
+    'reportXlsxDialogOk', 'reportXlsxDialogCancel', 'reportXlsxDialogClose']
+    .forEach(id => assert.match(markup, new RegExp(`\\sid="${id}"`), `ID ${id} fehlt`));
+  const radios = markup.match(/<input type="radio" name="reportXlsxVariante"[^>]*>/g) || [];
+  assert.strictEqual(radios.length, 2);
+  assert.match(radios[0], /id="reportXlsxVarianteFull"[^>]*checked/, 'Full ist im Markup vorausgewaehlt');
+  // Der Dialog liegt als eigenes Overlay vor, versteckt bis zum Klick.
+  assert.match(markup, /<div class="overlay hidden" id="reportXlsxDialogOverlay">/);
+});

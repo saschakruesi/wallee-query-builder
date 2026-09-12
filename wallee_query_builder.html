@@ -640,6 +640,11 @@
   .radio-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
   .radio-row label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 14px; }
   .radio-row input[type="radio"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  /* Variantenwahl im Excel-Dialog: Radio mit Titel und Erklaerung darunter. */
+  .variante-wahl { display: flex; flex-direction: column; gap: 12px; }
+  .variante-row { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 14px; }
+  .variante-row input[type="radio"] { width: 16px; height: 16px; margin-top: 2px; flex: none; accent-color: var(--accent); cursor: pointer; }
+  .variante-row .hint { display: block; margin-top: 2px; }
   /* Bewusst nur auf die beiden Statuszeilen des Reporting-Modus gemuenzt
      (Aggregat und 3DS-Seite): die Statuszeilen von Terminal- und
      Settlement-Report sollen sich nicht mit aendern. Wer eine dritte ergaenzt,
@@ -1330,6 +1335,41 @@
 
 <!-- Einstellungen. Gelten modusuebergreifend, deshalb als Dialog ueber dem
      Zahnrad im Kopf statt als Panel unter einem einzelnen Tab. -->
+<!-- Excel-Report: Full oder kondensiert (SPEC-ITERATION-2 §5.1). Muster wie
+     das Einstellungs-Overlay: Hintergrund-Klick, Esc und Abbrechen schliessen
+     ohne Export. Betrifft nur den Excel-Export; CSV und PDF bleiben Full. -->
+<div class="overlay hidden" id="reportXlsxDialogOverlay">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="reportXlsxDialogTitel">
+    <div class="dialog-kopf">
+      <h2 id="reportXlsxDialogTitel">Excel-Report erstellen</h2>
+      <button class="icon-btn" id="reportXlsxDialogClose" title="Schliessen" aria-label="Schliessen">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="dialog-inhalt">
+      <div class="variante-wahl">
+        <label class="variante-row">
+          <input type="radio" name="reportXlsxVariante" id="reportXlsxVarianteFull" value="full" checked />
+          <span><strong>Full Report</strong><br>
+            <span class="hint">Alle Ebenen: Terminal, Marke, Brand-Gruppe; alle Kennzahlen inkl. Unmatched und Anzahl.</span></span>
+        </label>
+        <label class="variante-row">
+          <input type="radio" name="reportXlsxVariante" id="reportXlsxVarianteKondensiert" value="kondensiert" />
+          <span><strong>Kondensierter Report</strong><br>
+            <span class="hint">Nur Brand-Gruppen (keine einzelnen Marken), ohne die Spalten Unmatched und Anz.</span></span>
+        </label>
+      </div>
+      <div class="actions" style="margin-top:16px; justify-content:flex-end;">
+        <button class="btn" id="reportXlsxDialogCancel">Abbrechen</button>
+        <button class="btn btn-primary" id="reportXlsxDialogOk">Excel erstellen</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="overlay hidden" id="settingsOverlay">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitel">
     <div class="dialog-kopf">
@@ -2020,6 +2060,12 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const reportOutletCfg = document.getElementById('reportOutletCfg');
   const reportBrandCfg  = document.getElementById('reportBrandCfg');
   const reportXlsxBtn   = document.getElementById('reportXlsxBtn');
+  const reportXlsxDialogOverlay      = document.getElementById('reportXlsxDialogOverlay');
+  const reportXlsxDialogClose        = document.getElementById('reportXlsxDialogClose');
+  const reportXlsxDialogCancel       = document.getElementById('reportXlsxDialogCancel');
+  const reportXlsxDialogOk           = document.getElementById('reportXlsxDialogOk');
+  const reportXlsxVarianteFull       = document.getElementById('reportXlsxVarianteFull');
+  const reportXlsxVarianteKondensiert = document.getElementById('reportXlsxVarianteKondensiert');
   const reportCsvBtn    = document.getElementById('reportCsvBtn');
   const reportPrintBtn  = document.getElementById('reportPrintBtn');
   const reportResetCfgBtn = document.getElementById('reportResetCfgBtn');
@@ -10257,6 +10303,19 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     try { localStorage.setItem(REPORT_CFG_KEY, JSON.stringify(cfg)); } catch (e) {}
   }
 
+  // Zuletzt gewaehlte Excel-Variante (SPEC-ITERATION-2 §5.1): eigener Key,
+  // Private-Mode-sicher wie REPORT_CFG_KEY. Ein unbekannter Wert faellt auf
+  // REPORT_VARIANTE_DEFAULT zurueck (reportVariante).
+  const REPORT_XLSX_VARIANTE_KEY = 'wallee_terminal_report_xlsx_variante';
+
+  function loadReportXlsxVariante() {
+    try { return reportVariante(localStorage.getItem(REPORT_XLSX_VARIANTE_KEY)); } catch (e) { return REPORT_VARIANTE_DEFAULT; }
+  }
+
+  function saveReportXlsxVariante(variante) {
+    try { localStorage.setItem(REPORT_XLSX_VARIANTE_KEY, reportVariante(variante)); } catch (e) {}
+  }
+
   // --- Terminal-Report: Export --------------------------------------------
   // reportExportBloecke() ist die gemeinsame, reine Grundlage fuer XLSX und CSV.
   // Betraege stehen darin als ZAHL, nicht als formatierter String: im Excel soll
@@ -12547,9 +12606,9 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   });
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !settingsOverlay.classList.contains('hidden')) {
-      settingsSchliessen();
-    }
+    if (e.key !== 'Escape') return;
+    if (!settingsOverlay.classList.contains('hidden')) settingsSchliessen();
+    if (reportXlsxDialogOffen()) reportXlsxDialogSchliessen();
   });
 
   // --- Event bindings: Betriebsmodus ---------------------------------------
@@ -12646,15 +12705,58 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     else if (btn.dataset.act === 'xlsx') historyDownloadXlsx(token, btn.dataset.mode, btn.dataset.account);
   });
 
-  reportXlsxBtn.addEventListener('click', () => {
+  // Der Verlaufseintrag merkt sich die zuletzt exportierte Variante (O2) -
+  // Umsetzung in Task 7 (Brand-Modus/Verlauf).
+  function merkeReportXlsxVarianteImVerlauf(variante) { void variante; }
+
+  // --- Excel-Dialog: Full / Kondensiert (SPEC-ITERATION-2 §5.1) --------------
+  // Der Knopf oeffnet erst den Dialog; exportiert wird nur ueber "Excel
+  // erstellen". Hintergrund-Klick, Esc, Schliessen und Abbrechen = kein Export.
+  function reportXlsxDialogOeffnen() {
+    const variante = loadReportXlsxVariante();
+    reportXlsxVarianteFull.checked = variante !== 'kondensiert';
+    reportXlsxVarianteKondensiert.checked = variante === 'kondensiert';
+    reportXlsxDialogOverlay.classList.remove('hidden');
+    (variante === 'kondensiert' ? reportXlsxVarianteKondensiert : reportXlsxVarianteFull).focus();
+  }
+
+  function reportXlsxDialogSchliessen() {
+    reportXlsxDialogOverlay.classList.add('hidden');
+    reportXlsxBtn.focus();
+  }
+
+  function reportXlsxDialogOffen() {
+    return !reportXlsxDialogOverlay.classList.contains('hidden');
+  }
+
+  function reportXlsxVarianteAusDialog() {
+    return reportXlsxVarianteKondensiert.checked ? 'kondensiert' : 'full';
+  }
+
+  function reportXlsxDialogBestaetigen() {
+    const variante = reportXlsxVarianteAusDialog();
+    saveReportXlsxVariante(variante);
+    reportXlsxDialogSchliessen();
     if (!reportModell) return;
     try {
-      exportReportXlsx(reportModell);
+      exportReportXlsx(reportModell, variante);
+      merkeReportXlsxVarianteImVerlauf(variante);
     } catch (e) {
       // Wenn SheetJS aus irgendeinem Grund nicht greift, ist der Kunde nicht
       // blockiert - die CSV enthaelt dieselben Zahlen.
       reportZeigeFehler('Excel-Export fehlgeschlagen. Bitte den CSV-Export nutzen.');
     }
+  }
+
+  reportXlsxBtn.addEventListener('click', () => {
+    if (!reportModell) return;
+    reportXlsxDialogOeffnen();
+  });
+  reportXlsxDialogOk.addEventListener('click', reportXlsxDialogBestaetigen);
+  reportXlsxDialogCancel.addEventListener('click', reportXlsxDialogSchliessen);
+  reportXlsxDialogClose.addEventListener('click', reportXlsxDialogSchliessen);
+  reportXlsxDialogOverlay.addEventListener('click', e => {
+    if (e.target === reportXlsxDialogOverlay) reportXlsxDialogSchliessen();
   });
 
   reportCsvBtn.addEventListener('click', () => {
