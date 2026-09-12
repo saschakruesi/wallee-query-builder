@@ -217,3 +217,17 @@ test('Gerenderter Report: Hinweis G2 wortgleich unter Detail und unter Gesamttot
   assert.strictEqual(gesamt.children[0].textContent, 'Gesamttotal');
   assert.strictEqual(gesamt.children[1].textContent, G2, 'direkt unter dem Titel Gesamttotal');
 });
+
+test('Hinweis G2 steht im Panel der Modi brand und terminal, sonst nicht (SPEC §3)', () => {
+  const hint = dokument.getElementById('autorisiertHint');
+  assert.strictEqual(hint.textContent, G2, 'Text kommt aus AUTORISIERT_HINWEIS');
+  app.setMode('brand');
+  assert.strictEqual(hint.classList.contains('active'), true);
+  app.setMode('terminal');
+  assert.strictEqual(hint.classList.contains('active'), true);
+  ['export', 'card', 'settlement', 'reporting'].forEach(m => {
+    app.setMode(m);
+    assert.strictEqual(hint.classList.contains('active'), false, m);
+  });
+  app.setMode('terminal');
+});

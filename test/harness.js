@@ -342,6 +342,8 @@ const EXPORTED = [
   'reportExportBloecke',
   'reportVariante',
   'loadReportXlsxVariante',
+  'historyMitXlsxVariante',
+  'historyXlsxVarianteLabel',
   'saveReportXlsxVariante',
   'REPORT_XLSX_VARIANTE_KEY',
   'xlsxZellAdresse',

@@ -184,3 +184,38 @@ test('Regression: Terminal-Modus zeigt weiterhin Space- und Terminalangabe wie b
   assert.match(e.spacesSummary, /123/);
   assert.strictEqual(e.filterSummary, '2 Terminal(s)');
 });
+
+// --- Excel-Variante am Verlaufseintrag (v5.14, Entscheid O2) ----------------
+
+test('historyMitXlsxVariante haengt das Feld nur an den Eintrag des Tokens, rein und additiv', () => {
+  const x = loadBuilders();
+  const a = x.historyEintragBauen('terminal', 'TOK-A', ST, '2026-07-08T10:00:00.000Z');
+  const b = x.historyEintragBauen('terminal', 'TOK-B', ST, '2026-07-08T11:00:00.000Z');
+  const list = [a, b];
+  const neu = x.historyMitXlsxVariante(list, 'TOK-B', 'kondensiert');
+  assert.notStrictEqual(neu, list, 'neue Liste, nicht dieselbe');
+  assert.strictEqual(neu[1].xlsxVariante, 'kondensiert');
+  assert.strictEqual('xlsxVariante' in neu[0], false);
+  assert.strictEqual(neu[0], a, 'unbeteiligter Eintrag bleibt dasselbe Objekt');
+  assert.strictEqual('xlsxVariante' in b, false, 'Eingabe unveraendert');
+  // Unbekannter Token: nichts passiert; Unsinn als Variante -> full
+  assert.deepStrictEqual(plain(x.historyMitXlsxVariante(list, 'NOPE', 'kondensiert')), plain(list));
+  assert.strictEqual(x.historyMitXlsxVariante(list, 'TOK-A', 'quatsch')[0].xlsxVariante, 'full');
+  assert.deepStrictEqual(plain(x.historyMitXlsxVariante(null, 'TOK-A', 'full')), []);
+});
+
+test('historyXlsxVarianteLabel: "Excel: Kondensiert" / "Excel: Full", sonst leer', () => {
+  const x = loadBuilders();
+  assert.strictEqual(x.historyXlsxVarianteLabel({ xlsxVariante: 'kondensiert' }), 'Excel: Kondensiert');
+  assert.strictEqual(x.historyXlsxVarianteLabel({ xlsxVariante: 'full' }), 'Excel: Full');
+  assert.strictEqual(x.historyXlsxVarianteLabel({}), '');
+  assert.strictEqual(x.historyXlsxVarianteLabel({ xlsxVariante: 'x' }), '');
+  assert.strictEqual(x.historyXlsxVarianteLabel(null), '');
+});
+
+test('Verlaufseintrag ueberlebt den Round-Trip mit xlsxVariante', () => {
+  const x = loadBuilders();
+  const e = x.historyEintragBauen('terminal', 'TOK-1', ST, '2026-07-08T10:00:00.000Z');
+  x.historySpeichern(x.historyMitXlsxVariante([e], 'TOK-1', 'kondensiert'));
+  assert.strictEqual(x.historyLaden()[0].xlsxVariante, 'kondensiert');
+});

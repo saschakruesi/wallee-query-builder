@@ -881,6 +881,9 @@
       <code>tip_total</code>: Trinkgeld-Anteil der Transaktionen (Line Items vom Typ TIP) – ist <strong>bereits in <code>brutto_gross</code> enthalten</strong>, nicht separat dazuzählen. Umsatz ohne Trinkgeld: <code>brutto_gross − tip_total</code>. An echten Daten geprüft und bestätigt – siehe <code>sql/tip_verifikation.sql</code>.
       <code>unsettled_anzahl</code>: Transaktionen ohne Gebühr (<code>totalappliedfees</code> NULL/0) <strong>und</strong> ohne bestehenden Settlement-Record – wartet noch auf die Abrechnung.
     </p>
+    <!-- Hinweis G2 zu autorisiert_gross (SPEC-ITERATION-2 §3); Text kommt aus
+         AUTORISIERT_HINWEIS, damit er ueberall wortgleich ist. -->
+    <p class="hint cond-section" id="autorisiertHint" style="margin-top:8px;margin-bottom:0;"></p>
 
     <div id="spaceSection">
       <h2 style="margin-top:4px;">Spaces <span class="count-pill" id="spaceCount">0</span></h2>
@@ -2052,6 +2055,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const reportingTdsCsvImportBtn  = document.getElementById('reportingTdsCsvImportBtn');
   const terminalModeHint= document.getElementById('terminalModeHint');
   const tipUnsettledHint= document.getElementById('tipUnsettledHint');
+  const autorisiertHint = document.getElementById('autorisiertHint');
   const reportSection   = document.getElementById('reportSection');
   const reportStatus    = document.getElementById('reportStatus');
   const reportOutput    = document.getElementById('reportOutput');
@@ -10053,7 +10057,12 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Holt das Ergebnis eines Query-Tokens und uebergibt es dem Report. Von der
   // Submit-Kette (nach SUCCESS) und vom Token-Abruf gemeinsam genutzt. Wirft
   // nicht; meldet ueber die Fortschrittsanzeige und gibt Erfolg als boolean.
+  // Token, aus dem der aktuell angezeigte Terminal-Report stammt - damit der
+  // Excel-Export seine Variante an den richtigen Verlaufseintrag haengen kann.
+  let reportQuelleToken = '';
+
   async function holeErgebnisInReport(token, account) {
+    reportQuelleToken = token;
     zeigeFortschritt('Ergebnis wird geladen …');
     const antwort = await proxyGet(mitAccount('/result/' + encodeURIComponent(token), account));
     const text = await antwort.text();
@@ -10143,6 +10152,22 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // traegt ihre Verlaufszeile nur den Roh-CSV-Download.
   const MODI_MIT_REPORT_PANEL = ['terminal', 'settlement', 'reporting', 'reporting-tds'];
 
+  // Excel-Variante am Verlaufseintrag (O2): rein, gibt eine neue Liste
+  // zurueck; nur der Eintrag mit diesem Token bekommt das Feld, alle anderen
+  // bleiben identisch. Ein unbekannter Token aendert nichts.
+  const REPORT_VARIANTE_LABEL = { full: 'Full', kondensiert: 'Kondensiert' };
+
+  function historyMitXlsxVariante(list, token, variante) {
+    return (list || []).map(e => (e && e.token === token
+      ? Object.assign({}, e, { xlsxVariante: reportVariante(variante) })
+      : e));
+  }
+
+  function historyXlsxVarianteLabel(e) {
+    const v = e && e.xlsxVariante;
+    return v && REPORT_VARIANTE_LABEL[v] ? `Excel: ${REPORT_VARIANTE_LABEL[v]}` : '';
+  }
+
   function renderHistory() {
     const list = historyFuerModus(historyLaden(), state.mode);
     queryHistoryBody.innerHTML = '';
@@ -10159,7 +10184,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       const dt = new Date(e.submittedAt);
       const zeit = isNaN(dt.getTime()) ? (e.submittedAt || '')
         : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-      const zsf = escapeHtml([e.spacesSummary, e.timeframeSummary, e.filterSummary].filter(Boolean).join(' · '));
+      const zsf = escapeHtml([e.spacesSummary, e.timeframeSummary, e.filterSummary,
+        historyXlsxVarianteLabel(e)].filter(Boolean).join(' · '));
       // Im Terminal-, Settlement- und Reporting-Report deckt der Report-Export
       // unten (mit Titel/Branding, XLSX/CSV/PDF) das Excel ab, und der Report
       // erscheint nach dem Submit ohnehin - deshalb dort in der Verlaufszeile
@@ -10336,6 +10362,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   const AUTORISIERT_HINWEIS = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. '
     + 'Weicht sie vom Complete Demand ab, fehlt für die Differenz eine Submission '
     + '(Einreichung/Tagesabschluss am Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+  autorisiertHint.textContent = AUTORISIERT_HINWEIS;
 
   // Kennzahl-Reihenfolge, ueberall identisch (SPEC-ITERATION-2 §4.2). Im Kopf
   // englisch wie die bestehenden Spalten ("Authorized", Entscheid O1);
@@ -10767,8 +10794,22 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       }));
     });
 
+    // brand/terminal tragen seit v5.14 autorisiert_gross: darunter eine
+    // Leerzeile und der Hinweis G2, ueber die Tabellenbreite verbunden (§3).
+    // export/card/settlement kennen die Spalte nicht und bleiben unberuehrt.
+    const hinweisZeile = kopf.includes('autorisiert_gross') ? aoa.length + 1 : -1;
+    if (hinweisZeile >= 0) { aoa.push([]); aoa.push([AUTORISIERT_HINWEIS]); }
+
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     xlsxKopfEinfaerben(ws, spalten);
+    if (hinweisZeile >= 0) {
+      const adr = XLSX.utils.encode_cell({ r: hinweisZeile, c: 0 });
+      if (ws[adr]) ws[adr].s = { font: { color: { rgb: XLSX_FARBE.hinweis }, italic: true, sz: 9 },
+        alignment: { horizontal: 'left', vertical: 'top', wrapText: true } };
+      if (spalten > 1) {
+        ws['!merges'] = (ws['!merges'] || []).concat([{ s: { r: hinweisZeile, c: 0 }, e: { r: hinweisZeile, c: spalten - 1 } }]);
+      }
+    }
 
     for (let ri = 0; ri < daten.length; ri++) {
       const zebra = ri % 2 === 1;
@@ -11451,6 +11492,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // der Settlement-Modus (seit v5.8 account-basiert) liefert kein tip_total mehr
     // und hat dafuer keinen eigenen Hinweis.
     tipUnsettledHint.classList.toggle('active', mode === 'brand' || mode === 'terminal');
+    autorisiertHint.classList.toggle('active', mode === 'brand' || mode === 'terminal');
     if (mode === 'terminal') {
       modeBadge.textContent = 'Terminal-Report';
       terminalModeHint.innerHTML = '<strong>Pflichtfilter:</strong> Es werden nur Transaktionen der ausgewählten Terminals ausgewertet. Das Ergebnis läuft direkt in den Report.';
@@ -12705,9 +12747,15 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     else if (btn.dataset.act === 'xlsx') historyDownloadXlsx(token, btn.dataset.mode, btn.dataset.account);
   });
 
-  // Der Verlaufseintrag merkt sich die zuletzt exportierte Variante (O2) -
-  // Umsetzung in Task 7 (Brand-Modus/Verlauf).
-  function merkeReportXlsxVarianteImVerlauf(variante) { void variante; }
+  // Der Verlaufseintrag merkt sich die zuletzt exportierte Excel-Variante
+  // (Entscheid O2): additives Feld xlsxVariante am Eintrag des Tokens, aus dem
+  // der aktuelle Report stammt. Ein Report aus dem Kopieren-Modus hat keinen
+  // Token - dann gibt es nichts zu merken.
+  function merkeReportXlsxVarianteImVerlauf(variante) {
+    if (!reportQuelleToken) return;
+    historySpeichern(historyMitXlsxVariante(historyLaden(), reportQuelleToken, variante));
+    renderHistory();
+  }
 
   // --- Excel-Dialog: Full / Kondensiert (SPEC-ITERATION-2 §5.1) --------------
   // Der Knopf oeffnet erst den Dialog; exportiert wird nur ueber "Excel
