@@ -76,11 +76,12 @@ vm.runInContext(
   '\n;globalThis.__x.buildReportModel = buildReportModel;' +
   '\n;globalThis.__x.exportReportXlsx = exportReportXlsx;' +
   '\n;globalThis.__x.xlsxSeitenlayoutEinbetten = xlsxSeitenlayoutEinbetten;' +
-  '\n;globalThis.__x.setzeReportZeitraum = z => { reportZeitraum = z; };',
+  '\n;globalThis.__x.setzeReportZeitraum = z => { reportZeitraum = z; };' +
+  '\n;globalThis.__x.setzeReportSpaces = sp => { reportSpaces = sp; };',
   sandbox, { filename: 'app-logic.js' },
 );
 
-const { parseReportCsv, buildReportModel, exportReportXlsx, xlsxSeitenlayoutEinbetten, setzeReportZeitraum } = sandbox.__x;
+const { parseReportCsv, buildReportModel, exportReportXlsx, xlsxSeitenlayoutEinbetten, setzeReportZeitraum, setzeReportSpaces } = sandbox.__x;
 const XLSX = sandbox.XLSX;
 const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'beispiel-daten.csv'), 'utf8');
 
@@ -385,4 +386,15 @@ test('XLSX: Abfragezeitraum unter "Erstellt am" - aus dem Zeitraum der Abfrage, 
   setzeReportZeitraum(null);
   ({ wb } = await exportiereUndLies());
   assert.strictEqual(blattZeilen(wb)[2][0], 'Abfragezeitraum: –');
+});
+
+test('XLSX: Dateiname traegt Space und Abfragezeitraum (v5.14.3)', async () => {
+  setzeReportZeitraum({ start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00' });
+  setzeReportSpaces([{ id: '123', label: 'Jade Lounge' }]);
+  const full = await exportiereUndLies(FIXTURE, 'full');
+  assert.strictEqual(full.dateiname, 'terminal-report_Jade-Lounge_2026-07-01_2026-07-31.xlsx');
+  const kond = await exportiereUndLies(FIXTURE, 'kondensiert');
+  assert.strictEqual(kond.dateiname, 'terminal-report-kondensiert_Jade-Lounge_2026-07-01_2026-07-31.xlsx');
+  setzeReportZeitraum(null);
+  setzeReportSpaces([]);
 });

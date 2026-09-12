@@ -33,7 +33,7 @@ breit, Drucktitel).
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.14.2).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.59 MB** (1'585'307 Bytes, gemessen 2026-09-12 an v5.14.2; davor 1'551'431 Bytes an v5.13.0 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.14.3).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.59 MB** (1'588'500 Bytes, gemessen 2026-09-12 an v5.14.3; davor 1'551'431 Bytes an v5.13.0 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, `/failure-reasons` (öffentliche Doku, **keine** API-Route), **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -108,7 +108,7 @@ Seit v4 enthält die HTML-Datei mehrere `<script>`-Blöcke: den eingebetteten XL
 PDF-Vendor (`<script id="vendor-jspdf">`, jsPDF 2.5.2 + jspdf-autotable 3.8.4, UMD, nur für den
 Settlement-Report-PDF-Export) und den App-Code (`<script id="app-logic">`) — **drei** Blöcke
 insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch **~1.59 MB** gross
-(1'585'307 Bytes, gemessen 2026-09-12 an v5.14.2 — davor 1'551'431 Bytes an v5.13.0, „~1.41 MB"
+(1'588'500 Bytes, gemessen 2026-09-12 an v5.14.3 — davor 1'551'431 Bytes an v5.13.0, „~1.41 MB"
 aus v5.12.0 und lange „~1.06 MB" aus v5.8; **die Zahl veraltet mit jeder Version, deshalb
 steht das Messdatum dabei und beim Bump wird nachgemessen statt geschätzt**. Seit v5.12 kommen die
 ~107 KB des eingebetteten Ablehngrund-Katalogs dazu, siehe „Reporting-Report"). Der Vendor
@@ -319,7 +319,19 @@ Fachliche Vorgabe der v5.14-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-2.
   **allen** Blöcken weg (`KENNZAHLEN_KONDENSIERT`). Die Verdichtung ist eine
   Export-Entscheidung (G4): ein Modell, die Blockschicht verdichtet. **CSV und PDF bleiben
   Full.** Titel `REPORT_XLSX_TITEL[variante]`, Dateiname `terminal-report_<datum>.xlsx`
-  bzw. `terminal-report-kondensiert_<datum>.xlsx` (`reportDateiname(endung, variante)`).
+  bzw. `terminal-report-kondensiert_…` (`reportDateiname(endung, variante)`).
+- **Dateiname nach Inhalt (v5.14.3):** `reportDateinameBauen({ endung, variante, spaces,
+  zeitraum, heute })` → `terminal-report[-kondensiert]_<Space>_<von>_<bis>.<endung>`, z. B.
+  `terminal-report_Jade-Lounge_2026-07-01_2026-07-31.xlsx` — der Name sagt, was drin ist,
+  das Erstelldatum steht im Blatt. ISO-Daten (sortieren chronologisch), Ende `00:00:00`
+  exklusiv über `berichtsEndeTag`. Space-Name aus dem `label` der Space-Liste, sonst die ID;
+  zwei Spaces `A+B`, ab drei `A+2-weitere`. `dateinameSicher()` ersetzt, was Dateisysteme
+  nicht mögen (`/ \ : * ? " < > |`, Steuerzeichen, Leerraum) durch `-` und kürzt auf 60
+  Zeichen. Die Spaces kommen wie der Zeitraum aus `reportSpacesErmitteln(filter, eintrag,
+  state.spaces)` — beim Submit aus dem Filter, beim Token-Abruf aus dem Verlaufseintrag
+  (seit v5.14.3 additives Feld `spaces: [{ id, label }]`), bei älteren Einträgen aus der
+  Zusammenfassung «Space <id>». Ohne Zeitraum fällt der Name auf das Erstelldatum zurück wie
+  bis v5.14.2; gilt für Excel **und** CSV des Terminal-Reports.
 - **Abfragezeitraum (v5.14.2):** Excel (Zeile «Abfragezeitraum: …» direkt unter «Erstellt am»,
   vor dem Hinweis G2 — die erste türkise Kopfzeile und damit der Drucktitel liegt dadurch in
   Zeile 7) und Druckkopf (`#reportPrintZeitraum`, «Abfragezeitraum 01.07.2026 – 31.07.2026»)
@@ -1616,6 +1628,8 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   seit v5.11 als Konstante `MODI_MIT_REPORT_PANEL` statt als Oder-Kette in `renderHistory`.
   Jeder erneute Abruf über den Token zählt bei wallee als Download (siehe „Wallee-
   Referenzwissen").
+- **Seit v5.14.3 trägt jeder Eintrag `spaces: [{ id, label }]`** (die gewählten Spaces mit
+  Label, additiv) — für den Dateinamen des Terminal-Reports beim Token-Abruf.
 - **Seit v5.14.2 trägt jeder Eintrag `start`/`end`** (voller Zeitraum der Abfrage mit
   Uhrzeit, additiv neben `timeframeSummary`) — der Terminal-Report zeigt beim Abruf über den
   Token den Zeitraum jener Abfrage (siehe „Terminal-Report", Abfragezeitraum).

@@ -243,3 +243,56 @@ test('reportZeitraumErmitteln: Filter des Laufs vor Verlaufseintrag vor Tages-Zu
   assert.strictEqual(x.reportingZeitraumText(x.reportZeitraumErmitteln(filter)), '01.07.2026 – 31.07.2026');
   assert.strictEqual(x.reportingZeitraumText(null), '');
 });
+
+// --- Dateiname des Terminal-Reports: Space + Abfragezeitraum (v5.14.3) ------
+
+test('Verlaufseintrag traegt die gewaehlten Spaces mit Label (additiv)', () => {
+  const x = loadBuilders();
+  const st = Object.assign({}, ST, { spaces: [{ id: '123', label: 'Jade Lounge', selected: true }, { id: '456', label: 'Bar', selected: false }] });
+  const e = plain(x.historyEintragBauen('terminal', 'TOK', st, '2026-07-08T10:00:00.000Z'));
+  assert.deepStrictEqual(e.spaces, [{ id: '123', label: 'Jade Lounge' }]);
+});
+
+test('reportSpacesErmitteln: Filter mit Labels aus der Liste, sonst Eintrag, sonst "Space <id>"', () => {
+  const x = loadBuilders();
+  const alle = [{ id: '123', label: 'Jade Lounge', selected: true }, { id: '456', label: '', selected: true }];
+  assert.deepStrictEqual(plain(x.reportSpacesErmitteln({ spaceIds: ['123', '456'] }, null, alle)),
+    [{ id: '123', label: 'Jade Lounge' }, { id: '456', label: '' }]);
+  assert.deepStrictEqual(plain(x.reportSpacesErmitteln(null, { spaces: [{ id: '789', label: 'Alt' }] }, alle)),
+    [{ id: '789', label: 'Alt' }]);
+  assert.deepStrictEqual(plain(x.reportSpacesErmitteln(null, { spacesSummary: 'Space 123' }, alle)),
+    [{ id: '123', label: 'Jade Lounge' }]);
+  assert.deepStrictEqual(plain(x.reportSpacesErmitteln(null, { spacesSummary: '3 Spaces' }, alle)), []);
+  assert.deepStrictEqual(plain(x.reportSpacesErmitteln(null, null, null)), []);
+});
+
+test('dateinameSicher: Dateisystem-Sonderzeichen und Leerraum werden zu "-", gekuerzt auf 60', () => {
+  const x = loadBuilders();
+  assert.strictEqual(x.dateinameSicher('Jade Lounge / Bar: "Eck"?'), 'Jade-Lounge-Bar-Eck');
+  assert.strictEqual(x.dateinameSicher('  Café Zürich  '), 'Café-Zürich');
+  assert.strictEqual(x.dateinameSicher('x'.repeat(80)).length, 60);
+  assert.strictEqual(x.dateinameSicher(null), '');
+});
+
+test('reportDateinameBauen: terminal-report[-kondensiert]_<Space>_<von>_<bis>.<endung>', () => {
+  const x = loadBuilders();
+  const z = { start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00' };
+  const heute = '2026-09-12';
+  assert.strictEqual(x.reportDateinameBauen({ endung: 'xlsx', variante: 'full', spaces: [{ id: '123', label: 'Jade Lounge' }], zeitraum: z, heute }),
+    'terminal-report_Jade-Lounge_2026-07-01_2026-07-31.xlsx');
+  assert.strictEqual(x.reportDateinameBauen({ endung: 'xlsx', variante: 'kondensiert', spaces: [{ id: '123', label: '' }], zeitraum: z, heute }),
+    'terminal-report-kondensiert_123_2026-07-01_2026-07-31.xlsx', 'ohne Label die ID');
+  assert.strictEqual(x.reportDateinameBauen({ endung: 'csv', spaces: [{ id: '1', label: 'A' }, { id: '2', label: 'B' }], zeitraum: z, heute }),
+    'terminal-report_A+B_2026-07-01_2026-07-31.csv');
+  assert.strictEqual(x.reportDateinameBauen({ endung: 'csv', spaces: [{ id: '1', label: 'A' }, { id: '2', label: 'B' }, { id: '3', label: 'C' }], zeitraum: z, heute }),
+    'terminal-report_A+2-weitere_2026-07-01_2026-07-31.csv');
+  // alter Verlaufseintrag: nur die Tages-Zusammenfassung
+  assert.strictEqual(x.reportDateinameBauen({ endung: 'xlsx', spaces: [], zeitraum: '2026-07-01 → 2026-07-31', heute }),
+    'terminal-report_2026-07-01_2026-07-31.xlsx');
+  // nichts bekannt: Erstelldatum wie bis v5.14.2
+  assert.strictEqual(x.reportDateinameBauen({ endung: 'xlsx', spaces: [], zeitraum: null, heute }),
+    'terminal-report_2026-09-12.xlsx');
+  // Ende 23:59:59 = letzter Tag inklusive
+  assert.strictEqual(x.reportDateinameBauen({ endung: 'xlsx', spaces: [], zeitraum: { start: '2026-07-01 00:00:00', end: '2026-07-31 23:59:59' }, heute }),
+    'terminal-report_2026-07-01_2026-07-31.xlsx');
+});

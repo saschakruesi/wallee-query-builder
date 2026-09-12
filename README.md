@@ -1,6 +1,6 @@
 # Wallee Analytics Query Builder
 
-**Aktuelle Version: v5.14.2**
+**Aktuelle Version: v5.14.3**
 
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies
@@ -117,6 +117,10 @@ zusammengeführt.
 - **Abfragezeitraum (seit v5.14.2):** Excel («Abfragezeitraum: 01.07.2026 – 31.07.2026» unter
   «Erstellt am») und Druck/PDF-Kopf zeigen, welchen Zeitraum die Abfrage umfasst — beim Abruf
   über einen Token den Zeitraum jener Abfrage, nicht den aktuellen Stand des Pickers.
+- **Dateinamen (seit v5.14.3):** Excel und CSV heissen nach Inhalt, nicht nach Erstelldatum:
+  `terminal-report_<Space-Name>_<von>_<bis>.xlsx` (z. B.
+  `terminal-report_Jade-Lounge_2026-07-01_2026-07-31.xlsx`), kondensiert als
+  `terminal-report-kondensiert_…`; bei zwei Spaces `A+B`, ab drei `A+2-weitere`.
 - **Excel in zwei Varianten (seit v5.14):** der Excel-Knopf fragt zuerst **Full** (alle Ebenen
   und Kennzahlen) oder **Kondensiert** (nur Brand-Gruppen je Terminal, ohne Unmatched und Anz.)
   — für die Weitergabe an die Buchhaltung. Die Wahl wird gemerkt. Jedes Excel der App ist seit

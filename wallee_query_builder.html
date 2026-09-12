@@ -857,7 +857,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.14.2</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.14.3</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -2633,7 +2633,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.14.2';
+  const APP_VERSION = '5.14.3';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -8282,7 +8282,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // --- Balken als inline-SVG ------------------------------------------------
   // Kein Chart-Vendor (SPEC 5): die Datei ist mit den beiden bestehenden
   // Vendor-Bloecken und dem eingebetteten Ablehngrund-Katalog bereits ~1.58 MB
-  // gross (gemessen 2026-09-12 an v5.14.2; davor "~1.48 MB" aus v5.13.0,
+  // gross (gemessen 2026-09-12 an v5.14.3; davor "~1.48 MB" aus v5.13.0,
   // "~1.41 MB" aus v5.12.0 und "~1.06 MB" aus v5.8 - die Zahl veraltet mit
   // jeder Version, deshalb steht das Messdatum dabei), und ein Balkendiagramm
   // sind ein paar <rect>. Das
@@ -9772,6 +9772,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       // den Token, ohne dass der Picker noch auf der Abfrage stehen muss.
       start: `${s.startDate || ''} ${s.startTime || ''}`.trim(),
       end: `${s.endDate || ''} ${s.endTime || ''}`.trim(),
+      // Gewaehlte Spaces mit Label (seit v5.14.3, additiv) - fuer den
+      // Dateinamen des Terminal-Reports beim Abruf ueber den Token.
+      spaces: (s.spaces || []).filter(x => x && x.selected)
+        .map(x => ({ id: String(x.id || ''), label: String(x.label || '') })),
       filterSummary,
       status: status || 'SUCCESS',
       account: accountWert,
@@ -10082,6 +10086,56 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // ("2026-07-01 → 2026-07-31"), die wird dann so gezeigt; ohne Eintrag bleibt
   // die Angabe leer statt eine erfundene zu zeigen.
   let reportZeitraum = null;
+  let reportSpaces = [];
+
+  // Spaces der Abfrage als [{ id, label }] - dieselbe Rangfolge wie beim
+  // Zeitraum: Filter des Laufs (Labels aus der Space-Liste), Verlaufseintrag,
+  // bei aelteren Eintraegen die ID aus der Zusammenfassung "Space <id>".
+  function reportSpacesErmitteln(filter, eintrag, alleSpaces) {
+    const liste = Array.isArray(alleSpaces) ? alleSpaces : [];
+    const mitLabel = id => {
+      const t = liste.find(x => x && String(x.id) === String(id));
+      return { id: String(id), label: t && t.label ? String(t.label) : '' };
+    };
+    if (filter && Array.isArray(filter.spaceIds) && filter.spaceIds.length) return filter.spaceIds.map(mitLabel);
+    if (eintrag && Array.isArray(eintrag.spaces) && eintrag.spaces.length) {
+      return eintrag.spaces.map(x => ({ id: String(x.id || ''), label: x.label ? String(x.label) : mitLabel(x.id).label }));
+    }
+    const m = /^Space (\d+)$/.exec(String(eintrag && eintrag.spacesSummary || ''));
+    return m ? [mitLabel(m[1])] : [];
+  }
+
+  // Dateiname-tauglich: was Dateisysteme nicht moegen, wird zu '-', Leerraum
+  // ebenso, mehrfach zusammengezogen, auf 60 Zeichen gekuerzt.
+  function dateinameSicher(text) {
+    return String(text == null ? '' : text)
+      .replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '-')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 60);
+  }
+
+  // terminal-report[-kondensiert]_<Space>_<von>_<bis>.<endung> (SPEC-Nachtrag
+  // v5.14.3): der Name sagt, was drin ist - das Erstelldatum steht im Blatt.
+  // ISO-Daten, damit die Dateien im Ordner chronologisch sortieren. Space-Name
+  // aus dem Label, sonst die ID; zwei Spaces "A+B", ab drei "A+2-weitere".
+  // Ohne bekannten Zeitraum (kein Token, keine Abfrage) faellt der Name auf
+  // das Erstelldatum zurueck, wie bis v5.14.2.
+  function reportDateinameBauen({ endung, variante, spaces, zeitraum, heute }) {
+    const basis = reportVariante(variante) === 'kondensiert' ? 'terminal-report-kondensiert' : 'terminal-report';
+    const teile = [basis];
+    const namen = (spaces || []).map(x => dateinameSicher(x.label || x.id)).filter(Boolean);
+    if (namen.length === 1) teile.push(namen[0]);
+    else if (namen.length === 2) teile.push(namen[0] + '+' + namen[1]);
+    else if (namen.length > 2) teile.push(`${namen[0]}+${namen.length - 1}-weitere`);
+    const von = zeitraum && typeof zeitraum === 'object' ? String(zeitraum.start || '').slice(0, 10) : '';
+    const bis = zeitraum && typeof zeitraum === 'object' ? berichtsEndeTag(zeitraum.end || '') : '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(von) && /^\d{4}-\d{2}-\d{2}$/.test(bis)) teile.push(von, bis);
+    else if (typeof zeitraum === 'string' && zeitraum.trim()) teile.push(dateinameSicher(zeitraum.replace(/\s*→\s*/g, '_')));
+    else teile.push(heute);
+    return teile.join('_') + '.' + endung;
+  }
 
   function reportZeitraumErmitteln(filter, eintrag) {
     if (filter && filter.start && filter.end) return { start: filter.start, end: filter.end };
@@ -10096,7 +10150,9 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
 
   async function holeErgebnisInReport(token, account, filter) {
     reportQuelleToken = token;
-    reportZeitraum = reportZeitraumErmitteln(filter, historyLaden().find(e => e && e.token === token));
+    const eintrag = historyLaden().find(e => e && e.token === token);
+    reportZeitraum = reportZeitraumErmitteln(filter, eintrag);
+    reportSpaces = reportSpacesErmitteln(filter, eintrag, state.spaces);
     zeigeFortschritt('Ergebnis wird geladen …');
     const antwort = await proxyGet(mitAccount('/result/' + encodeURIComponent(token), account));
     const text = await antwort.text();
@@ -11008,9 +11064,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
 
   function reportDateiname(endung, variante) {
     const d = new Date();
-    const stempel = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    const basis = reportVariante(variante) === 'kondensiert' ? 'terminal-report-kondensiert' : 'terminal-report';
-    return `${basis}_${stempel}.${endung}`;
+    const heute = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return reportDateinameBauen({ endung, variante, spaces: reportSpaces, zeitraum: reportZeitraum, heute });
   }
 
   // --- Settlement-Report: Excel- und PDF-Export -----------------------------
