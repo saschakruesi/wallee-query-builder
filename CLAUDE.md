@@ -23,13 +23,17 @@ analog zum Terminal-Report. Seit v5.11 gibt es als sechsten Modus `reporting` (H
 Reporting-Report als vierter gebrandeter Ausgabe. Seit v5.12 stehen dessen Ablehngründe im
 Klartext (eingebetteter wallee-Katalog, 2'254 Einträge, plus eine Proxy-Route für IDs, die
 danach neu vergeben wurden) und seine Verteilungen zusätzlich als Kuchendiagramme — auf dem
-Bildschirm und im PDF.
+Bildschirm und im PDF. Seit v5.14 zeigen `brand` und `terminal` neben dem abgeschlossenen den
+**autorisierten Betrag** (fehlende Submissions am Terminal werden sichtbar), der
+Terminal-Report-Excel kennt die Varianten **Full / Kondensiert**, und jedes Excel der App
+läuft durch eine gemeinsame Finalisierung (gemessene Spaltenbreiten, Druckbild eine Seite
+breit, Drucktitel).
 
 ## Dateien
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.13.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.48 MB** (1'551'431 Bytes, gemessen 2026-09-06 an v5.13.0; die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.14.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.58 MB** (1'581'163 Bytes, gemessen 2026-09-12 an v5.14.0; davor 1'551'431 Bytes an v5.13.0 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, `/failure-reasons` (öffentliche Doku, **keine** API-Route), **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -41,6 +45,8 @@ Bildschirm und im PDF.
 | `dashboard/SPEC-ITERATION-2.md` | Fachliche Vorgabe der **Iteration 2** (v5.12), datiert 2026-09-03: §1 Ablehngründe im Klartext, §2 Kuchendiagramme, §3 Seite «3DS-Failures», §4/§5 Discovery und die Antworten auf die Support-Anfrage aus Referenzfall B. **Umgesetzt sind §1 und §2**; was offen blieb und warum, steht unter „Offene Punkte". Der Fall selbst (Space-ID, Händler, Volumen, E-Mail-Wortlaut) steht **nicht** hier, sondern in `dashboard/discovery-results/FALL-B.md` (gitignored — das Repo ist öffentlich). |
 | `dashboard/catalog/` | Die beiden **gescrapten wallee-Kataloge** als JSON, im Git: `failure-reasons.json` (2'254 Einträge mit Name, Kategorie und Beschreibung, je englisch und deutsch) und `label-descriptors.json` (755 Einträge). Quelle ist die öffentliche Doku-Liste, **kein API-Dienst** (siehe „Ablehngründe"). Aktualisiert mit `dashboard/tools/scrape_wallee_catalogs.py` (Python 3, nur Standardbibliothek) — danach den Build-Schritt erneut laufen lassen. |
 | `tools/build-failure-reasons.mjs` | Erzeugt aus `dashboard/catalog/failure-reasons.json` die Konstante `FAILURE_REASONS` zwischen den Markerkommentaren in `wallee_query_builder.html`. **Der einzige Generator im Repo** — er läuft nie zur Laufzeit, die App bleibt eine Single-File-App ohne Build. Idempotent; bricht ab bei fehlenden oder doppelten Markern und bei einer Kategorie, die er nicht kennt. Details unter „Ablehngründe im Klartext (v5.12)". |
+| `sql/autorisiert_verifikation.sql` | Discovery-Queries (Task 0 der Iteration «Autorisierter Betrag», v5.14) — einzeln im Portal ausführen: `authorizedon` je Zustand gefüllt (Q1), Alter liegengebliebener Autorisierungen (Q2), `completedamount` vs. `authorizationamount` bei abgeschlossenen Transaktionen (Q3/Q3b), Nullwerte bei `AUTHORIZED` (Q4), Terminal-/Connector-Zuordnung bei `AUTHORIZED` (Q5). Ergebnisse gehören lokal nach `Terminal-Report-Tool/discovery-results/` und als Befund ins „Wallee-Referenzwissen" — **stehen noch aus** (siehe „Offene Punkte"). |
+| `Terminal-Report-Tool/` | **Nur lokal, nicht im Git** (`.gitignore`): `SPEC-ITERATION-2.md` (Stand 2026-09-12) ist die fachliche Vorgabe der v5.14-Iteration — autorisierter Betrag, kondensierter Excel-Report, Druck- und Spaltenoptimierung —, daneben die ältere `SPEC.md` und der Prototyp `terminal-report.html`, aus dem der Terminal-Report entstand. Bei Änderungen an Terminal-Report oder Excel-Finalisierung zuerst dort nachlesen. |
 | `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
 
@@ -101,10 +107,10 @@ Seit v4 enthält die HTML-Datei mehrere `<script>`-Blöcke: den eingebetteten XL
 (`<script id="vendor-xlsx">`, nur für den XLSX-Export), seit v5.8 zusätzlich den eingebetteten
 PDF-Vendor (`<script id="vendor-jspdf">`, jsPDF 2.5.2 + jspdf-autotable 3.8.4, UMD, nur für den
 Settlement-Report-PDF-Export) und den App-Code (`<script id="app-logic">`) — **drei** Blöcke
-insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch **~1.48 MB** gross
-(1'551'431 Bytes, gemessen 2026-09-06 an v5.13.0 — davor stand hier „~1.41 MB" aus v5.12.0
-und lange „~1.06 MB" aus v5.8; **die Zahl veraltet mit jeder Version, deshalb steht das
-Messdatum dabei und beim Bump wird nachgemessen statt geschätzt**. Seit v5.12 kommen die
+insgesamt, in dieser Reihenfolge. Die HTML-Datei ist dadurch **~1.58 MB** gross
+(1'581'163 Bytes, gemessen 2026-09-12 an v5.14.0 — davor 1'551'431 Bytes an v5.13.0, „~1.41 MB"
+aus v5.12.0 und lange „~1.06 MB" aus v5.8; **die Zahl veraltet mit jeder Version, deshalb
+steht das Messdatum dabei und beim Bump wird nachgemessen statt geschätzt**. Seit v5.12 kommen die
 ~107 KB des eingebetteten Ablehngrund-Katalogs dazu, siehe „Reporting-Report"). Der Vendor
 `vendor-xlsx` ist seit v5.1 **`xlsx-js-style` 1.2.0** (~425 KB minified, MIT-Fork von SheetJS
 0.18.5) statt der reinen SheetJS Community Edition: nur dieser Fork kann beim Schreiben
@@ -119,11 +125,27 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
 
 1. **`brand`** – Aggregat pro Space × Brand × Währung (`GROUP BY`). Spalten: Anzahl,
    `unsettled_anzahl` (keine Gebühr UND kein Settlement-Record = wartet noch auf die
-   Abrechnung), Brutto, Fees, Netto, `tip_total` (Trinkgeld-Anteil, bereits im Brutto
+   Abrechnung), Brutto, **`autorisiert_gross`** (seit v5.14, direkt rechts von
+   `brutto_gross`), Fees, Netto, `tip_total` (Trinkgeld-Anteil, bereits im Brutto
    enthalten).
+   **Seit v5.14 ist die Basis grösser als in allen übrigen Modi:** `txCte({ …,
+   autorisiert: true })` und das Hauptselect filtern auf
+   `COALESCE(t.completedon, t.authorizedon)` und `t.state IN ('AUTHORIZED', 'FULFILL',
+   'COMPLETED')`. Für abgeschlossene Transaktionen ist das exakt die alte Menge; dazu kommen
+   offene Autorisierungen (freigegeben, aber ohne Submission/Tagesabschluss), eingeordnet
+   nach ihrem Autorisierungszeitpunkt — wird eine später abgeschlossen, wandert sie in den
+   Zeitraum ihres `completedon`, wird sie storniert (`VOIDED`), verschwindet sie. Damit die
+   bisherigen Zahlen **byte-identisch** bleiben (SPEC A1), sind `anzahl_transaktionen` und
+   `unsettled_anzahl` per `CASE` auf `FULFILL`/`COMPLETED` geschützt (gemeinsame Konstante
+   `AGGREGAT_KENNZAHLEN`); `brutto_gross`, Fees, Netto und `tip_total` brauchen keinen Guard,
+   weil `completedamount`, `totalappliedfees` und Trinkgeld-Lineitems bei `AUTHORIZED`
+   0/NULL sind — **das ist die Annahme, die Task 0 (`sql/autorisiert_verifikation.sql`, Q4)
+   noch bestätigen muss.** Eine Gruppe nur aus `AUTHORIZED`-Transaktionen erscheint als Zeile
+   mit `brutto_gross = 0`, `anzahl_transaktionen = 0`, `autorisiert_gross > 0` — genau die
+   Zeile, die die fehlende Submission zeigt.
 2. **`terminal`** ("Terminal-Report" im Mode-Selector) – wie `brand`, zusätzlich
    Pflichtfilter + Gruppierung auf `paymentterminal.identifier` / `.name`. Gleiche
-   `unsettled_anzahl`/`tip_total`-Spalten. Der frühere eigenständige `report`-Modus (CSV-
+   `unsettled_anzahl`/`tip_total`/`autorisiert_gross`-Spalten und dieselbe erweiterte Basis. Der frühere eigenständige `report`-Modus (CSV-
    Upload) ist **aufgegangen**: das Report-Panel (Outlet-/Brand-Gruppen, XLSX-Export) hängt
    jetzt an diesem Modus und wird ausschliesslich über das API-Ergebnis der eigenen Query
    befüllt (`ingestReportCsv`, ausgelöst nach dem Submit) — kein Datei-Upload mehr für die
@@ -254,7 +276,75 @@ nie separat veröffentlichten Sync-Button-Fix aus v5.5.2.
 
 ### Terminal-Report (Ausgabe des Modus `terminal`, seit v4, seit v5 ohne CSV-Upload)
 
-Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Schicht:
+Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Schicht.
+Fachliche Vorgabe der v5.14-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-2.md`
+(lokal, gitignored).
+
+**Autorisierter Betrag (v5.14, SPEC §4):**
+
+- `parseReportCsv` liest die **optionale** Spalte `autorisiert_gross` als Feld `authorized`
+  (1e-8-Einheiten). Fehlt sie (älteres CSV, die Fixture), gilt `authorized = gross` — kein
+  Fehlerobjekt. `leereKennzahlen`/`addiere` führen das Feld, das Modell summiert es auf
+  allen Ebenen wie `completeDemand` (`autorisiertVon(row)` fällt bei handgebauten Zeilen
+  ohne Feld auf `gross` zurück, damit nie `NaN` entsteht). `autorisiertDifferenz(k)` =
+  `authorized − completeDemand`, exakt als Ganzzahl.
+- **Kennzahl-Reihenfolge überall:** `Complete Demand · Authorized · Tip · Unmatched · Anz.`
+  (`KENNZAHL_DEFS`: Kopf, Typ, Zugriff in **einer** Tabelle; `KENNZAHL_KOPF` für den
+  Bildschirm). Im Kopf englisch wie die bestehenden Spalten (Entscheid O1); „Autorisiert"
+  heisst die Kennzahl nur im Hinweistext.
+- **Differenz orange** (`--wallee-orange` = `#ff4d00`, XLSX `XLSX_FARBE.orange`): weicht
+  `authorized` vom `completeDemand` ab, trägt die Authorized-Zelle die Klasse
+  `autorisiert-diff` bzw. im Excel orange, fette Schrift — auf jeder Ebene bis zum
+  Gesamttotal, weil die Differenz der Zeilen durchschlägt. Im Excel steht rechts neben dem
+  Gesamttotal zusätzlich `Differenz:` + Betrag, nur wenn ≠ 0 (dann zwei Spalten mehr in der
+  Blattbreite). CSV bleibt unformatiert.
+- **Hinweis G2 = `AUTORISIERT_HINWEIS`**, Wortlaut ist Vorgabe und steht überall identisch:
+  Bildschirm (direkt unter dem Titel „Detail" und unter „Gesamttotal" — der Druck/PDF-Pfad
+  des Terminal-Reports ist `window.print()` über die Bildschirmansicht, die Absätze drucken
+  also mit; eine eigene Fusszeilen-Mechanik gibt es hier nicht), CSV (letzte Zeile nach einer
+  Leerzeile), Excel (unter „Erstellt am …" **und** als Fussnote nach dem letzten Block),
+  Panel der Modi `brand`/`terminal` (`#autorisiertHint`, Text zur Laufzeit aus der
+  Konstante) und Verlaufs-Excel (siehe „Abfrage-Verlauf"). Die Ergänzung „… oder eine
+  Teil-Einreichung" (SPEC O3) kommt erst, wenn Q3 der Discovery Teil-Captures zeigt —
+  dann **nur** die Konstante ändern.
+- **Excel-Varianten Full / Kondensiert (SPEC §5.1–5.2):** `reportExportBloecke(modell,
+  { variante })` — `'full'` (Default, auch bei unbekanntem Wert; `reportVariante()`) ist
+  byte-identisch zu vorher plus Authorized; `'kondensiert'` verdichtet das Detail auf **eine
+  Zeile je Terminal × Brand-Gruppe** (`brandGruppenSummen`: Marken in 1e-8-Einheiten
+  summiert, erst dann `unitsZuZahl`; keine Spalte „Marke") und lässt `Unmatched`/`Anz.` in
+  **allen** Blöcken weg (`KENNZAHLEN_KONDENSIERT`). Die Verdichtung ist eine
+  Export-Entscheidung (G4): ein Modell, die Blockschicht verdichtet. **CSV und PDF bleiben
+  Full.** Titel `REPORT_XLSX_TITEL[variante]`, Dateiname `terminal-report_<datum>.xlsx`
+  bzw. `terminal-report-kondensiert_<datum>.xlsx` (`reportDateiname(endung, variante)`).
+- **Dialog vor dem Excel-Export:** `reportXlsxBtn` öffnet `#reportXlsxDialogOverlay`
+  (Muster `settingsOverlay`; Hintergrund-Klick, Esc, Schliessen und Abbrechen = kein
+  Export), exportiert wird nur über „Excel erstellen". Die Wahl wird unter
+  `wallee_terminal_report_xlsx_variante` (`REPORT_XLSX_VARIANTE_KEY`, Private-Mode-sicher,
+  Erstwert `'full'`) gemerkt und beim nächsten Öffnen vorausgewählt. Zusätzlich merkt sich
+  der **Verlaufseintrag** des Tokens, aus dem der Report stammt (`reportQuelleToken`, in
+  `holeErgebnisInReport` gesetzt), die zuletzt exportierte Variante (Entscheid O2, siehe
+  „Abfrage-Verlauf").
+
+**Bewusste Abweichungen von `Terminal-Report-Tool/SPEC-ITERATION-2.md`** (jede offengelegt):
+
+1. **`xlsxSpaltenbreiten` misst das fertige Blatt (`ws`), nicht `(aoa, typen)`** wie in §5.4
+   skizziert. Die sechs Blatt-Builder haben verschiedene Zeilenformen (gestapelte Blöcke mit
+   wechselnden Spaltentypen, Kachel-Blöcke mit gemischter Wert-Spalte); am fertigen Blatt
+   stehen Zahlformat und Fettschrift je Zelle bereits fest, und die Funktion bleibt trotzdem
+   vendorfrei (eigene `A1`-Zerlegung). Das Ergebnis ist dasselbe, der Vertrag ein anderer.
+   **Folge, die zu kennen ist:** die Blöcke eines Blatts **teilen sich die Spalten** — unter
+   „TID" steht im Block „Total Outlet-Gruppen" der Kopf „Complete Demand", die Spalte misst
+   den längsten Eintrag über alle Blöcke.
+2. **Die Orange-Zelle ist zusätzlich fett** (§4.3 nennt nur die Schriftfarbe) — Orange allein
+   ist auf dem hellen Grund als Zahl schwer zu lesen; bewusst, nicht versehentlich.
+3. **Der PDF-Hinweis ist kein eigener Fusszeilen-Mechanismus** (§4.4 spricht von der
+   „bestehenden Fussnoten-Mechanik") — der Terminal-Report druckt die Bildschirmansicht
+   (`window.print()`), die beiden Hinweis-Absätze drucken mit; der erste steht unter
+   „Detail" auf der ersten Seite.
+4. **Der Verlauf trägt die Variante als Feld und Zusammenfassung** („Excel: Kondensiert"),
+   nicht als Teil eines Dateinamens (O2 sprach von „Dateinamen des Verlaufs-Eintrags") — die
+   Verlaufszeile hat in Report-Modi nur den Roh-CSV-Download, einen Excel-Dateinamen gibt es
+   dort nicht.
 
 - **`parseReportCsv(text)` → `{ rows, headers, error }`** — zeichenweiser CSV-Parser (Quotes,
   Kommas im Feld, `""`, CRLF). Zähler-Spalte unter **beiden** Namen akzeptiert:
@@ -279,6 +369,48 @@ Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Sch
   ausschliesslich vom Submit-Pfad des `terminal`-Modus gespeist (`uebergibReportCsv`). Der
   Datei-Input im Report-Panel dient nur noch dem Import/Export der Gruppen-Konfiguration
   (`reportImportCfgInput`, JSON), nicht mehr dem Laden der Report-Rohdaten.
+
+### Excel-Export: gemeinsame Finalisierung (seit v5.14, SPEC §5.3–5.5)
+
+**Jedes** von der App erzeugte Blatt (Terminal-, Settlement-, Reporting-Report, 3DS-Seite,
+Verlaufs-Download) läuft unmittelbar vor `book_append_sheet` durch
+**`xlsxBlattFinalisieren(ws, { kopfZeile, querformat })`**, und jede Mappe wird über
+**`xlsxSchreibenUndLaden(wb, dateiname)`** geschrieben — die **eine** Stelle für
+`XLSX.write` + `downloadDatei` (der Settlement-Export ist damit von `XLSX.writeFile` weg).
+Reine Funktionen, vendorfrei testbar (`test/xlsx-layout.test.js`); End-to-End mit dem Vendor
+in `report-xlsx`, `history-xlsx`, `reporting-xlsx`, `reporting-tds-xlsx`.
+
+- **Spaltenbreite (§5.4):** `xlsxSpaltenbreiten(ws)` → `!cols`, je Spalte der längste
+  Anzeigetext + 2 Zeichen: Text wie er ist, Zahlen nach ihrem Zahlformat
+  (`xlsxZahlAnzeige(wert, fmt)`: Nachkommastellen aus dem Muster, Tausendertrennung bei
+  `,`, Literale in Anführungszeichen wie `" CHF"`/`"%"` angehängt), fette Zellen × 1.1.
+  Über mehrere Spalten **verbundene** Zellen (Titel, Hinweise) werden nicht gemessen —
+  sonst bläht ein Hinweis Spalte A auf; ein überlanger Text bekommt `wrapText` über den
+  Zellstil. Grenzen 6 … 60 Zeichen. Der Reader liefert `!cols` nur mit `cellStyles: true`.
+- **Ränder und Seitenlayout (§5.3):** `XLSX_RAENDER` (0.5"/0.75"/0.3"), `xlsxSeitenlayout
+  (spalten)` = A4 (`paperSize` 9), `fitToWidth 1`, `fitToHeight 0` (automatisch),
+  Hochformat bis 8 Spalten, **Querformat ab 9** (`XLSX_QUERFORMAT_AB_SPALTEN`); der Full-
+  Terminal-Report (10 Spalten) und das Settlement-Transaktionsdetail landen damit quer.
+- **Der Vendor schreibt `!margins` und Defined Names, aber kein `pageSetup` und kein
+  `fitToPage`** (Machbarkeit gemessen, §5.3 Schritt 1: `!pageSetup` am Blatt wird still
+  ignoriert). Deshalb die **ZIP-Nachbearbeitung** in `xlsxSchreibenUndLaden`: `XLSX.CFB.read`
+  öffnet das ZIP (CFB liest ZIP-Container; `CFB.find` verlangt den Pfad mit führendem `/`),
+  je Blatt `i` wird `xl/worksheets/sheet<i+1>.xml` (SheetJS schreibt in `SheetNames`-
+  Reihenfolge) durch **`xlsxSeitenlayoutEinbetten(sheetXml, layout)`** geschickt —
+  `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>` als erstes Kind von `<worksheet>` (ein
+  vorhandenes `<sheetPr>` wird ergänzt, `pageSetUpPr` ist laut Schema sein letztes Kind),
+  `<pageSetup …/>` direkt nach `<pageMargins/>`; ohne das fitToPage-Flag ignoriert Excel
+  `fitToWidth`. Reiner String-Code, **idempotent**, Replacer-Funktionen statt Ersatz-Strings
+  (dieselbe `$&`-Falle wie beim Vendor-Einbetten). `XLSX.CFB.write(cfb, { fileType: 'zip',
+  type: 'array' })` schreibt zurück. **Scheitert die Nachbearbeitung, geht die Datei
+  unverändert raus** (Rückfall statt Blockade). `!pageSetup` und `!druckTitel` sind eigene
+  Schlüssel am Blatt, die der Writer toleriert und die nur die Angaben bis zum Schreiben
+  tragen. **Der Vendor bleibt unangetastet** (Self-Update-Pfad, `embedding.test.js`).
+- **Drucktitel:** `kopfZeile` (0-basiert, die erste türkise Kopfzeile) wird als
+  `_xlnm.Print_Titles` in `wb.Workbook.Names` eingetragen (`xlsxDruckTitelRef`: Blattname in
+  einfachen Anführungszeichen, verdoppelt falls enthalten, `$n:$n`) — das kann der Writer
+  selbst, ohne Nachbearbeitung. Beim Terminal-/Reporting-Blatt ist das die Kopfzeile des
+  **ersten** Blocks; die Kopfzeilen der weiteren Blöcke wiederholen sich nicht.
 
 ### Settlement-Report (Ausgabe des Modus `settlement`, seit v5.8, Spec-Umbau in v5.10)
 
@@ -1458,6 +1590,15 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   seit v5.11 als Konstante `MODI_MIT_REPORT_PANEL` statt als Oder-Kette in `renderHistory`.
   Jeder erneute Abruf über den Token zählt bei wallee als Download (siehe „Wallee-
   Referenzwissen").
+- **Seit v5.14 merkt sich ein Terminal-Eintrag die zuletzt exportierte Excel-Variante**
+  (Entscheid O2): `historyMitXlsxVariante(list, token, variante)` (rein, neue Liste, nur der
+  Eintrag des Tokens bekommt das additive Feld `xlsxVariante`) und
+  `historyXlsxVarianteLabel(e)` („Excel: Kondensiert" / „Excel: Full") in der
+  Zusammenfassung der Zeile. Gesetzt über `merkeReportXlsxVarianteImVerlauf` nach dem
+  Export, am Token `reportQuelleToken`; ein Report ohne Token hat nichts zu merken.
+  **Verlaufs-Excel** (`styledSheetAusZeilen`): führt die Kopfzeile `autorisiert_gross`
+  (`brand`/`terminal`), hängt es unter die Tabelle eine Leerzeile und den Hinweis G2 an
+  (verbunden, kursiv) — `export`/`card`/`settlement` bleiben unberührt.
 - **Befüllt wird der Verlauf bei jedem erfolgreichen Submit** (unabhängig vom Modus); die Modi
   `terminal`, `settlement` und `reporting` speisen zusätzlich sofort ihr jeweiliges
   Report-Panel, um einen weiteren Result-Abruf zu sparen. Der Verlaufseintrag merkt seit v5.8 zusätzlich den Account,
@@ -1558,9 +1699,13 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
 - `buildBrandQuery`, `buildTerminalQuery`, `buildExportQuery`, `buildCardQuery`,
   `buildSettlementQuery`, `buildReportingQuery` sind reine Funktionen (Input-Objekt →
   SQL-String) — bewusst so gehalten, damit sie ohne DOM testbar sind.
-- `txCte({ spaceIds, start, end })` grenzt die Transaktionen (Space + Zeitraum + Status)
-  einmal gemeinsam ein; `card`-, `settle`- und `payoutref`-CTE im Transaktions-Export filtern
-  darüber, statt die teuren Joins über die gesamte Tabellenhistorie laufen zu lassen.
+- `txCte({ spaceIds, start, end, autorisiert })` grenzt die Transaktionen (Space + Zeitraum
+  + Status) einmal gemeinsam ein; `card`-, `settle`- und `payoutref`-CTE im
+  Transaktions-Export filtern darüber, statt die teuren Joins über die gesamte
+  Tabellenhistorie laufen zu lassen. Zeitfenster und Statusfilter liefert
+  `txBasisBedingungen({ start, end, autorisiert })` als Liste — dieselbe Liste steht im
+  `tx`-CTE **und** im Hauptselect von `brand`/`terminal`, damit beide dieselbe Menge
+  beschreiben. Nur diese beiden setzen `autorisiert: true` (siehe „Sechs Modi", Punkt 1).
   `cardCte({ spaceIds })` kapselt die Label-Auflösung (siehe unten) und wird von
   Transaktions-Export und Kartensuche gemeinsam genutzt. **`buildSettlementQuery` nutzt
   `txCte` seit v5.8 nicht mehr** — der Modus ist account- statt space-basiert (kein
@@ -1577,11 +1722,20 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
 - `spaceInClause(ids, col)`: 0 Spaces → `col = -1 -- BITTE ... AUSWÄHLEN` (Query läuft leer
   statt zu crashen), 1 Space → `=`, mehrere → `IN (...)`.
 - Zeitfilter immer auf `t.completedon` (Tagesabschluss, nicht Erstellung!) mit
-  `>= TIMESTAMP ... AND < TIMESTAMP ...`. **Einzige Ausnahme: `buildReportingQuery`**
+  `>= TIMESTAMP ... AND < TIMESTAMP ...`. **Zwei Ausnahmen:** `buildReportingQuery`
   filtert auf `ca.createdon` — ein gescheiterter Charge Attempt hat kein `completedon`
-  (siehe „Sechs Modi", Punkt 6). Der Zeitraum-Picker bedeutet dort also etwas anderes als in
-  allen übrigen Modi.
-- Statusfilter fix `t.state IN ('FULFILL', 'COMPLETED')` — **ausser im Reporting-Modus**:
+  (siehe „Sechs Modi", Punkt 6); der Zeitraum-Picker bedeutet dort also etwas anderes als in
+  allen übrigen Modi. Und **`buildBrandQuery`/`buildTerminalQuery` filtern seit v5.14 auf
+  `COALESCE(t.completedon, t.authorizedon)`** — für abgeschlossene Transaktionen exakt
+  `completedon`, für offene Autorisierungen (die kein `completedon` haben) der
+  Autorisierungszeitpunkt. Der Picker meint dort also weiterhin den Tagesabschluss, nur
+  dass eine noch nicht eingereichte Autorisierung nach ihrem einzigen Zeitpunkt eingeordnet
+  wird (siehe „Sechs Modi", Punkt 1). Ein Schnappschuss-Test hält fest, dass `export`,
+  `card`, `settlement` und die Reporting-Queries weder `authorizedon` noch `AUTHORIZED`
+  kennen.
+- Statusfilter fix `t.state IN ('FULFILL', 'COMPLETED')` — **ausser in `brand`/`terminal`**
+  (seit v5.14 `('AUTHORIZED', 'FULFILL', 'COMPLETED')`, die Zähler dafür per `CASE`
+  geschützt) **und ausser im Reporting-Modus**:
   der zählt Versuche, auch gescheiterte, und filtert stattdessen fest auf
   `ca.environment = 'PRODUCTION'`.
 - CTEs (in `buildExportQuery` je nach `needs*`-Flag, in `buildCardQuery` fest eingebaut;
@@ -1924,6 +2078,20 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     (SPEC 2.2). An den Referenzdaten hält die Heuristik: jedes `(spaceid, valuedate)`-Paar
     bildet auf **genau eine** Referenz ab (über alle 82 Settlements geprüft). Wer die
     Kosten sparen will, schaltet die Checkbox ab — der Report degradiert dann sauber.
+- **Autorisierter Betrag (v5.14) — Schema belegt, Discovery ausstehend.** `transaction`
+  führt laut Analytics-Schema (nachgelesen 2026-09-12) `authorizedon` als `timestamp`, dazu
+  `authorizationamount`, `completedon`, `failedon`, `confirmedon`, `totalsettledamount`; eine
+  `voidedon`-Spalte gibt es nicht. Task 1 (`COALESCE(t.completedon, t.authorizedon)`) war
+  damit nicht blockiert. **Nicht belegt** sind die vier Annahmen aus
+  `sql/autorisiert_verifikation.sql`: Q1 (`authorizedon` bei `AUTHORIZED` und
+  `FULFILL`/`COMPLETED` gefüllt — sonst Rückfall auf `t.createdon`), Q2 (gibt es
+  liegengebliebene Autorisierungen, wie alt), Q3 (`completedamount` = `authorizationamount`
+  bei abgeschlossenen Transaktionen — bisher nur auf Attempt-Ebene aus Task 0 v5.11
+  bekannt: „bei `SUCCESSFUL` sind beide identisch"; Teil-Captures oder
+  Trinkgeld-Nachbuchungen würden den Hinweis G2 um „… oder eine Teil-Einreichung"
+  erweitern), Q4 (`completedamount`, `totalappliedfees`, Trinkgeld bei `AUTHORIZED` 0/NULL —
+  der Grund, warum die Betragssummen keinen `CASE`-Guard tragen). Befunde hier nachtragen,
+  sobald die Queries im Portal gelaufen sind.
 - **Charge-Attempt-Befunde (Task 0, v5.11) — bisher beobachtet, nicht „gibt es nicht".**
   Grundlage sind **zwei** Spaces über **einen** Monat: der **POS-Referenzspace** (12'537
   Attempts) und der **E-Com-Referenzspace** (1'855 Attempts), jeweils **Juli 2026**,
@@ -2114,6 +2282,17 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    Bildschirm-Markup und -Deckel · Panel, Ingest, Verlauf und der ganze Lauf über ein
    gefälschtes `fetch` · die Mappen-Entscheidung in beide Richtungen),
    `embedding`/`dom-ids` (Struktur-/ID-Wächter).
+   **v5.14 (autorisierter Betrag, Excel-Varianten, XLSX-Finalisierung):** `report-export`
+   (Blockschicht, aus `report` herausgelöst: Full/Kondensiert, Kennzahl-Reihenfolge,
+   CSV-Fussnote), `xlsx-layout` (Spaltenbreiten, Seitenlayout, Drucktitel,
+   `xlsxSeitenlayoutEinbetten` als reine String-Funktion inkl. Idempotenz und `$&`-Falle),
+   `report-dialog` (Excel-Dialog über den DOM-Stub), `history-xlsx` (Verlaufs-Excel mit
+   Vendor: Hinweiszeile nur bei `autorisiert_gross`); dazu neue Nähte in `queries`
+   (COALESCE-Fenster, State-Filter, Zähler-Schutz, Schnappschuss der übrigen Builder),
+   `report`/`report-render`/`report-xlsx` (Authorized, Orange, Hinweis, Varianten,
+   `sheet1.xml`-Prüfung über `XLSX.CFB`, Schriftfarbe über `styles.xml` — der Reader gibt
+   Schriftfarben nicht zurück), `history`, `dom-ids` und die Zusicherungen in
+   `reporting-xlsx`/`reporting-tds-xlsx`.
    **v5.12 hat keine neue Testdatei gebracht, sondern vier neue Nähte in bestehenden:**
    `embedding` prüft zusätzlich den Build-Schritt `tools/build-failure-reasons.mjs` (er
    gehört dorthin, weil er dasselbe schützt wie der Rest der Datei — die Unversehrtheit der
@@ -2168,6 +2347,22 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
 
 ## Offene Punkte / Ideen
 
+- **Autorisierter Betrag (v5.14) — was noch aussteht:**
+  - **Task 0 (Discovery) ist geschrieben, aber nicht gelaufen.** `sql/autorisiert_verifikation.sql`
+    Q1–Q5 an Space 40402 im Portal ausführen; Ergebnisse lokal nach
+    `Terminal-Report-Tool/discovery-results/`, Befunde ins „Wallee-Referenzwissen". Zeigt Q4
+    bei `AUTHORIZED` doch Beträge/Gebühren/Trinkgeld ≠ 0, brauchen `brutto_gross`,
+    `transaction_fee_total`, `netto` und `tip_total` denselben `CASE`-Guard wie die Zähler
+    (`AGGREGAT_KENNZAHLEN`). Zeigt Q1 ein leeres `authorizedon`, Rückfall auf `t.createdon`
+    in `txBasisBedingungen`.
+  - **O3:** zeigt Q3 Zeilen mit `completedamount ≠ authorizationamount`, wird
+    `AUTORISIERT_HINWEIS` um „… oder eine Teil-Einreichung" ergänzt — eine Konstante, alle
+    Ausgaben. Bis dahin steht G2 wörtlich (Entscheid vom 2026-09-12).
+  - **A2 und A4 sind nicht am echten Excel/Portal geprüft:** dass eine `AUTHORIZED`-Transaktion
+    aus Space 40402 tatsächlich unter ihrem Terminal erscheint (Q5 prüft `terminal_id`), und
+    der Ausdruck in Excel/Numbers/LibreOffice — die Tests belegen `fitToWidth="1"`,
+    `fitToPage="1"` und die Breiten im XML, nicht das Druckbild.
+  - **Kein Filter-/Variantenwahl für CSV und PDF** (SPEC §9, Folge-Iteration).
 - Auszahlungsreferenz-Zuordnung über Withdrawals (`payoutref`-CTE) ist heuristisch
   (zeitbasiert) — beobachten, ob es einen direkten Verknüpfungspfad gibt. Betrifft seit v5.10
   **beide** Aufrufer: den Transaktions-Export und wieder den Settlement-Modus, wo die Referenz

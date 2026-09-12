@@ -1,6 +1,6 @@
 # Wallee Analytics Query Builder
 
-**Aktuelle Version: v5.13.0**
+**Aktuelle Version: v5.14.0**
 
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies
@@ -79,8 +79,8 @@ Gerät. Zugangsdaten für den API-Modus liegen ausschliesslich beim Proxy, nie i
 
 | Modus | Ergebnis |
 |---|---|
-| **Brand-Auswertung** | Aggregat pro Space × Brand × Währung, inkl. `tip_total` (Trinkgeld-Anteil) und `unsettled_anzahl` (wartet auf Abrechnung) |
-| **Terminal-Report** | wie Brand-Auswertung, zusätzlich pro Terminal mit Pflichtfilter — im API-Modus wird das Ergebnis der eigenen Query automatisch zu Outlet- und Brand-Gruppen ausgewertet (siehe unten) |
+| **Brand-Auswertung** | Aggregat pro Space × Brand × Währung, inkl. `tip_total` (Trinkgeld-Anteil), `unsettled_anzahl` (wartet auf Abrechnung) und seit v5.14 `autorisiert_gross` (vom Kartenherausgeber freigegebene Beträge — weicht die Summe vom Brutto ab, fehlt für die Differenz eine Submission am Terminal) |
+| **Terminal-Report** | wie Brand-Auswertung, zusätzlich pro Terminal mit Pflichtfilter — im API-Modus wird das Ergebnis der eigenen Query automatisch zu Outlet- und Brand-Gruppen ausgewertet (siehe unten); seit v5.14 mit der Kennzahl **Authorized** (orange, wo sie vom Complete Demand abweicht) und einem Excel-Export in zwei Varianten (Full / Kondensiert) |
 | **Transaktions-Export** | eine Zeile pro Transaktion, Spalten frei wählbar — u. a. `tip_amount` (Trinkgeld) und `gross_excl_tip` (Brutto ohne Trinkgeld) |
 | **Kartensuche** | Transaktionen zu den letzten vier Kartenziffern (für Streitfälle) |
 | **Settlement-Report** | **account-basiert** (nicht space-basiert): was ist bereits ausbezahlt, was steht noch aus, was ist ganz ohne Settlement-Record — im API-Modus wird das Ergebnis der eigenen Query automatisch zum Settlement-Report (siehe unten) |
@@ -108,6 +108,17 @@ separat, alles übrige „Wallee") aus und totalisiert — Detail → Total Outl
 Brand-Gruppen → Gesamttotal. Gruppennamen sind editierbar; gleiche Namen werden
 zusammengeführt.
 
+- **Authorized (seit v5.14):** neben *Complete Demand* steht die Summe der vom Kartenherausgeber
+  freigegebenen Beträge. Weicht sie ab, fehlt für die Differenz eine Submission (Einreichung/
+  Tagesabschluss am Terminal) — die Zelle ist dann orange, das Gesamttotal weist die Differenz
+  aus, und der Hinweis dazu steht wortgleich auf dem Bildschirm, in Excel, PDF und CSV. Dafür
+  nimmt die Query Transaktionen im Zustand `AUTHORIZED` mit auf; die bisherigen Zahlen
+  (Complete Demand, Tip, Unmatched, Anz.) bleiben davon unberührt.
+- **Excel in zwei Varianten (seit v5.14):** der Excel-Knopf fragt zuerst **Full** (alle Ebenen
+  und Kennzahlen) oder **Kondensiert** (nur Brand-Gruppen je Terminal, ohne Unmatched und Anz.)
+  — für die Weitergabe an die Buchhaltung. Die Wahl wird gemerkt. Jedes Excel der App ist seit
+  v5.14 druckoptimiert: A4, genau eine Seite breit, Spalten so schmal wie ihr längster Eintrag,
+  Kopfzeile auf jeder Seite wiederholt.
 - **Eingabe:** ausschliesslich über den API-Modus — nach dem Submit einer Terminal-Report-
   Query wird das Ergebnis automatisch in die Gruppen-Auswertung übernommen. Der verbliebene
   Datei-Input im Report-Panel dient nur noch dem Import/Export der Gruppen-Konfiguration als
