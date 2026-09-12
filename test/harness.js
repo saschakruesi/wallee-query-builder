@@ -328,6 +328,7 @@ const EXPORTED = [
   'autoOutletGroup',
   'autoBrandGroup',
   'buildReportModel',
+  'autorisiertDifferenz',
   'formatAmountCH',
   'formatIntCH',
   'mergeReportConfig',

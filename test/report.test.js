@@ -8,7 +8,7 @@ const { loadBuilders, plain } = require('./harness');
 const app = loadBuilders();
 const { parseReportCsv, autoOutletGroup, autoBrandGroup, buildReportModel,
   formatAmountCH, formatIntCH, mergeReportConfig,
-  reportExportBloecke, buildReportCsv } = app;
+  reportExportBloecke, buildReportCsv, autorisiertDifferenz } = app;
 
 // Kopfzeile so, wie sie der Terminal-Modus des Generators liefert (unsettled_anzahl).
 const HEADER_APP = '"space_id","terminal_identifier","terminal_name","brand","waehrung",' +
@@ -35,8 +35,105 @@ test('parseReportCsv liest Kopfzeile und Datenzeilen', () => {
     count: 47,
     unmatched: 47,
     gross: 143670000000,   // Betraege als ganzzahlige 1e-8-Einheiten, siehe unten
+    authorized: 143670000000, // ohne Spalte autorisiert_gross = brutto_gross (v5.14)
     tip: 3470000000,
   });
+});
+
+// --- Autorisierter Betrag (v5.14, Terminal-Report-Tool/SPEC-ITERATION-2.md §4.1) ---
+
+// Kopfzeile seit v5.14: autorisiert_gross direkt rechts von brutto_gross.
+const HEADER_V514 = HEADER_APP.replace('"brutto_gross",', '"brutto_gross","autorisiert_gross",');
+
+function zeileV514(tid, name, brand, n, unmatched, gross, autorisiert, tip) {
+  return `"1","${tid}","${name}","${brand}","CHF","${n}","${unmatched}","${gross}","${autorisiert}","0.00000000","0.00000000","${tip}"`;
+}
+
+test('parseReportCsv liest autorisiert_gross als authorized in 1e-8-Einheiten', () => {
+  const csv = [HEADER_V514, zeileV514('T1', 'Lounge 1', 'Visa', 47, 47, '1436.70000000', '1500.05000000', '34.70000000')].join('\n');
+  const res = parseReportCsv(csv);
+  assert.strictEqual(res.error, null);
+  assert.strictEqual(res.rows[0].gross, 143670000000);
+  assert.strictEqual(res.rows[0].authorized, 150005000000);
+});
+
+test('parseReportCsv: fehlt autorisiert_gross, gilt authorized = gross - kein Fehler (altes CSV)', () => {
+  const csv = [HEADER_APP, zeile('T1', 'Lounge 1', 'Visa', 47, 47, '1436.70000000', '34.70000000')].join('\n');
+  const res = parseReportCsv(csv);
+  assert.strictEqual(res.error, null);
+  assert.strictEqual(res.rows[0].authorized, res.rows[0].gross);
+  assert.ok(!res.error, 'autorisiert_gross ist optional');
+});
+
+test('parseReportCsv: autorisiert_gross mit wenigen Nachkommastellen und negativ', () => {
+  const csv = [HEADER_V514,
+    zeileV514('T1', 'A 1', 'Visa', 1, 0, '0.1', '0.3', '0'),
+    zeileV514('T2', 'A 2', 'Visa', 1, 0, '-5', '-5.5', '0'),
+  ].join('\n');
+  const res = parseReportCsv(csv);
+  assert.strictEqual(res.rows[0].authorized, 30000000);
+  assert.strictEqual(res.rows[1].authorized, -550000000);
+});
+
+// Zeilen, wie sie der Parser liefert - inkl. authorized.
+function row(tid, name, brand, gross, authorized, extra) {
+  return Object.assign({ tid, name, brand, currency: 'CHF', count: 1, unmatched: 0,
+    gross, authorized, tip: 0 }, extra || {});
+}
+
+test('Modell: authorized summiert sich auf allen Ebenen wie completeDemand', () => {
+  const rows = [
+    row('T1', 'Bar 1', 'Visa',       100000000, 100000000),   // 1.00 / 1.00
+    row('T1', 'Bar 1', 'Mastercard',         0, 250000000),   // 0.00 / 2.50 - offene Autorisierung
+    row('T2', 'Bar 2', 'Visa',       300000000, 300000000),   // 3.00 / 3.00
+    row('T3', 'Saal 1', 'Lunch Check', 50000000,  50000000),  // 0.50 / 0.50
+  ];
+  const m = buildReportModel(rows, {});
+
+  assert.strictEqual(m.grandTotal.completeDemand, 450000000);
+  assert.strictEqual(m.grandTotal.authorized, 700000000);
+
+  const bar = m.detail.find(d => d.outlet === 'Bar');
+  const t1 = bar.terminals.find(t => t.tid === 'T1');
+  const mc = t1.brands.find(b => b.brand === 'Mastercard');
+  assert.strictEqual(mc.completeDemand, 0);
+  assert.strictEqual(mc.authorized, 250000000);
+  assert.strictEqual(bar.subtotals.find(s => s.brandGroup === 'Wallee').authorized, 650000000);
+
+  const outletBar = m.outletTotals.find(o => o.outlet === 'Bar' && o.brandGroup === 'Wallee');
+  assert.strictEqual(outletBar.authorized, 650000000);
+  assert.strictEqual(outletBar.completeDemand, 400000000);
+
+  const wallee = m.brandTotals.find(b => b.brandGroup === 'Wallee');
+  assert.strictEqual(wallee.authorized, 650000000);
+  const lc = m.brandTotals.find(b => b.brandGroup === 'Lunch-Check');
+  assert.strictEqual(lc.authorized, 50000000);
+});
+
+test('Modell: Zeile ohne authorized (handgebaut) faellt auf gross zurueck statt NaN', () => {
+  const rows = [{ tid: 'T1', name: 'A 1', brand: 'Visa', currency: 'CHF', count: 1, unmatched: 0,
+    gross: 10000000, tip: 0 }];
+  const m = buildReportModel(rows, {});
+  assert.strictEqual(m.grandTotal.authorized, 10000000);
+  assert.strictEqual(m.detail[0].terminals[0].brands[0].authorized, 10000000);
+});
+
+test('autorisiertDifferenz: authorized - completeDemand in 1e-8-Einheiten, 0 ohne Differenz', () => {
+  assert.strictEqual(autorisiertDifferenz({ completeDemand: 100, authorized: 100 }), 0);
+  assert.strictEqual(autorisiertDifferenz({ completeDemand: 100000000, authorized: 250000000 }), 150000000);
+  assert.strictEqual(autorisiertDifferenz({ completeDemand: 300, authorized: 250 }), -50);
+  // Ganzzahl-Arithmetik: 0.1 + 0.2 ist hier exakt.
+  assert.strictEqual(autorisiertDifferenz({ completeDemand: 10000000, authorized: 30000000 }), 20000000);
+});
+
+test('Fixture ohne autorisiert_gross: Autorisiert = Complete Demand auf jeder Ebene', () => {
+  const m = modell();
+  assert.strictEqual(m.grandTotal.authorized, m.grandTotal.completeDemand);
+  m.brandTotals.forEach(b => assert.strictEqual(b.authorized, b.completeDemand));
+  m.outletTotals.forEach(o => assert.strictEqual(o.authorized, o.completeDemand));
+  m.detail.forEach(o => o.terminals.forEach(t => t.brands.forEach(b =>
+    assert.strictEqual(b.authorized, b.completeDemand))));
+  assert.strictEqual(autorisiertDifferenz(m.grandTotal), 0);
 });
 
 test('Zaehler-Spalte: unsettled_anzahl und unmatched_anzahl sind gleichwertig', () => {
@@ -272,10 +369,11 @@ test('Fixture: Gesamttotal ist exakt die Summe der Brand-Gruppen', () => {
   const m = modell();
   const summe = m.brandTotals.reduce((a, b) => ({
     completeDemand: a.completeDemand + b.completeDemand,
+    authorized: a.authorized + b.authorized,
     tip: a.tip + b.tip,
     unmatched: a.unmatched + b.unmatched,
     count: a.count + b.count,
-  }), { completeDemand: 0, tip: 0, unmatched: 0, count: 0 });
+  }), { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0 });
 
   // Ganzzahlen, deshalb hier wirklich exakt und nicht nur auf zwei Stellen.
   assert.deepStrictEqual(plain(summe), plain(m.grandTotal));
@@ -350,7 +448,7 @@ test('leere Eingabe ergibt ein leeres, aber wohlgeformtes Modell', () => {
   assert.deepStrictEqual(plain(m.detail), []);
   assert.deepStrictEqual(plain(m.outletTotals), []);
   assert.deepStrictEqual(plain(m.brandTotals), []);
-  assert.deepStrictEqual(plain(m.grandTotal), { completeDemand: 0, tip: 0, unmatched: 0, count: 0 });
+  assert.deepStrictEqual(plain(m.grandTotal), { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0 });
 });
 
 test('Detail: ein Terminal mit mehreren Brands bleibt eine Terminal-Zeile', () => {

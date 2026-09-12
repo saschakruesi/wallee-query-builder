@@ -4112,16 +4112,24 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     }
 
     const feld = (r, name) => (name in ix ? r[ix[name]] : undefined);
-    const daten = rows.slice(1).map(r => ({
-      tid: (feld(r, 'terminal_identifier') || '').trim(),
-      name: (feld(r, 'terminal_name') || '').trim(),
-      brand: (feld(r, 'brand') || '').trim(),
-      currency: (feld(r, 'waehrung') || 'CHF').trim() || 'CHF',
-      count: parseCount(feld(r, 'anzahl_transaktionen')),
-      unmatched: parseCount(r[ix[zaehlerSpalte]]),
-      gross: parseAmount(feld(r, 'brutto_gross')),
-      tip: parseAmount(feld(r, 'tip_total')),
-    }));
+    // autorisiert_gross (v5.14) ist optional: ein CSV aus einer aelteren Version
+    // (oder die Fixtures) hat die Spalte nicht - dann gilt authorized = gross,
+    // also "keine Differenz", statt eines Fehlerobjekts.
+    const hatAutorisiert = 'autorisiert_gross' in ix;
+    const daten = rows.slice(1).map(r => {
+      const gross = parseAmount(feld(r, 'brutto_gross'));
+      return {
+        tid: (feld(r, 'terminal_identifier') || '').trim(),
+        name: (feld(r, 'terminal_name') || '').trim(),
+        brand: (feld(r, 'brand') || '').trim(),
+        currency: (feld(r, 'waehrung') || 'CHF').trim() || 'CHF',
+        count: parseCount(feld(r, 'anzahl_transaktionen')),
+        unmatched: parseCount(r[ix[zaehlerSpalte]]),
+        gross,
+        authorized: hatAutorisiert ? parseAmount(feld(r, 'autorisiert_gross')) : gross,
+        tip: parseAmount(feld(r, 'tip_total')),
+      };
+    });
 
     return { rows: daten, headers, error: null };
   }
@@ -9373,15 +9381,30 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // erst beim Rendern.
 
   function leereKennzahlen() {
-    return { completeDemand: 0, tip: 0, unmatched: 0, count: 0 };
+    return { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0 };
+  }
+
+  // Autorisierter Betrag einer Zeile (v5.14). Der Parser setzt authorized
+  // immer; eine handgebaute Zeile ohne das Feld faellt hier auf gross zurueck,
+  // damit das Modell nie NaN summiert.
+  function autorisiertVon(row) {
+    return Number.isFinite(row.authorized) ? row.authorized : row.gross;
   }
 
   function addiere(ziel, row) {
     ziel.completeDemand += row.gross;
+    ziel.authorized += autorisiertVon(row);
     ziel.tip += row.tip;
     ziel.unmatched += row.unmatched;
     ziel.count += row.count;
     return ziel;
+  }
+
+  // Differenz Autorisiert - Complete Demand in 1e-8-Einheiten (Ganzzahl, exakt).
+  // 0 = keine Differenz; alles andere ist die fehlende Submission (SPEC G2)
+  // und wird in allen Ausgaben orange hervorgehoben.
+  function autorisiertDifferenz(kennzahlen) {
+    return kennzahlen.authorized - kennzahlen.completeDemand;
   }
 
   const nachName = (a, b) => String(a).localeCompare(String(b), 'de');
@@ -9424,6 +9447,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         brand: row.brand,
         brandGroup: brandGruppe,
         completeDemand: row.gross,
+        authorized: autorisiertVon(row),
         tip: row.tip,
         unmatched: row.unmatched,
         count: row.count,
