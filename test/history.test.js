@@ -219,3 +219,27 @@ test('Verlaufseintrag ueberlebt den Round-Trip mit xlsxVariante', () => {
   x.historySpeichern(x.historyMitXlsxVariante([e], 'TOK-1', 'kondensiert'));
   assert.strictEqual(x.historyLaden()[0].xlsxVariante, 'kondensiert');
 });
+
+// --- Abfragezeitraum am Verlaufseintrag und im Terminal-Report (v5.14.2) ---
+
+test('Verlaufseintrag traegt start/end der Abfrage mit Uhrzeit (additiv)', () => {
+  const x = loadBuilders();
+  const e = plain(x.historyEintragBauen('terminal', 'TOK', Object.assign({ startTime: '00:00:00', endTime: '00:00:00' }, ST), '2026-07-08T10:00:00.000Z'));
+  assert.strictEqual(e.start, '2026-07-01 00:00:00');
+  assert.strictEqual(e.end, '2026-07-08 00:00:00');
+  assert.strictEqual(e.timeframeSummary, '2026-07-01 → 2026-07-08');
+});
+
+test('reportZeitraumErmitteln: Filter des Laufs vor Verlaufseintrag vor Tages-Zusammenfassung vor nichts', () => {
+  const x = loadBuilders();
+  const filter = { start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00', spaceIds: [1] };
+  const eintrag = { token: 'T', start: '2026-06-01 00:00:00', end: '2026-07-01 00:00:00', timeframeSummary: '2026-06-01 → 2026-06-30' };
+  assert.deepStrictEqual(plain(x.reportZeitraumErmitteln(filter, eintrag)), { start: filter.start, end: filter.end });
+  assert.deepStrictEqual(plain(x.reportZeitraumErmitteln(null, eintrag)), { start: eintrag.start, end: eintrag.end });
+  assert.strictEqual(x.reportZeitraumErmitteln(null, { timeframeSummary: '2026-06-01 → 2026-06-30' }), '2026-06-01 → 2026-06-30');
+  assert.strictEqual(x.reportZeitraumErmitteln(null, null), null);
+  assert.strictEqual(x.reportZeitraumErmitteln({ start: '', end: '' }, undefined), null, 'ein leerer Picker ist kein Zeitraum');
+  // Formatiert wie im Reporting-Report: Ende 00:00:00 exklusiv
+  assert.strictEqual(x.reportingZeitraumText(x.reportZeitraumErmitteln(filter)), '01.07.2026 – 31.07.2026');
+  assert.strictEqual(x.reportingZeitraumText(null), '');
+});

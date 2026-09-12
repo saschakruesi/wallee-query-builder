@@ -75,11 +75,12 @@ vm.runInContext(
   '\n;globalThis.__x.parseReportCsv = parseReportCsv;' +
   '\n;globalThis.__x.buildReportModel = buildReportModel;' +
   '\n;globalThis.__x.exportReportXlsx = exportReportXlsx;' +
-  '\n;globalThis.__x.xlsxSeitenlayoutEinbetten = xlsxSeitenlayoutEinbetten;',
+  '\n;globalThis.__x.xlsxSeitenlayoutEinbetten = xlsxSeitenlayoutEinbetten;' +
+  '\n;globalThis.__x.setzeReportZeitraum = z => { reportZeitraum = z; };',
   sandbox, { filename: 'app-logic.js' },
 );
 
-const { parseReportCsv, buildReportModel, exportReportXlsx, xlsxSeitenlayoutEinbetten } = sandbox.__x;
+const { parseReportCsv, buildReportModel, exportReportXlsx, xlsxSeitenlayoutEinbetten, setzeReportZeitraum } = sandbox.__x;
 const XLSX = sandbox.XLSX;
 const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'beispiel-daten.csv'), 'utf8');
 
@@ -266,14 +267,16 @@ test('XLSX: Hinweis G2 unter "Erstellt am" und als Fussnote nach dem letzten Blo
   const ws = wb.Sheets['Terminal-Report'];
   const zeilen = blattZeilen(wb);
   assert.match(String(zeilen[1][0]), /^Erstellt am /);
-  assert.strictEqual(zeilen[2][0], G2, 'direkt unter Erstellt am');
-  assert.strictEqual(zeilen[3].length, 0, 'Leerzeile danach');
+  assert.match(String(zeilen[2][0]), /^Abfragezeitraum: /);
+  assert.strictEqual(zeilen[3][0], G2, 'unter dem Abfragezeitraum');
+  assert.strictEqual(zeilen[4].length, 0, 'Leerzeile danach');
   const letzte = zeilen.map(z => z[0]).filter(v => v !== undefined && v !== '');
   assert.strictEqual(letzte[letzte.length - 1], G2, 'Fussnote nach dem letzten Block');
   // ueber die Blattbreite verbunden
   const breite = Math.max(...zeilen.map(z => z.length));
   const merges = ws['!merges'].map(m => `${m.s.r}:${m.s.c}-${m.e.r}:${m.e.c}`);
-  assert.ok(merges.includes(`2:0-2:${breite - 1}`), 'Hinweiszeile 2 ist verbunden');
+  assert.ok(merges.includes(`3:0-3:${breite - 1}`), 'Hinweiszeile 3 ist verbunden');
+  assert.ok(merges.includes(`2:0-2:${breite - 1}`), 'Zeitraumzeile 2 ist verbunden');
 });
 
 test('XLSX: Authorized orange nur bei Differenz, Differenz-Zelle rechts vom Gesamttotal', async () => {
@@ -343,8 +346,8 @@ test('XLSX: Raender, Seitenlayout (fitToWidth/fitToHeight/fitToPage/orientation)
   assert.match(xml, /<worksheet[^>]*><sheetPr><pageSetUpPr fitToPage="1"\/><\/sheetPr>/);
   assert.match(xml, /<pageMargins[^>]*\/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"\/>/,
     'Full hat 10 Spalten -> Querformat');
-  assert.match(workbookXml(bytes), /<definedName name="_xlnm\.Print_Titles" localSheetId="0">&apos;Terminal-Report&apos;!\$6:\$6<\/definedName>/,
-    'die erste tuerkise Kopfzeile (Zeile 6) als Drucktitel');
+  assert.match(workbookXml(bytes), /<definedName name="_xlnm\.Print_Titles" localSheetId="0">&apos;Terminal-Report&apos;!\$7:\$7<\/definedName>/,
+    'die erste tuerkise Kopfzeile (Zeile 7) als Drucktitel');
   // kondensiert: 7 Spalten -> Hochformat
   const kond = await exportiereUndLies(FIXTURE, 'kondensiert');
   assert.match(sheetXml(kond.bytes), /orientation="portrait"/);
@@ -369,4 +372,17 @@ test('XLSX: Kennzahlen aller Bloecke stehen in denselben Spalten wie im Detail-B
     assert.strictEqual(kopf.indexOf('Anz.'), detailKopf.indexOf('Anz.'), name);
     abschnittDaten(zeilen, name).forEach(r => assert.strictEqual(typeof r[cCd], 'number', name + ': Betrag unter Betrag'));
   });
+});
+
+test('XLSX: Abfragezeitraum unter "Erstellt am" - aus dem Zeitraum der Abfrage, sonst Strich', async () => {
+  setzeReportZeitraum({ start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00' });
+  let { wb } = await exportiereUndLies();
+  assert.strictEqual(blattZeilen(wb)[2][0], 'Abfragezeitraum: 01.07.2026 – 31.07.2026',
+    'Ende 00:00:00 ist exklusiv, letzter Tag ist der 31.07.');
+  setzeReportZeitraum('2026-07-01 → 2026-07-31');
+  ({ wb } = await exportiereUndLies());
+  assert.strictEqual(blattZeilen(wb)[2][0], 'Abfragezeitraum: 2026-07-01 → 2026-07-31', 'alter Verlaufseintrag: Tages-Zusammenfassung');
+  setzeReportZeitraum(null);
+  ({ wb } = await exportiereUndLies());
+  assert.strictEqual(blattZeilen(wb)[2][0], 'Abfragezeitraum: –');
 });

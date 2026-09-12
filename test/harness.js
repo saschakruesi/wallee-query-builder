@@ -343,6 +343,8 @@ const EXPORTED = [
   'reportVariante',
   'loadReportXlsxVariante',
   'historyMitXlsxVariante',
+  'reportZeitraumErmitteln',
+  'reportingZeitraumText',
   'historyXlsxVarianteLabel',
   'saveReportXlsxVariante',
   'REPORT_XLSX_VARIANTE_KEY',

@@ -1,6 +1,6 @@
 # Wallee Analytics Query Builder
 
-**Aktuelle Version: v5.14.1**
+**Aktuelle Version: v5.14.2**
 
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies
@@ -114,6 +114,9 @@ zusammengeführt.
   aus, und der Hinweis dazu steht wortgleich auf dem Bildschirm, in Excel, PDF und CSV. Dafür
   nimmt die Query Transaktionen im Zustand `AUTHORIZED` mit auf; die bisherigen Zahlen
   (Complete Demand, Tip, Unmatched, Anz.) bleiben davon unberührt.
+- **Abfragezeitraum (seit v5.14.2):** Excel («Abfragezeitraum: 01.07.2026 – 31.07.2026» unter
+  «Erstellt am») und Druck/PDF-Kopf zeigen, welchen Zeitraum die Abfrage umfasst — beim Abruf
+  über einen Token den Zeitraum jener Abfrage, nicht den aktuellen Stand des Pickers.
 - **Excel in zwei Varianten (seit v5.14):** der Excel-Knopf fragt zuerst **Full** (alle Ebenen
   und Kennzahlen) oder **Kondensiert** (nur Brand-Gruppen je Terminal, ohne Unmatched und Anz.)
   — für die Weitergabe an die Buchhaltung. Die Wahl wird gemerkt. Jedes Excel der App ist seit
