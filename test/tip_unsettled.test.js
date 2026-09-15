@@ -114,8 +114,8 @@ test('Brand-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GROUP 
   const sql = B.buildBrandQuery(RANGE);
   const tipCteCount = (sql.match(/tip AS \(/g) || []).length;
   assert.strictEqual(tipCteCount, 1, 'genau ein tip-CTE erwartet');
-  // seit v5.14.1 auf FULFILL/COMPLETED geschuetzt (Discovery Q4, siehe queries.test.js)
-  assert.match(sql, /COALESCE\(SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN tip\.tip_amount END\), 0\)\s+AS tip_total/);
+  // seit v5.15 auf der Authorized-Basis, ohne Guard (SPEC-ITERATION-3 §2.2, siehe queries.test.js)
+  assert.match(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)\s+AS tip_total/);
   const groupByIdx = sql.lastIndexOf('GROUP BY');
   const orderByIdx = sql.indexOf('ORDER BY', groupByIdx);
   const groupBySection = sql.slice(groupByIdx, orderByIdx === -1 ? undefined : orderByIdx);
@@ -127,20 +127,20 @@ test('Brand-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GROUP 
   assertTipPreAggregated(sql);
 });
 
-test('Brand-Query: geschuetzter Zaehler und SUM(t.completedamount) unveraendert', () => {
+test('Brand-Query: Zaehler auf Authorized-Basis, Complete Demand nur eingereicht', () => {
   const sql = B.buildBrandQuery(RANGE);
-  // Seit v5.14 zaehlt anzahl_transaktionen nur abgeschlossene Transaktionen
-  // (AUTHORIZED ist in der Basis, aber nicht im Zaehler - SPEC-ITERATION-2 §2.3).
-  assert.match(sql, /SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN 1 ELSE 0 END\)\s+AS anzahl_transaktionen/);
-  assert.match(sql, /SUM\(t\.completedamount\)\s+AS brutto_gross/);
+  // Seit v5.15 zaehlt anzahl_transaktionen alle genehmigten Transaktionen der
+  // Basis (SPEC-ITERATION-3 §2.2), brutto_gross nur die eingereichten.
+  assert.match(sql, /COUNT\(\*\)\s+AS anzahl_transaktionen/);
+  assert.match(sql, /THEN t\.completedamount ELSE 0 END\)\s+AS brutto_gross/);
 });
 
 test('Terminal-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GROUP BY', () => {
   const sql = B.buildTerminalQuery({ ...RANGE, terminalIds: ['T-1'] });
   const tipCteCount = (sql.match(/tip AS \(/g) || []).length;
   assert.strictEqual(tipCteCount, 1, 'genau ein tip-CTE erwartet');
-  // seit v5.14.1 auf FULFILL/COMPLETED geschuetzt (Discovery Q4, siehe queries.test.js)
-  assert.match(sql, /COALESCE\(SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN tip\.tip_amount END\), 0\)\s+AS tip_total/);
+  // seit v5.15 auf der Authorized-Basis, ohne Guard (SPEC-ITERATION-3 §2.2, siehe queries.test.js)
+  assert.match(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)\s+AS tip_total/);
   const groupByIdx = sql.lastIndexOf('GROUP BY');
   const orderByIdx = sql.indexOf('ORDER BY', groupByIdx);
   const groupBySection = sql.slice(groupByIdx, orderByIdx === -1 ? undefined : orderByIdx);
@@ -149,12 +149,10 @@ test('Terminal-Query: genau ein Tip-Konstrukt, tip_total im SELECT, nicht im GRO
   assertTipPreAggregated(sql);
 });
 
-test('Terminal-Query: geschuetzter Zaehler und SUM(t.completedamount) unveraendert', () => {
+test('Terminal-Query: Zaehler auf Authorized-Basis, Complete Demand nur eingereicht', () => {
   const sql = B.buildTerminalQuery({ ...RANGE, terminalIds: ['T-1'] });
-  // Seit v5.14 zaehlt anzahl_transaktionen nur abgeschlossene Transaktionen
-  // (AUTHORIZED ist in der Basis, aber nicht im Zaehler - SPEC-ITERATION-2 §2.3).
-  assert.match(sql, /SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN 1 ELSE 0 END\)\s+AS anzahl_transaktionen/);
-  assert.match(sql, /SUM\(t\.completedamount\)\s+AS brutto_gross/);
+  assert.match(sql, /COUNT\(\*\)\s+AS anzahl_transaktionen/);
+  assert.match(sql, /THEN t\.completedamount ELSE 0 END\)\s+AS brutto_gross/);
 });
 
 // --- Settlement: tip_total ---------------------------------------------------

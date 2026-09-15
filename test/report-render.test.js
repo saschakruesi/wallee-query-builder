@@ -31,11 +31,11 @@ test('CSV laden erzeugt einen sichtbaren Report', () => {
   assert.ok(reportOutput.children.length > 0, 'Report-Ausgabe darf nicht leer sein');
 });
 
-test('Gerenderter Report enthaelt alle vier Bloecke', () => {
+test('Gerenderter Report enthaelt alle fuenf Bloecke', () => {
   ingestReportCsv(FIXTURE);
   const text = reportOutput.textContent;
 
-  ['Detail', 'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal']
+  ['Detail', 'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal', 'Offene Einreichungen']
     .forEach(titel => assert.ok(text.includes(titel), `Block "${titel}" fehlt`));
 });
 
@@ -159,9 +159,11 @@ test('leerer Gruppenname faellt auf den Auto-Vorschlag zurueck', () => {
 
 // --- Autorisiert (v5.14, SPEC-ITERATION-2 §4.2-4.4) --------------------------
 
-const G2 = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. Weicht sie vom '
-  + 'Complete Demand ab, fehlt für die Differenz eine Submission (Einreichung/Tagesabschluss am '
-  + 'Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+const G2 = 'Authorized = vom Kartenherausgeber genehmigte Beträge, zugeordnet nach dem Zeitpunkt der Zahlung. '
+  + 'Complete Demand = davon per Reportzeitpunkt eingereicht (Tagesabschluss). '
+  + 'Offen = autorisiert, aber noch nicht eingereicht; der Betrag erscheint nach dem Tagesabschluss im selben Tag, nicht in einem anderen. '
+  + 'Abgelehnte Zahlungen sind in keiner Spalte enthalten. '
+  + 'Unsettled = Anzahl eingereichter Zahlungen, für die wallee noch keinen Abrechnungs-Datensatz (Settlement) führt.';
 
 const HEADER_V514 = '"space_id","terminal_identifier","terminal_name","brand","waehrung",'
   + '"anzahl_transaktionen","unsettled_anzahl","brutto_gross","autorisiert_gross","transaction_fee_total","netto","tip_total"';
@@ -176,13 +178,16 @@ function kopfTexte(table) {
   return alleTags(table.children[0], 'th').map(th => th.textContent);
 }
 
-test('Gerenderter Report: fuenf Kennzahl-Spalten in jeder Tabelle, Authorized rechts von Complete Demand', () => {
+const KENNZAHLEN = ['Complete Demand', 'Authorized', 'Offen', 'Offen Anz.', 'Tip', 'Unsettled', 'Anz.'];
+
+test('Gerenderter Report: sieben Kennzahl-Spalten in jeder Kennzahl-Tabelle, Offen rechts von Authorized', () => {
   ingestReportCsv(FIXTURE);
   const tabellen = alleTags(reportOutput, 'table');
   assert.ok(tabellen.length >= 4);
   tabellen.forEach(t => {
     const kopf = kopfTexte(t);
-    assert.deepStrictEqual(kopf.slice(-5), ['Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.']);
+    if (kopf[0] === 'Terminal' && kopf[1] === 'TID' && kopf.length === 5) return;   // Hinweisblock Offene Einreichungen
+    assert.deepStrictEqual(kopf.slice(-7), KENNZAHLEN);
   });
 });
 
@@ -192,17 +197,39 @@ test('Gerenderter Report: ohne Differenz keine orange Markierung', () => {
   assert.strictEqual(markiert.length, 0);
 });
 
-test('Gerenderter Report: Differenz markiert die Authorized-Zelle in Zeile, Zwischensumme und Totalen', () => {
+test('Gerenderter Report: Offen > 0 markiert die Offen-Zelle orange in Zeile, Zwischensumme und Totalen', () => {
   ingestReportCsv(CSV_MIT_DIFFERENZ);
   const markiert = alleTags(reportOutput, 'td').filter(td => /\bautorisiert-diff\b/.test(td.className));
   const texte = markiert.map(td => td.textContent);
-  // Detail-Zeile Mastercard (42.50), Zwischensumme Bar/Wallee (152.50),
-  // Outlet-Total Bar (152.50), Brand-Total Wallee (152.50), Gesamttotal (152.50).
-  assert.deepStrictEqual(texte, ['42.50', '152.50', '152.50', '152.50', '152.50']);
+  // Offen = 42.50 in der Detail-Zeile Mastercard, der Zwischensumme Bar/Wallee,
+  // dem Outlet-Total Bar, dem Brand-Total Wallee und dem Gesamttotal. Die
+  // Authorized-Zelle (152.50) bleibt unmarkiert - markiert wird, was offen ist.
+  assert.deepStrictEqual(texte, ['42.50', '42.50', '42.50', '42.50', '42.50']);
   markiert.forEach(td => assert.ok(/\bnum\b/.test(td.className), 'bleibt rechtsbuendig'));
-  // Terminal T2 ohne Differenz bleibt unmarkiert: sein Authorized-Wert 10.00
-  // darf nicht unter den markierten stehen.
+  assert.ok(!texte.includes('152.50'));
   assert.ok(!texte.includes('10.00'));
+});
+
+test('Gerenderter Report: Hinweisblock "Offene Einreichungen" nach dem Gesamttotal - Terminal, TID, Betrag, Anzahl, aelteste Zahlung', () => {
+  ingestReportCsv(CSV_MIT_DIFFERENZ);
+  const bloecke = reportOutput.children;
+  const offen = bloecke[bloecke.length - 1];
+  assert.strictEqual(offen.children[0].textContent, 'Offene Einreichungen');
+  const tabellen = alleTags(offen, 'table');
+  assert.strictEqual(tabellen.length, 1);
+  assert.deepStrictEqual(kopfTexte(tabellen[0]), ['Terminal', 'TID', 'Offen', 'Offen Anz.', 'Älteste offene Zahlung']);
+  const zellen = alleTags(tabellen[0], 'td').map(td => td.textContent);
+  // CSV_MIT_DIFFERENZ kennt offen_anzahl/offen_aelteste nicht: Anzahl 0, Zeitpunkt leer.
+  assert.deepStrictEqual(zellen, ['Bar 1', 'T1', '42.50', '0', '']);
+});
+
+test('Gerenderter Report: ohne offene Einreichungen steht der Leer-Text statt einer Tabelle', () => {
+  ingestReportCsv(FIXTURE);
+  const bloecke = reportOutput.children;
+  const offen = bloecke[bloecke.length - 1];
+  assert.strictEqual(offen.children[0].textContent, 'Offene Einreichungen');
+  assert.strictEqual(alleTags(offen, 'table').length, 0);
+  assert.ok(alleTags(offen, 'p').some(p => p.textContent === 'Keine offenen Einreichungen per Reportzeitpunkt.'));
 });
 
 test('Gerenderter Report: Hinweis G2 wortgleich unter Detail und unter Gesamttotal', () => {
@@ -211,7 +238,8 @@ test('Gerenderter Report: Hinweis G2 wortgleich unter Detail und unter Gesamttot
   assert.strictEqual(hinweise.length, 2, 'genau zweimal: Detail und Gesamttotal');
   hinweise.forEach(p => assert.strictEqual(p.className, 'hint'));
   const bloecke = reportOutput.children;
-  const detail = bloecke[0], gesamt = bloecke[bloecke.length - 1];
+  assert.strictEqual(bloecke.length, 5, 'Detail, zwei Totale, Gesamttotal, Offene Einreichungen');
+  const detail = bloecke[0], gesamt = bloecke[3];
   assert.strictEqual(detail.children[0].textContent, 'Detail');
   assert.strictEqual(detail.children[1].textContent, G2, 'direkt unter dem Titel Detail');
   assert.strictEqual(gesamt.children[0].textContent, 'Gesamttotal');

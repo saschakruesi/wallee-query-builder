@@ -498,6 +498,7 @@
     #reportPrintKopf .brand-mark { font-size: 22px; }
     #reportPrintKopf .pk-titel { font-size: 15px; font-weight: 600; color: var(--text); }
     #reportPrintKopf .pk-zeitraum { margin-left: 14px; font-size: 11px; color: var(--muted); }
+    #reportPrintKopf .pk-stand { margin-left: 14px; font-size: 11px; color: var(--muted); }
     #reportPrintKopf .pk-datum { margin-left: auto; font-size: 11px; color: var(--muted); }
 
     /* Report als saubere Tabelle - Kopf je Seite wiederholen, Zeilen nicht trennen. */
@@ -850,6 +851,7 @@
     <span class="brand-mark">wallee</span>
     <span class="pk-titel">Terminal-Report</span>
     <span class="pk-zeitraum" id="reportPrintZeitraum"></span>
+    <span class="pk-stand" id="reportPrintStand"></span>
     <span class="pk-datum" id="reportPrintDatum"></span>
   </div>
   <div class="update-banner hidden" id="updateBanner" role="status">
@@ -857,7 +859,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.14.3</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.15.0</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -867,7 +869,7 @@
       </svg>
     </button>
   </div>
-  <p class="subtitle">Brand-Auswertung (Autorisiert) · Terminal-Report (XLSX Full/Kondensiert, Authorized) · Transaktions-Export · Kartensuche · Settlement-Report (Account, PDF/XLSX) · Reporting (Händler-KPIs, POS/E-Com, Ablehngründe im Klartext, Kuchendiagramme, PDF/XLSX) · 3DS-Failures (Zeilenliste E-Commerce, PDF/XLSX) · Kopieren- oder API-Modus mit Abfrage-Verlauf · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
+  <p class="subtitle">Brand-Auswertung (Autorisiert) · Terminal-Report (nach Autorisierungszeitpunkt, Authorized / Complete Demand / Offen, XLSX Full/Kondensiert) · Transaktions-Export · Kartensuche · Settlement-Report (Account, PDF/XLSX) · Reporting (Händler-KPIs, POS/E-Com, Ablehngründe im Klartext, Kuchendiagramme, PDF/XLSX) · 3DS-Failures (Zeilenliste E-Commerce, PDF/XLSX) · Kopieren- oder API-Modus mit Abfrage-Verlauf · Trinkgeld · Unsettled-Zähler · mehrere Spaces · für PrestoDB (Amazon Athena)</p>
 
   <div class="panel">
     <h2>Modus</h2>
@@ -2063,6 +2065,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const reportOutput    = document.getElementById('reportOutput');
   const reportPrintDatum = document.getElementById('reportPrintDatum');
   const reportPrintZeitraum = document.getElementById('reportPrintZeitraum');
+  const reportPrintStand = document.getElementById('reportPrintStand');
   const reportConfigArea= document.getElementById('reportConfigArea');
   const reportOutletCfg = document.getElementById('reportOutletCfg');
   const reportBrandCfg  = document.getElementById('reportBrandCfg');
@@ -2633,7 +2636,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.14.3';
+  const APP_VERSION = '5.15.0';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -2945,39 +2948,50 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Reihenfolge = CSV-Spaltenreihenfolge; autorisiert_gross steht bewusst
   // direkt rechts von brutto_gross (SPEC-ITERATION-2 §3).
   //
-  // anzahl_transaktionen, unsettled_anzahl und tip_total zaehlen nur
-  // FULFILL/COMPLETED: eine offene Autorisierung (AUTHORIZED, seit v5.14 in der
-  // Basis) ist weder eine abgeschlossene Transaktion noch "wartet auf
-  // Abrechnung" - sie ist noch gar nicht eingereicht. Ohne diesen Schutz
-  // wuerden die alten Zahlen bei jeder liegengebliebenen Autorisierung anders
-  // aussehen als in v5.13. Der tip-Guard ist gemessen, nicht vorsorglich:
-  // Discovery Q4 (sql/autorisiert_verifikation.sql, Space 73192, 2026-09-12)
-  // fand unter 64 AUTHORIZED-Transaktionen eine mit Trinkgeld-Lineitem -
-  // completedamount und totalappliedfees waren dagegen 64-mal 0, deshalb
-  // tragen brutto_gross, transaction_fee_total und netto keinen Guard.
-  // autorisiert_gross laeuft dagegen ueber alle Zustaende der Basis - genau die
-  // Differenz zu brutto_gross ist die fehlende Submission.
-  const AGGREGAT_KENNZAHLEN = `SUM(CASE WHEN t.state IN ('FULFILL', 'COMPLETED') THEN 1 ELSE 0 END)
-                                                                 AS anzahl_transaktionen,
+  // Seit v5.15 (Terminal-Report-Tool/SPEC-ITERATION-3.md §2.2) ist die Basis
+  // die Menge der AUTORISIERTEN Transaktionen des Zeitraums (AUTHORIZED,
+  // FULFILL, COMPLETED - eingeordnet nach dem Autorisierungszeitpunkt, siehe
+  // txBasisBedingungen). Darauf:
+  //   anzahl_transaktionen  = alle genehmigten (Authorized-Basis, "Anz.")
+  //   offen_anzahl          = davon noch nicht eingereicht (AUTHORIZED)
+  //   unsettled_anzahl      = eingereicht, aber ohne Gebuehr UND ohne
+  //                           Settlement-Record ("Unsettled", nicht "Offen")
+  //   brutto_gross          = Complete Demand: completedamount NUR der
+  //                           eingereichten (FULFILL/COMPLETED) - Teilmenge
+  //                           von autorisiert_gross, per CASE abgesichert
+  //   autorisiert_gross     = Authorized: SUM(authorizationamount) ueber alle
+  //   offen_aelteste        = aelteste noch nicht eingereichte Autorisierung
+  //                           (Hinweisblock "Offene Einreichungen")
+  //   tip_total             = Trinkgeld auf Authorized-Basis (§2.2): das
+  //                           Trinkgeld-Lineitem entsteht bei der Autorisierung
+  //                           am Terminal (Stufe 1, Space 73192: auch FAILED-
+  //                           Transaktionen tragen es), nicht erst bei der
+  //                           Einreichung - der v5.14-Guard ist deshalb weg.
+  // Offen (Betrag) = autorisiert_gross - brutto_gross rechnet das Modell.
+  const EINGEREICHT_BETRAG = "SUM(CASE WHEN t.state IN ('FULFILL', 'COMPLETED') THEN t.completedamount ELSE 0 END)";
+  const AGGREGAT_KENNZAHLEN = `COUNT(*)                                                     AS anzahl_transaktionen,
+    SUM(CASE WHEN t.state = 'AUTHORIZED' THEN 1 ELSE 0 END)      AS offen_anzahl,
     SUM(CASE WHEN (t.totalappliedfees IS NULL OR t.totalappliedfees = 0)
               AND se.transaction_id IS NULL
               AND t.state IN ('FULFILL', 'COMPLETED') THEN 1 ELSE 0 END)
                                                                  AS unsettled_anzahl,
-    SUM(t.completedamount)                                       AS brutto_gross,
+    ${EINGEREICHT_BETRAG}
+                                                                 AS brutto_gross,
     SUM(t.authorizationamount)                                   AS autorisiert_gross,
+    MIN(CASE WHEN t.state = 'AUTHORIZED' THEN COALESCE(t.authorizedon, t.createdon) END)
+                                                                 AS offen_aelteste,
     SUM(t.totalappliedfees)                                      AS transaction_fee_total,
-    SUM(t.completedamount) - COALESCE(SUM(t.totalappliedfees), 0) AS netto,
-    COALESCE(SUM(CASE WHEN t.state IN ('FULFILL', 'COMPLETED') THEN tip.tip_amount END), 0)
-                                                                 AS tip_total`;
+    ${EINGEREICHT_BETRAG} - COALESCE(SUM(t.totalappliedfees), 0) AS netto,
+    COALESCE(SUM(tip.tip_amount), 0)                             AS tip_total`;
 
   // --- SQL Generation: Brand ----------------------------------------------
   function buildBrandQuery({ spaceIds, start, end }) {
     // WITH-Klausel fuer unsettled_anzahl (Erweiterung 2) und tip_total
     // (Erweiterung 1). Beide CTEs sind ueber tx eingegrenzt, damit sie nicht die
     // gesamte payfacsettlementrecord- bzw. lineitem-Historie des Space scannen.
-    // Basis inkl. AUTHORIZED (autorisiert: true, siehe txBasisBedingungen):
-    // Zaehler und tip_total sind deshalb auf FULFILL/COMPLETED geschuetzt (siehe
-    // AGGREGAT_KENNZAHLEN), brutto/fees/netto brauchen keinen Guard.
+    // Basis = autorisierte Transaktionen des Zeitraums (autorisiert: true,
+    // siehe txBasisBedingungen); die Kennzahlen darauf stehen in
+    // AGGREGAT_KENNZAHLEN.
     const basis = { start, end, autorisiert: true };
     return `WITH ${txCte({ spaceIds, ...basis })},
 ${settleExistsCte()},
@@ -3057,19 +3071,25 @@ ORDER BY
   // Bedingungen (der Aufrufer haengt sie mit seiner Einrueckung per AND an).
   //
   // Standard: t.completedon im Zeitraum und t.state IN (FULFILL, COMPLETED) -
-  // der Grundsatz aller Modi ("Tagesabschluss, nicht Erstellung").
+  // der Grundsatz von export/card/settlement ("Tagesabschluss, nicht Erstellung").
   //
-  // autorisiert: true (nur brand/terminal, seit v5.14): zusaetzlich Transaktionen
-  // im Zustand AUTHORIZED, eingeordnet nach t.authorizedon. Fuer abgeschlossene
-  // Transaktionen ist COALESCE(completedon, authorizedon) = completedon, die
-  // Menge also exakt die alte; dazu kommen offene Autorisierungen (freigegeben,
-  // aber ohne Submission/Tagesabschluss) - genau die Differenz, die die Spalte
-  // autorisiert_gross sichtbar macht. Wird eine solche Transaktion spaeter
-  // abgeschlossen, wandert sie in den Zeitraum ihres completedon; wird sie
-  // storniert (VOIDED), verschwindet sie. Die Zaehler der beiden Queries sind
-  // auf FULFILL/COMPLETED geschuetzt, damit die alten Zahlen unveraendert bleiben.
+  // autorisiert: true (nur brand/terminal, seit v5.15 - SPEC-ITERATION-3 §2.1):
+  // eine Transaktion gehoert zu dem Geschaeftstag, an dem sie autorisiert wurde.
+  // Zeitpunkt ist t.authorizedon (Freigabe durch den Kartenherausgeber), mit
+  // Rueckfall auf t.createdon, falls ein Connector authorizedon nicht schreibt.
+  // Stufe 1 der Selbstpruefung (Space 73192, 10./11.09.2026, 624 Zeilen) hat
+  // gemessen: beide liegen 6-58 s nach der Terminal-Zeit des Financial Reports,
+  // authorizedon ist bei jeder genehmigten Transaktion gesetzt, bei FAILED
+  // dagegen nie. completedon ist die Einreichung (Tagesabschluss) und liegt bis
+  // zu einem Tag spaeter - ueber completedon eingeordnet fehlte ein ganzer
+  // Terminal-Abend (v5.14, Befund §1). Basis sind AUTHORIZED (freigegeben,
+  // noch nicht eingereicht) sowie FULFILL/COMPLETED (eingereicht); FAILED und
+  // VOIDED bleiben draussen - abgelehnte Zahlungen zaehlen in keiner Spalte.
+  // Wird eine offene Autorisierung spaeter eingereicht, bleibt sie in
+  // demselben Fenster (ihr Autorisierungszeitpunkt aendert sich nicht) und
+  // wandert von Offen nach Complete Demand - nie in einen anderen Tag.
   function txBasisBedingungen({ start, end, autorisiert }) {
-    const zeitpunkt = autorisiert ? 'COALESCE(t.completedon, t.authorizedon)' : 't.completedon';
+    const zeitpunkt = autorisiert ? 'COALESCE(t.authorizedon, t.createdon)' : 't.completedon';
     const zustaende = autorisiert ? "('AUTHORIZED', 'FULFILL', 'COMPLETED')" : "('FULFILL', 'COMPLETED')";
     return [
       `${zeitpunkt} >= TIMESTAMP '${start}'`,
@@ -4181,6 +4201,9 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // (oder die Fixtures) hat die Spalte nicht - dann gilt authorized = gross,
     // also "keine Differenz", statt eines Fehlerobjekts.
     const hatAutorisiert = 'autorisiert_gross' in ix;
+    // offen_anzahl / offen_aelteste (v5.15, SPEC-ITERATION-3 §2.2): autorisiert,
+    // aber noch nicht eingereicht - Anzahl und aelteste Autorisierung. Ebenfalls
+    // optional: ohne die Spalten 0 bzw. leer, nie ein Fehlerobjekt.
     const daten = rows.slice(1).map(r => {
       const gross = parseAmount(feld(r, 'brutto_gross'));
       return {
@@ -4192,6 +4215,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         unmatched: parseCount(r[ix[zaehlerSpalte]]),
         gross,
         authorized: hatAutorisiert ? parseAmount(feld(r, 'autorisiert_gross')) : gross,
+        offenCount: 'offen_anzahl' in ix ? parseCount(feld(r, 'offen_anzahl')) : 0,
+        offenAelteste: 'offen_aelteste' in ix ? String(feld(r, 'offen_aelteste') || '').trim() : '',
         tip: parseAmount(feld(r, 'tip_total')),
       };
     });
@@ -7562,12 +7587,29 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   function reportingZeitraumText(zeitraum) {
     if (!zeitraum) return '';
     if (typeof zeitraum === 'string') return zeitraum;
-    const von = String(zeitraum.start || zeitraum.von || '').slice(0, 10);
+    const start = String(zeitraum.start || zeitraum.von || '');
+    const end = String(zeitraum.end || zeitraum.bis || '');
+    // Uhrzeiten (seit v5.15, SPEC-ITERATION-3 §2.5): umfasst der Zeitraum keine
+    // ganzen Tage - Beginn nicht um 00:00:00 oder Ende weder 00:00:00 (exklusiv)
+    // noch 23:59:59 (inklusiv) -, stehen beide Uhrzeiten dabei, z. B. der
+    // Gastro-Geschaeftstag '10.09.2026 06:00 – 11.09.2026 06:00'. Das Ende ist
+    // dann wie in der Query exklusiv und wird so ausgegeben, wie es der Picker
+    // traegt - kein Vortag, keine Umdeutung.
+    const uhr = /^\d{4}-\d{2}-\d{2}[ T](\d{2}):(\d{2}):(\d{2})/;
+    const s = uhr.exec(start);
+    const e = uhr.exec(end);
+    const startZeit = s ? `${s[1]}:${s[2]}:${s[3]}` : '00:00:00';
+    const endZeit = e ? `${e[1]}:${e[2]}:${e[3]}` : '00:00:00';
+    const ganzeTage = startZeit === '00:00:00' && (endZeit === '00:00:00' || endZeit === '23:59:59');
+    if (!ganzeTage) {
+      return `${datumCH(start.slice(0, 10))} ${startZeit.slice(0, 5)} – ${datumCH(end.slice(0, 10))} ${endZeit.slice(0, 5)}`;
+    }
+    const von = start.slice(0, 10);
     // berichtsEndeTag deutet '… 00:00:00' als exklusive Obergrenze und
     // '… 23:59:59' als letzten abgedeckten Tag - dieselbe Lesart wie im
     // Settlement-Report, damit die Kopfzeilen der beiden Reports nicht um
     // einen Tag auseinanderlaufen.
-    const bis = berichtsEndeTag(zeitraum.end || zeitraum.bis || '');
+    const bis = berichtsEndeTag(end);
     if (!von && !bis) return '';
     return `${datumCH(von)} – ${datumCH(bis)}`;
   }
@@ -9447,7 +9489,19 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // erst beim Rendern.
 
   function leereKennzahlen() {
-    return { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0 };
+    return { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0,
+      offenCount: 0, offenAelteste: '' };
+  }
+
+  // Aelteste noch nicht eingereichte Autorisierung zweier Kennzahlen: der
+  // kleinere ISO-Zeitstempel (Athena schreibt 'YYYY-MM-DD HH:MM:SS.fff', das
+  // sortiert als String chronologisch); ein leerer Wert heisst "keine".
+  function fruehereZeit(a, b) {
+    const x = String(a || '').trim();
+    const y = String(b || '').trim();
+    if (!x) return y;
+    if (!y) return x;
+    return x < y ? x : y;
   }
 
   // Autorisierter Betrag einer Zeile (v5.14). Der Parser setzt authorized
@@ -9463,6 +9517,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     ziel.tip += row.tip;
     ziel.unmatched += row.unmatched;
     ziel.count += row.count;
+    ziel.offenCount += Number.isFinite(row.offenCount) ? row.offenCount : 0;
+    ziel.offenAelteste = fruehereZeit(ziel.offenAelteste, row.offenAelteste);
     return ziel;
   }
 
@@ -9517,6 +9573,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         tip: row.tip,
         unmatched: row.unmatched,
         count: row.count,
+        offenCount: Number.isFinite(row.offenCount) ? row.offenCount : 0,
+        offenAelteste: String(row.offenAelteste || '').trim(),
       });
 
       if (!o.brandSummen.has(brandGruppe)) o.brandSummen.set(brandGruppe, leereKennzahlen());
@@ -9559,7 +9617,27 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       Object.assign({ brandGroup: bg }, brandTotalsMap.get(bg))
     ));
 
-    return { detail, outletTotals, brandTotals, grandTotal };
+    // Offene Einreichungen je Terminal (SPEC-ITERATION-3 §2.3): jedes Terminal,
+    // dessen Authorized ueber dem Complete Demand liegt - mit Betrag, Anzahl und
+    // aeltester offener Zahlung fuer den Hinweisblock unter dem Report. Ueber die
+    // Marken des Terminals summiert, sortiert nach Terminalname.
+    const offen = [];
+    detail.forEach(o => o.terminals.forEach(t => {
+      const k = t.brands.reduce((z, b) => {
+        z.completeDemand += b.completeDemand;
+        z.authorized += b.authorized;
+        z.offenCount += b.offenCount || 0;
+        z.offenAelteste = fruehereZeit(z.offenAelteste, b.offenAelteste);
+        return z;
+      }, leereKennzahlen());
+      if (autorisiertDifferenz(k) > 0) {
+        offen.push({ tid: t.tid, name: t.name, offen: autorisiertDifferenz(k),
+          offenCount: k.offenCount, aelteste: k.offenAelteste });
+      }
+    }));
+    offen.sort((a, b) => nachName(a.name, b.name));
+
+    return { detail, outletTotals, brandTotals, grandTotal, offen };
   }
 
   // --- Terminal-Report: Zahlformat ----------------------------------------
@@ -10087,6 +10165,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // die Angabe leer statt eine erfundene zu zeigen.
   let reportZeitraum = null;
   let reportSpaces = [];
+  // Stand der Einreichungen (SPEC-ITERATION-3 §2.5): der Zeitpunkt, zu dem die
+  // Query bei wallee lief - Complete Demand und Offen gelten fuer genau diesen
+  // Moment. ISO-String; gesetzt in holeErgebnisInReport.
+  let reportStand = '';
 
   // Spaces der Abfrage als [{ id, label }] - dieselbe Rangfolge wie beim
   // Zeitraum: Filter des Laufs (Labels aus der Space-Liste), Verlaufseintrag,
@@ -10148,11 +10230,35 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return reportingZeitraumText(reportZeitraum);
   }
 
+  // Stand der Einreichungen: der Zeitpunkt der Abfrage (submittedAt des
+  // Verlaufseintrags - beim Token-Abruf ist das der damalige Lauf, nicht
+  // "jetzt"), sonst der uebergebene Zeitpunkt. Complete Demand und Offen
+  // haengen davon ab, deshalb steht er im Kopf jeder Ausgabe.
+  function reportStandErmitteln(eintrag, jetztIso) {
+    if (eintrag && eintrag.submittedAt) return String(eintrag.submittedAt);
+    return jetztIso ? String(jetztIso) : '';
+  }
+
+  // ISO-Zeitstempel (mit Zeitzone, z. B. aus new Date().toISOString()) ->
+  // 'DD.MM.YYYY HH:MM' in der lokalen Zeit des Rechners. Ein leerer oder
+  // unlesbarer Wert bleibt leer.
+  function standText(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function reportStandText() {
+    return standText(reportStand);
+  }
+
   async function holeErgebnisInReport(token, account, filter) {
     reportQuelleToken = token;
     const eintrag = historyLaden().find(e => e && e.token === token);
     reportZeitraum = reportZeitraumErmitteln(filter, eintrag);
     reportSpaces = reportSpacesErmitteln(filter, eintrag, state.spaces);
+    reportStand = reportStandErmitteln(eintrag, new Date().toISOString());
     zeigeFortschritt('Ergebnis wird geladen …');
     const antwort = await proxyGet(mitAccount('/result/' + encodeURIComponent(token), account));
     const text = await antwort.text();
@@ -10444,38 +10550,56 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return Math.round(units / 1e6) / 100;
   }
 
-  // Hinweis zum autorisierten Betrag (SPEC-ITERATION-2 §1 G2). Der Wortlaut ist
-  // Vorgabe und steht ueberall identisch: Bildschirm (unter Detail und
-  // Gesamttotal, damit auch im Druck/PDF), CSV (letzte Zeile), Excel und im
-  // Panel der Modi brand/terminal. Ergaenzung "... oder eine Teil-Einreichung"
-  // erst, wenn Q3 aus sql/autorisiert_verifikation.sql Teil-Captures zeigt (O3).
-  const AUTORISIERT_HINWEIS = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. '
-    + 'Weicht sie vom Complete Demand ab, fehlt für die Differenz eine Submission '
-    + '(Einreichung/Tagesabschluss am Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+  // Hinweis zu Authorized / Complete Demand / Offen (SPEC-ITERATION-3 §2.6, seit
+  // v5.15; vorher G2 aus SPEC-ITERATION-2). Der Wortlaut ist Vorgabe (Tippfehler
+  // "Kartenherausteller" korrigiert) und steht ueberall identisch: Bildschirm
+  // (unter Detail und Gesamttotal, damit auch im Druck/PDF), CSV (letzte
+  // Zeile), Excel und im Panel der Modi brand/terminal. Der letzte Satz erklaert
+  // Unsettled (bis v5.14 "Unmatched"): die Spalte zaehlt etwas anderes als
+  // Offen - eingereicht, aber von wallee noch nicht abgerechnet (§2.4).
+  const AUTORISIERT_HINWEIS = 'Authorized = vom Kartenherausgeber genehmigte Beträge, zugeordnet nach dem Zeitpunkt der Zahlung. '
+    + 'Complete Demand = davon per Reportzeitpunkt eingereicht (Tagesabschluss). '
+    + 'Offen = autorisiert, aber noch nicht eingereicht; der Betrag erscheint nach dem Tagesabschluss im selben Tag, nicht in einem anderen. '
+    + 'Abgelehnte Zahlungen sind in keiner Spalte enthalten. '
+    + 'Unsettled = Anzahl eingereichter Zahlungen, für die wallee noch keinen Abrechnungs-Datensatz (Settlement) führt.';
   autorisiertHint.textContent = AUTORISIERT_HINWEIS;
+
+  // Zeitpunkt 'YYYY-MM-DD HH:MM:SS[.fff]' (Athena) -> 'DD.MM.YYYY HH:MM'. Ein
+  // unlesbarer oder leerer Wert bleibt leer - kein erfundenes Datum.
+  function zeitpunktCH(ts) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(ts || '').trim());
+    return m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}` : '';
+  }
 
   // Kennzahl-Reihenfolge, ueberall identisch (SPEC-ITERATION-2 §4.2). Im Kopf
   // englisch wie die bestehenden Spalten ("Authorized", Entscheid O1);
   // "Autorisiert" heisst die Kennzahl nur im Hinweistext.
   // Jede Kennzahl mit Kopf, Spaltentyp (der XLSX-Export haengt daran das
   // Zahlformat: 'betrag' | 'zahl') und Zugriff auf die Modell-Kennzahlen.
+  // Seit v5.15 (SPEC-ITERATION-3 §2.2): Offen = Authorized - Complete Demand
+  // (autorisiert, noch nicht eingereicht) mit eigener Anzahl; "Unmatched"
+  // heisst Unsettled, weil die Spalte etwas anderes zaehlt als Offen (§2.4).
   const KENNZAHL_DEFS = [
     { label: 'Complete Demand', typ: 'betrag', wert: k => unitsZuZahl(k.completeDemand) },
     { label: 'Authorized',      typ: 'betrag', wert: k => unitsZuZahl(k.authorized) },
+    { label: 'Offen',           typ: 'betrag', wert: k => unitsZuZahl(autorisiertDifferenz(k)) },
+    { label: 'Offen Anz.',      typ: 'zahl',   wert: k => k.offenCount || 0 },
     { label: 'Tip',             typ: 'betrag', wert: k => unitsZuZahl(k.tip) },
-    { label: 'Unmatched',       typ: 'zahl',   wert: k => k.unmatched },
+    { label: 'Unsettled',       typ: 'zahl',   wert: k => k.unmatched },
     { label: 'Anz.',            typ: 'zahl',   wert: k => k.count },
   ];
   const KENNZAHL_SPALTEN = KENNZAHL_DEFS.map(d => d.label);
 
   // Varianten des Excel-Exports (SPEC-ITERATION-2 §5): 'full' = alle Ebenen und
   // Kennzahlen; 'kondensiert' = Detail nur je Terminal x Brand-Gruppe (keine
-  // einzelnen Marken) und ohne die Spalten Unmatched und Anz. - in ALLEN
-  // Bloecken. Die Verdichtung ist eine Export-Entscheidung (G4): ein Modell,
-  // die Blockschicht verdichtet. CSV und PDF bleiben Full.
+  // einzelnen Marken) und ohne die Zaehler (Offen Anz., Unsettled, Anz.) - in
+  // ALLEN Bloecken; Offen (Betrag) ist dabei (SPEC-ITERATION-3 §4.7). Die
+  // Verdichtung ist eine Export-Entscheidung (G4): ein Modell, die Blockschicht
+  // verdichtet. CSV und PDF bleiben Full.
   const REPORT_VARIANTE_DEFAULT = 'full';
   const REPORT_VARIANTEN = ['full', 'kondensiert'];
-  const KENNZAHLEN_KONDENSIERT = ['Complete Demand', 'Authorized', 'Tip'];
+  const KENNZAHLEN_KONDENSIERT = ['Complete Demand', 'Authorized', 'Offen', 'Tip'];
+  const OFFEN_LEER_TEXT = 'Keine offenen Einreichungen per Reportzeitpunkt.';
 
   function reportVariante(wert) {
     return REPORT_VARIANTEN.includes(wert) ? wert : REPORT_VARIANTE_DEFAULT;
@@ -10499,6 +10623,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       z.tip += b.tip;
       z.unmatched += b.unmatched;
       z.count += b.count;
+      z.offenCount += b.offenCount || 0;
+      z.offenAelteste = fruehereZeit(z.offenAelteste, b.offenAelteste);
     });
     return [...summen.keys()].sort(nachName).map(bg => Object.assign({ brandGroup: bg }, summen.get(bg)));
   }
@@ -10555,6 +10681,17 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         typen: typen(detailKopf.length),
         rows: detailRows,
       },
+      // Hinweisblock (SPEC-ITERATION-3 §2.3): welche Terminals per
+      // Reportzeitpunkt offene Einreichungen haben. Eigene Spaltenform, in
+      // beiden Varianten gleich - er ist Hinweis, nicht Kennzahl. Ohne
+      // offene Posten traegt er den Leer-Text statt einer leeren Tabelle: die
+      // Abwesenheit ist selbst die Aussage.
+      Object.assign({
+        name: 'Offene Einreichungen',
+        header: ['Terminal', 'TID', 'Offen', 'Offen Anz.', 'Älteste offene Zahlung'],
+        typen: ['text', 'text', 'betrag', 'zahl', 'text'],
+        rows: (m.offen || []).map(o => [o.name, o.tid, unitsZuZahl(o.offen), o.offenCount || 0, zeitpunktCH(o.aelteste)]),
+      }, (m.offen || []).length ? {} : { leer: OFFEN_LEER_TEXT }),
     ];
   }
 
@@ -10577,6 +10714,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       zeilen.push(csvFeld(block.name));
       zeilen.push(block.header.map(csvFeld).join(';'));
       block.rows.forEach(r => zeilen.push(r.map(csvFeld).join(';')));
+      if (block.leer && !block.rows.length) zeilen.push(csvFeld(block.leer));
     });
     // Hinweis G2 als letzte Zeile nach einer Leerzeile, damit die Datei fuer
     // sich allein erklaert, was "Authorized" bedeutet (SPEC-ITERATION-2 §4.4).
@@ -10947,29 +11085,25 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     const datum = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 
     // Alles in EIN Blatt, die Abschnitte untereinander gestapelt - genau wie der
-    // PDF-/Bildschirm-Report (Detail, dann die Totale), statt mehrerer Tabs.
+    // PDF-/Bildschirm-Report (Detail, dann die Totale, dann der Hinweisblock
+    // "Offene Einreichungen"), statt mehrerer Tabs.
     const bloecke = reportExportBloecke(modell, { variante });
-    const REIHENFOLGE = ['Detail', 'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal'];
+    const REIHENFOLGE = ['Detail', 'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal', 'Offene Einreichungen'];
     const sortiert = REIHENFOLGE.map(n => bloecke.find(b => b.name === n)).filter(Boolean);
+    const istHinweisBlock = block => block.name === 'Offene Einreichungen';
 
-    // Differenz Autorisiert - Complete Demand (§4.3): steht als Zellenpaar
-    // rechts neben dem Gesamttotal, nur wenn sie ungleich 0 ist. Die beiden
-    // Spalten zaehlen dann zur Blattbreite (Titel-Verbindung, Drucklayout).
     const spalteVon = (block, label) => block.header.indexOf(label);
-    const gesamt = sortiert.find(b => b.name === 'Gesamttotal');
-    const differenz = gesamt
-      ? Math.round((gesamt.rows[0][spalteVon(gesamt, 'Authorized')]
-        - gesamt.rows[0][spalteVon(gesamt, 'Complete Demand')]) * 100) / 100
-      : 0;
-    // Die Bloecke stehen untereinander und teilen sich die Spalten. Damit eine
-    // Spalte nur gleichartigen Inhalt traegt (TID unter TID, Betrag unter
-    // Betrag - sonst misst die TID-Spalte den Kopf "Complete Demand" des
-    // naechsten Blocks, v5.14.0), stehen die Kennzahlen JEDES Blocks
+    // Die Kennzahl-Bloecke stehen untereinander und teilen sich die Spalten.
+    // Damit eine Spalte nur gleichartigen Inhalt traegt (TID unter TID, Betrag
+    // unter Betrag - sonst misst die TID-Spalte den Kopf "Complete Demand" des
+    // naechsten Blocks, v5.14.0), stehen die Kennzahlen JEDES Kennzahl-Blocks
     // rechtsbuendig unter denen des Detail-Blocks; die Textspalten bleiben
-    // links, dazwischen leere Zellen.
+    // links, dazwischen leere Zellen. Der Hinweisblock hat eine eigene
+    // Spaltenform und steht linksbuendig.
     const blattBreite = Math.max(1, ...sortiert.map(b => b.header.length));
     const kennzahlen = kennzahlDefs(variante).length;
     const spalteIm = (block, c) => {
+      if (istHinweisBlock(block)) return c;
       const text = block.header.length - kennzahlen;
       return c < text ? c : c + (blattBreite - block.header.length);
     };
@@ -10978,7 +11112,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       zeile.forEach((wert, c) => { ausgabe[spalteIm(block, c)] = wert; });
       return ausgabe;
     };
-    const maxCols = blattBreite + (differenz !== 0 ? 2 : 0);
+    const maxCols = blattBreite;
 
     const aoa = [];
     const stile = [];    // { r, c, s, z } - nach aoa_to_sheet angewandt
@@ -10992,20 +11126,24 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       alignment: { horizontal: 'left', vertical: 'center' } } });
     aoa.push([`Erstellt am ${datum}`]); spanne(1);
     stile.push({ r: 1, c: 0, s: { font: { sz: 10, color: { rgb: XLSX_FARBE.hinweis } } } });
-    // Abfragezeitraum (seit v5.14.2): was die Daten umfassen - Tagesabschluss
-    // bzw. Autorisierungszeitpunkt im Fenster der Query.
+    // Abfragezeitraum (seit v5.14.2): was die Daten umfassen - der
+    // Autorisierungszeitpunkt im Fenster der Query, seit v5.15 mit Uhrzeit,
+    // wenn der Picker eine traegt.
     aoa.push([`Abfragezeitraum: ${reportZeitraumText() || '–'}`]); spanne(2);
     stile.push({ r: 2, c: 0, s: { font: { sz: 10, bold: true, color: { rgb: XLSX_FARBE.text } } } });
-    // Hinweis G2 darunter (§4.4) ...
-    aoa.push([AUTORISIERT_HINWEIS]); spanne(3);
-    stile.push({ r: 3, c: 0, s: hinweisStil });
+    // Stand der Einreichungen (SPEC-ITERATION-3 §2.5): Complete Demand und
+    // Offen gelten fuer den Zeitpunkt der Abfrage.
+    aoa.push([`Stand Einreichungen: ${reportStandText() || '–'}`]); spanne(3);
+    stile.push({ r: 3, c: 0, s: { font: { sz: 10, color: { rgb: XLSX_FARBE.text } } } });
+    // Hinweis darunter (§2.6) ...
+    aoa.push([AUTORISIERT_HINWEIS]); spanne(4);
+    stile.push({ r: 4, c: 0, s: hinweisStil });
     aoa.push([]);
-    let r = 5;
+    let r = 6;
     let kopfZeile = -1;    // erste tuerkise Kopfzeile -> Drucktitel
 
     sortiert.forEach(block => {
-      const cAuth = spalteVon(block, 'Authorized');
-      const cCd = spalteVon(block, 'Complete Demand');
+      const cOffen = istHinweisBlock(block) ? -1 : spalteVon(block, 'Offen');
       // Abschnittstitel
       aoa.push([block.name]); spanne(r);
       stile.push({ r, c: 0, s: { font: { bold: true, sz: 12, color: { rgb: XLSX_FARBE.text } } } });
@@ -11022,25 +11160,21 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
         block.typen.forEach((typ, c) => {
           const format = (typ === 'betrag' || typ === 'zahl') ? XLSX_FORMAT[typ] : null;
           const stil = xlsxZellStil(zebra, !!format, format || null);
-          // Authorized in wallee-Orange, sobald der Wert vom Complete Demand
-          // abweicht - dieselbe Regel wie auf dem Bildschirm (§4.3).
-          if (c === cAuth && cAuth >= 0 && cCd >= 0 && row[cAuth] !== row[cCd]) {
+          // Offen in wallee-Orange, sobald etwas offen ist - dieselbe Regel wie
+          // auf dem Bildschirm (SPEC-ITERATION-3 §2.3).
+          if (c === cOffen && cOffen >= 0 && row[cOffen] !== 0) {
             stil.font = Object.assign({}, stil.font, { color: { rgb: XLSX_FARBE.orange }, bold: true });
           }
           stile.push({ r, c: spalteIm(block, c), s: stil, z: format });
         });
-        if (block.name === 'Gesamttotal' && differenz !== 0) {
-          const c0 = blattBreite;
-          aoa[aoa.length - 1][c0] = 'Differenz:';
-          aoa[aoa.length - 1][c0 + 1] = differenz;
-          stile.push({ r, c: c0, s: { font: { bold: true, color: { rgb: XLSX_FARBE.orange }, sz: 10 },
-            alignment: { horizontal: 'right', vertical: 'center' } } });
-          const stil = xlsxZellStil(false, true, XLSX_FORMAT.betrag);
-          stil.font = Object.assign({}, stil.font, { color: { rgb: XLSX_FARBE.orange }, bold: true });
-          stile.push({ r, c: c0 + 1, s: stil, z: XLSX_FORMAT.betrag });
-        }
         r++;
       });
+      // Hinweisblock ohne offene Posten: der Leer-Text statt einer leeren Tabelle.
+      if (!block.rows.length && block.leer) {
+        aoa.push([block.leer]); spanne(r);
+        stile.push({ r, c: 0, s: hinweisStil });
+        r++;
+      }
       aoa.push([]); r++;   // Leerzeile zwischen den Abschnitten
     });
 
@@ -11292,12 +11426,14 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
 
   function kennzahlZellen(reihe, k) {
     zelle(reihe, formatAmountCH(k.completeDemand), true);
-    // Authorized: orange, sobald der Wert vom Complete Demand abweicht - die
-    // Zelle markiert die fehlende Submission (SPEC-ITERATION-2 §4.3). Gilt auf
+    zelle(reihe, formatAmountCH(k.authorized), true);
+    // Offen = Authorized - Complete Demand: orange, sobald etwas offen ist - die
+    // Zelle markiert die fehlende Einreichung (SPEC-ITERATION-3 §2.3). Gilt auf
     // jeder Ebene, auch fuer Zwischensummen und Totale, weil dort die Differenz
     // der darunterliegenden Zeilen durchschlaegt.
-    const autorisiert = zelle(reihe, formatAmountCH(k.authorized), true);
-    if (autorisiertDifferenz(k) !== 0) autorisiert.className = 'num autorisiert-diff';
+    const offen = zelle(reihe, formatAmountCH(autorisiertDifferenz(k)), true);
+    if (autorisiertDifferenz(k) !== 0) offen.className = 'num autorisiert-diff';
+    zelle(reihe, formatIntCH(k.offenCount || 0), true);
     zelle(reihe, formatAmountCH(k.tip), true);
     zelle(reihe, formatIntCH(k.unmatched), true);
     zelle(reihe, formatIntCH(k.count), true);
@@ -11320,8 +11456,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     return table;
   }
 
-  const KENNZAHL_KOPF = [['Complete Demand', true], ['Authorized', true], ['Tip', true],
-    ['Unmatched', true], ['Anz.', true]];
+  const KENNZAHL_KOPF = KENNZAHL_DEFS.map(d => [d.label, true]);
 
   function renderReport() {
     // Datum fuer den PDF-/Druck-Kopf (nur dort sichtbar).
@@ -11333,6 +11468,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       const z = reportZeitraumText();
       reportPrintZeitraum.textContent = z ? `Abfragezeitraum ${z}` : '';
     }
+    if (reportPrintStand) {
+      const st = reportStandText();
+      reportPrintStand.textContent = st ? `Stand Einreichungen ${st}` : '';
+    }
     reportOutput.innerHTML = '';
     if (!reportRows.length) return;
 
@@ -11343,6 +11482,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     reportOutput.appendChild(blockOutletTotals(modell));
     reportOutput.appendChild(blockBrandTotals(modell));
     reportOutput.appendChild(blockGesamttotal(modell));
+    reportOutput.appendChild(blockOffen(modell));
   }
 
   // Ein Block mit Titel und beliebig vielen Hinweis-Absaetzen in Reihenfolge.
@@ -11445,6 +11585,34 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     zelle(tr, 'Total');
     kennzahlZellen(tr, modell.grandTotal);
     tbody.appendChild(tr);
+    div.appendChild(t);
+    return div;
+  }
+
+  // Hinweisblock "Offene Einreichungen" (SPEC-ITERATION-3 §2.3): welche
+  // Terminals per Reportzeitpunkt offene Einreichungen haben - Terminalname,
+  // TID, Betrag, Anzahl, aelteste offene Zahlung. Dieselbe Blockquelle wie
+  // CSV/Excel (reportExportBloecke); ohne offene Posten der Leer-Text statt
+  // einer leeren Tabelle. Dazu der Stand der Einreichungen (§2.5), weil
+  // Complete Demand und Offen genau fuer diesen Moment gelten.
+  function blockOffen(modell) {
+    const b = reportExportBloecke(modell).find(x => x.name === 'Offene Einreichungen');
+    const st = reportStandText();
+    const div = block('Offene Einreichungen',
+      st ? `Stand Einreichungen: ${st}` : '',
+      b.rows.length ? '' : b.leer);
+    if (!b.rows.length) return div;
+    const t = tabelle(b.header.map((h, i) => [h, b.typen[i] !== 'text']));
+    const tbody = t.querySelector('tbody');
+    b.rows.forEach(r => {
+      const tr = document.createElement('tr');
+      r.forEach((wert, i) => {
+        const typ = b.typen[i];
+        const text = typ === 'betrag' ? formatZahlCH(wert) : typ === 'zahl' ? formatIntCH(wert) : String(wert);
+        zelle(tr, text, typ !== 'text');
+      });
+      tbody.appendChild(tr);
+    });
     div.appendChild(t);
     return div;
   }

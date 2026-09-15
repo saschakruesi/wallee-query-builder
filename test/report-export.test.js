@@ -34,11 +34,14 @@ function row(tid, name, brand, gross, authorized, extra) {
 // koennen. Das Schweizer Aussehen macht das Excel-Zahlformat (#,##0.00), nicht
 // eine vorformatierte Zeichenkette.
 
-test('Export-Bloecke: alle vier Bloecke in fester Reihenfolge', () => {
+const BLOECKE = ['Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal', 'Detail', 'Offene Einreichungen'];
+// Die vier Kennzahl-Bloecke - der Hinweisblock "Offene Einreichungen" hat
+// eine eigene Spaltenform (Terminal, TID, Offen, Offen Anz., aelteste Zahlung).
+const kennzahlBloecke = bloecke => bloecke.filter(b => b.name !== 'Offene Einreichungen');
+
+test('Export-Bloecke: alle fuenf Bloecke in fester Reihenfolge', () => {
   const bloecke = reportExportBloecke(modell());
-  assert.deepStrictEqual(plain(bloecke.map(b => b.name)), [
-    'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal', 'Detail',
-  ]);
+  assert.deepStrictEqual(plain(bloecke.map(b => b.name)), BLOECKE);
 });
 
 test('Export-Bloecke: Betraege sind Zahlen, keine Strings', () => {
@@ -52,15 +55,15 @@ test('Export-Bloecke: Betraege sind Zahlen, keine Strings', () => {
 
 test('Export-Bloecke: Gesamttotal traegt die Sollzahlen', () => {
   const gesamt = reportExportBloecke(modell()).find(b => b.name === 'Gesamttotal');
-  assert.deepStrictEqual(plain(gesamt.header), ['', 'Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.']);
-  assert.deepStrictEqual(plain(gesamt.rows), [['Total', 62756.16, 62756.16, 793.46, 889, 2070]]);
+  assert.deepStrictEqual(plain(gesamt.header), ['', 'Complete Demand', 'Authorized', 'Offen', 'Offen Anz.', 'Tip', 'Unsettled', 'Anz.']);
+  assert.deepStrictEqual(plain(gesamt.rows), [['Total', 62756.16, 62756.16, 0, 0, 793.46, 889, 2070]]);
 });
 
 test('Export-Bloecke: Brand-Totals vollstaendig', () => {
   const brands = reportExportBloecke(modell()).find(b => b.name === 'Total Brand-Gruppen');
   assert.deepStrictEqual(plain(brands.rows), [
-    ['Lunch-Check', 31, 31, 0, 1, 2],
-    ['Wallee', 62725.16, 62725.16, 793.46, 888, 2068],
+    ['Lunch-Check', 31, 31, 0, 0, 0, 1, 2],
+    ['Wallee', 62725.16, 62725.16, 0, 0, 793.46, 888, 2068],
   ]);
 });
 
@@ -123,41 +126,80 @@ test('CSV-Export: Felder mit Semikolon oder Quote werden maskiert', () => {
 
 // --- Autorisiert in den Ausgaben (v5.14, SPEC-ITERATION-2 §4.2-4.4) ---------
 
-const G2 = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. Weicht sie vom '
-  + 'Complete Demand ab, fehlt für die Differenz eine Submission (Einreichung/Tagesabschluss am '
-  + 'Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+// Wortlaut nach SPEC-ITERATION-3 §2.6 (Tippfehler "Kartenherausteller" der Spec
+// korrigiert), ergaenzt um den Satz zu Unsettled (§2.4: die Spalte zaehlt etwas
+// anderes als Offen und wird deshalb umbenannt und erklaert).
+const G2 = 'Authorized = vom Kartenherausgeber genehmigte Beträge, zugeordnet nach dem Zeitpunkt der Zahlung. '
+  + 'Complete Demand = davon per Reportzeitpunkt eingereicht (Tagesabschluss). '
+  + 'Offen = autorisiert, aber noch nicht eingereicht; der Betrag erscheint nach dem Tagesabschluss im selben Tag, nicht in einem anderen. '
+  + 'Abgelehnte Zahlungen sind in keiner Spalte enthalten. '
+  + 'Unsettled = Anzahl eingereichter Zahlungen, für die wallee noch keinen Abrechnungs-Datensatz (Settlement) führt.';
 
 test('Hinweis G2 ist wortgleich die Vorgabe der Spec', () => {
   assert.strictEqual(AUTORISIERT_HINWEIS, G2);
 });
 
-test('Export-Bloecke: Kennzahl-Reihenfolge Complete Demand · Authorized · Tip · Unmatched · Anz. in allen Bloecken', () => {
-  reportExportBloecke(modell()).forEach(b => {
-    const kennzahlen = b.header.slice(-5);
-    assert.deepStrictEqual(plain(kennzahlen), ['Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.'], b.name);
-    assert.deepStrictEqual(plain(b.typen.slice(-5)), ['betrag', 'betrag', 'betrag', 'zahl', 'zahl'], b.name);
+test('Export-Bloecke: Kennzahl-Reihenfolge Complete Demand · Authorized · Offen · Offen Anz. · Tip · Unsettled · Anz. in allen Kennzahl-Bloecken', () => {
+  const bloecke = reportExportBloecke(modell());
+  assert.strictEqual(kennzahlBloecke(bloecke).length, 4);
+  kennzahlBloecke(bloecke).forEach(b => {
+    const kennzahlen = b.header.slice(-7);
+    assert.deepStrictEqual(plain(kennzahlen), ['Complete Demand', 'Authorized', 'Offen', 'Offen Anz.', 'Tip', 'Unsettled', 'Anz.'], b.name);
+    assert.deepStrictEqual(plain(b.typen.slice(-7)), ['betrag', 'betrag', 'betrag', 'zahl', 'betrag', 'zahl', 'zahl'], b.name);
     assert.strictEqual(b.typen.length, b.header.length, b.name + ': typen passt zur Header-Laenge');
     b.rows.forEach(r => assert.strictEqual(r.length, b.header.length, b.name + ': Zeilenbreite'));
   });
 });
 
-test('Export-Bloecke: Authorized traegt die Differenz, Detail-Zeile mit offener Autorisierung', () => {
+test('Export-Bloecke: Offen = Authorized - Complete Demand, Detail-Zeile mit offener Autorisierung', () => {
   const rows = [
     row('T1', 'Bar 1', 'Visa', 100000000, 100000000),
-    row('T1', 'Bar 1', 'Mastercard', 0, 250000000, { count: 0 }),
+    row('T1', 'Bar 1', 'Mastercard', 0, 250000000, { count: 1, offenCount: 1, offenAelteste: '2026-09-10 21:59:13.412' }),
   ];
   const bloecke = reportExportBloecke(buildReportModel(rows, {}));
   const detail = bloecke.find(b => b.name === 'Detail');
   const mc = detail.rows.find(r => r[3] === 'Mastercard');
-  assert.deepStrictEqual(plain(mc), ['Bar', 'Bar 1', 'T1', 'Mastercard', 'Wallee', 0, 2.5, 0, 0, 0]);
+  assert.deepStrictEqual(plain(mc), ['Bar', 'Bar 1', 'T1', 'Mastercard', 'Wallee', 0, 2.5, 2.5, 1, 0, 0, 1]);
   const gesamt = bloecke.find(b => b.name === 'Gesamttotal');
-  assert.deepStrictEqual(plain(gesamt.rows[0]), ['Total', 1, 3.5, 0, 0, 1]);
+  assert.deepStrictEqual(plain(gesamt.rows[0]), ['Total', 1, 3.5, 2.5, 1, 0, 0, 2]);
+});
+
+// --- Hinweisblock "Offene Einreichungen" (SPEC-ITERATION-3 §2.3) ----------------
+
+test('Offene Einreichungen: je Terminal mit Differenz eine Zeile - Name, TID, Betrag, Anzahl, aelteste Zahlung', () => {
+  const rows = [
+    row('T2', 'Lounge 2', 'Visa',         0, 200000000, { count: 2, offenCount: 2, offenAelteste: '2026-09-10 23:00:00.000' }),
+    row('T2', 'Lounge 2', 'Mastercard', 50000000, 100000000, { count: 2, offenCount: 1, offenAelteste: '2026-09-10 21:59:13.412' }),
+    row('T1', 'Bar 1', 'Visa',   100000000, 100000000),
+  ];
+  const block = reportExportBloecke(buildReportModel(rows, {})).find(b => b.name === 'Offene Einreichungen');
+  assert.deepStrictEqual(plain(block.header), ['Terminal', 'TID', 'Offen', 'Offen Anz.', 'Älteste offene Zahlung']);
+  assert.deepStrictEqual(plain(block.typen), ['text', 'text', 'betrag', 'zahl', 'text']);
+  assert.deepStrictEqual(plain(block.rows), [['Lounge 2', 'T2', 2.5, 3, '10.09.2026 21:59']]);
+  assert.strictEqual(block.leer, undefined);
+});
+
+test('Offene Einreichungen: ohne Differenz keine Zeile, dafuer der Leer-Text', () => {
+  const block = reportExportBloecke(modell()).find(b => b.name === 'Offene Einreichungen');
+  assert.deepStrictEqual(plain(block.rows), []);
+  assert.strictEqual(block.leer, 'Keine offenen Einreichungen per Reportzeitpunkt.');
+  // auch in der kondensierten Variante vorhanden - er ist Hinweis, nicht Kennzahl
+  const kond = reportExportBloecke(modell(), { variante: 'kondensiert' }).find(b => b.name === 'Offene Einreichungen');
+  assert.deepStrictEqual(plain(kond.header), plain(block.header));
+});
+
+test('Offene Einreichungen: aelteste Zahlung ohne Zeitstempel bleibt leer, kein Datum erfunden', () => {
+  const rows = [row('T1', 'Bar 1', 'Visa', 0, 100000000, { count: 1 })];
+  const block = reportExportBloecke(buildReportModel(rows, {})).find(b => b.name === 'Offene Einreichungen');
+  assert.deepStrictEqual(plain(block.rows), [['Bar 1', 'T1', 1, 0, '']]);
 });
 
 test('CSV-Export: Hinweis G2 als letzte Zeile nach einer Leerzeile', () => {
   const csv = buildReportCsv(modell());
   const zeilen = csv.replace(/\r\n$/, '').split('\r\n');
-  assert.strictEqual(zeilen[zeilen.length - 1], G2);
+  // Der Hinweis enthaelt seit v5.15 ein Semikolon - csvFeld setzt ihn deshalb
+  // in Anfuehrungszeichen, sonst zerlegte ihn jeder Import in zwei Felder.
+  assert.strictEqual(zeilen[zeilen.length - 1], '"' + G2 + '"');
   assert.strictEqual(zeilen[zeilen.length - 2], '');
   assert.ok(zeilen.slice(0, -2).some(z => /;Authorized;/.test(z)), 'Kopfzeile mit Authorized');
 });
@@ -169,8 +211,10 @@ test('CSV-Export: Hinweis G2 als letzte Zeile nach einer Leerzeile', () => {
 // Bloecken weg. Die Verdichtung passiert hier in der Blockschicht, nicht in
 // einem zweiten Modell.
 
-const KENNZAHLEN_FULL = ['Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.'];
-const KENNZAHLEN_KONDENSIERT = ['Complete Demand', 'Authorized', 'Tip'];
+const KENNZAHLEN_FULL = ['Complete Demand', 'Authorized', 'Offen', 'Offen Anz.', 'Tip', 'Unsettled', 'Anz.'];
+const KENNZAHLEN_KONDENSIERT = ['Complete Demand', 'Authorized', 'Offen', 'Tip'];
+// Spalten-Indizes der kondensierten Kennzahlen innerhalb der Full-Kennzahlen.
+const KONDENSIERT_IN_FULL = KENNZAHLEN_KONDENSIERT.map(k => KENNZAHLEN_FULL.indexOf(k));
 
 test('Variante: Default und unbekannter Wert ergeben Full', () => {
   const m = modell();
@@ -180,15 +224,13 @@ test('Variante: Default und unbekannter Wert ergeben Full', () => {
   assert.deepStrictEqual(plain(reportExportBloecke(m, { variante: 'irgendwas' })), standard);
 });
 
-test('Kondensiert: dieselben vier Bloecke, Kennzahlen ohne Unmatched und Anz.', () => {
+test('Kondensiert: dieselben fuenf Bloecke, Kennzahlen ohne Zaehler (Offen Anz., Unsettled, Anz.), Offen dabei (§4.7)', () => {
   const bloecke = reportExportBloecke(modell(), { variante: 'kondensiert' });
-  assert.deepStrictEqual(plain(bloecke.map(b => b.name)), [
-    'Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal', 'Detail',
-  ]);
-  bloecke.forEach(b => {
-    assert.deepStrictEqual(plain(b.header.slice(-3)), KENNZAHLEN_KONDENSIERT, b.name);
-    assert.ok(!b.header.includes('Unmatched') && !b.header.includes('Anz.'), b.name);
-    assert.deepStrictEqual(plain(b.typen.slice(-3)), ['betrag', 'betrag', 'betrag'], b.name);
+  assert.deepStrictEqual(plain(bloecke.map(b => b.name)), BLOECKE);
+  kennzahlBloecke(bloecke).forEach(b => {
+    assert.deepStrictEqual(plain(b.header.slice(-4)), KENNZAHLEN_KONDENSIERT, b.name);
+    assert.ok(!b.header.includes('Unsettled') && !b.header.includes('Anz.') && !b.header.includes('Offen Anz.'), b.name);
+    assert.deepStrictEqual(plain(b.typen.slice(-4)), ['betrag', 'betrag', 'betrag', 'betrag'], b.name);
     assert.strictEqual(b.typen.length, b.header.length, b.name + ': typen passt zur Header-Laenge');
     b.rows.forEach(r => assert.strictEqual(r.length, b.header.length, b.name + ': Zeilenbreite'));
   });
@@ -205,11 +247,11 @@ test('Kondensiert: Detail ohne Marke, eine Zeile je Terminal x Brand-Gruppe, Mar
     .find(b => b.name === 'Detail');
   assert.deepStrictEqual(plain(detail.header),
     ['Outlet-Gruppe', 'Terminal', 'TID', 'Brand-Gruppe', ...KENNZAHLEN_KONDENSIERT]);
-  assert.deepStrictEqual(plain(detail.typen), ['text', 'text', 'text', 'text', 'betrag', 'betrag', 'betrag']);
+  assert.deepStrictEqual(plain(detail.typen), ['text', 'text', 'text', 'text', 'betrag', 'betrag', 'betrag', 'betrag']);
   assert.deepStrictEqual(plain(detail.rows), [
-    ['Bar', 'Bar 1', 'T1', 'Lunch-Check', 0.05, 0.05, 0.01],
-    ['Bar', 'Bar 1', 'T1', 'Wallee', 0.3, 0.55, 0],     // exakt 0.3, in Einheiten summiert
-    ['Bar', 'Bar 2', 'T2', 'Wallee', 1, 1, 0],
+    ['Bar', 'Bar 1', 'T1', 'Lunch-Check', 0.05, 0.05, 0, 0.01],
+    ['Bar', 'Bar 1', 'T1', 'Wallee', 0.3, 0.55, 0.25, 0],     // exakt 0.3, in Einheiten summiert
+    ['Bar', 'Bar 2', 'T2', 'Wallee', 1, 1, 0, 0],
   ]);
 });
 
@@ -220,7 +262,7 @@ test('Kondensiert: Totale je Brand-Gruppe und Gesamttotal stimmen mit Full ueber
   ['Total Outlet-Gruppen', 'Total Brand-Gruppen', 'Gesamttotal'].forEach(name => {
     const f = full.find(b => b.name === name), k = kond.find(b => b.name === name);
     const textSpalten = f.header.length - KENNZAHLEN_FULL.length;
-    const erwartet = f.rows.map(r => r.slice(0, textSpalten + 3));
+    const erwartet = f.rows.map(r => r.slice(0, textSpalten).concat(KONDENSIERT_IN_FULL.map(i => r[textSpalten + i])));
     assert.deepStrictEqual(plain(k.rows), plain(erwartet), name);
   });
   // Die verdichteten Detail-Zeilen summieren sich auf das Gesamttotal.
@@ -240,5 +282,6 @@ test('Full bleibt Full: die Marke steht im Detail, alle fuenf Kennzahlen', () =>
 test('CSV bleibt Full (Variante ist eine Excel-Entscheidung, §5.1)', () => {
   const csv = buildReportCsv(modell());
   assert.ok(csv.includes(';Marke;'));
-  assert.ok(csv.includes(';Unmatched;Anz.'));
+  assert.ok(csv.includes(';Unsettled;Anz.'));
+  assert.ok(csv.includes('Offene Einreichungen'));
 });

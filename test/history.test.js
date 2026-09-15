@@ -296,3 +296,28 @@ test('reportDateinameBauen: terminal-report[-kondensiert]_<Space>_<von>_<bis>.<e
   assert.strictEqual(x.reportDateinameBauen({ endung: 'xlsx', spaces: [], zeitraum: { start: '2026-07-01 00:00:00', end: '2026-07-31 23:59:59' }, heute }),
     'terminal-report_2026-07-01_2026-07-31.xlsx');
 });
+
+// --- Abfragezeitraum mit Uhrzeit (v5.15, SPEC-ITERATION-3 §2.5) ------------------
+//
+// Der Picker kennt seit je Uhrzeiten. Ein Gastro-Geschaeftstag laeuft z. B.
+// 06:00 - 06:00; der Report-Kopf muss das dann auch sagen, statt zwei Tage
+// ohne Uhrzeit zu nennen. Ganze Tage (00:00:00 bis 00:00:00 exklusiv bzw.
+// 23:59:59 inklusive) bleiben wie bisher ohne Uhrzeit.
+
+test('reportingZeitraumText: Uhrzeiten erscheinen, sobald der Zeitraum keine ganzen Tage umfasst', () => {
+  const x = loadBuilders();
+  assert.strictEqual(x.reportingZeitraumText({ start: '2026-09-10 06:00:00', end: '2026-09-11 06:00:00' }),
+    '10.09.2026 06:00 – 11.09.2026 06:00');
+  assert.strictEqual(x.reportingZeitraumText({ start: '2026-09-10 00:00:00', end: '2026-09-11 04:30:00' }),
+    '10.09.2026 00:00 – 11.09.2026 04:30');
+  assert.strictEqual(x.reportingZeitraumText({ start: '2026-09-10 06:00:00', end: '2026-09-11 00:00:00' }),
+    '10.09.2026 06:00 – 11.09.2026 00:00');
+});
+
+test('reportingZeitraumText: ganze Tage bleiben ohne Uhrzeit (exklusives 00:00:00, inklusives 23:59:59, reines Datum)', () => {
+  const x = loadBuilders();
+  assert.strictEqual(x.reportingZeitraumText({ start: '2026-07-01 00:00:00', end: '2026-08-01 00:00:00' }), '01.07.2026 – 31.07.2026');
+  assert.strictEqual(x.reportingZeitraumText({ start: '2026-07-01 00:00:00', end: '2026-07-31 23:59:59' }), '01.07.2026 – 31.07.2026');
+  assert.strictEqual(x.reportingZeitraumText({ start: '2026-07-01', end: '2026-07-31' }), '01.07.2026 – 31.07.2026');
+  assert.strictEqual(x.reportingZeitraumText('2026-07-01 → 2026-07-31'), '2026-07-01 → 2026-07-31');
+});

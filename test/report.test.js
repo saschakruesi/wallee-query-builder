@@ -37,6 +37,8 @@ test('parseReportCsv liest Kopfzeile und Datenzeilen', () => {
     unmatched: 47,
     gross: 143670000000,   // Betraege als ganzzahlige 1e-8-Einheiten, siehe unten
     authorized: 143670000000, // ohne Spalte autorisiert_gross = brutto_gross (v5.14)
+    offenCount: 0,            // ohne offen_anzahl / offen_aelteste (v5.15)
+    offenAelteste: '',
     tip: 3470000000,
   });
 });
@@ -374,7 +376,9 @@ test('Fixture: Gesamttotal ist exakt die Summe der Brand-Gruppen', () => {
     tip: a.tip + b.tip,
     unmatched: a.unmatched + b.unmatched,
     count: a.count + b.count,
-  }), { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0 });
+    offenCount: a.offenCount + b.offenCount,
+    offenAelteste: '',
+  }), { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0, offenCount: 0, offenAelteste: '' });
 
   // Ganzzahlen, deshalb hier wirklich exakt und nicht nur auf zwei Stellen.
   assert.deepStrictEqual(plain(summe), plain(m.grandTotal));
@@ -449,7 +453,9 @@ test('leere Eingabe ergibt ein leeres, aber wohlgeformtes Modell', () => {
   assert.deepStrictEqual(plain(m.detail), []);
   assert.deepStrictEqual(plain(m.outletTotals), []);
   assert.deepStrictEqual(plain(m.brandTotals), []);
-  assert.deepStrictEqual(plain(m.grandTotal), { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0 });
+  assert.deepStrictEqual(plain(m.grandTotal), { completeDemand: 0, authorized: 0, tip: 0, unmatched: 0, count: 0,
+    offenCount: 0, offenAelteste: '' });
+  assert.deepStrictEqual(plain(m.offen), []);
 });
 
 test('Detail: ein Terminal mit mehreren Brands bleibt eine Terminal-Zeile', () => {
@@ -571,4 +577,82 @@ test('Report funktioniert im Private Mode ohne Persistenz', () => {
   const cfg = blockiert.mergeReportConfig(res.rows, blockiert.loadReportConfig());
   const m = blockiert.buildReportModel(res.rows, cfg);
   assert.strictEqual(m.detail.length, 10, 'Gruppierung muss auch ohne Speicher stimmen');
+});
+
+// --- Offen: offen_anzahl / offen_aelteste (v5.15, SPEC-ITERATION-3 §2.2/2.3) ---
+//
+// Der Terminal-Modus liefert seit v5.15 zwei weitere Spalten: offen_anzahl
+// (AUTHORIZED-Zeilen = autorisiert, aber noch nicht eingereicht) und
+// offen_aelteste (aelteste dieser Autorisierungen). Beide sind optional, ein
+// aelteres CSV kennt sie nicht.
+
+const HEADER_V515 = HEADER_APP.replace('"anzahl_transaktionen",', '"anzahl_transaktionen","offen_anzahl",')
+  .replace('"brutto_gross",', '"brutto_gross","autorisiert_gross","offen_aelteste",');
+
+function zeileV515(tid, name, brand, n, offen, unmatched, gross, autorisiert, aelteste, tip) {
+  return `"1","${tid}","${name}","${brand}","CHF","${n}","${offen}","${unmatched}","${gross}","${autorisiert}","${aelteste}","0.00000000","0.00000000","${tip}"`;
+}
+
+test('parseReportCsv liest offen_anzahl und offen_aelteste', () => {
+  const csv = [HEADER_V515,
+    zeileV515('T1', 'Lounge 2', 'Visa', 95, 95, 0, '0.00000000', '2983.35000000', '2026-09-10 21:59:13.412', '115.35000000'),
+    zeileV515('T2', 'Lounge 3', 'Visa', 15, 0, 0, '804.50000000', '804.50000000', '', '75.50000000'),
+  ].join('\n');
+  const res = parseReportCsv(csv);
+  assert.strictEqual(res.error, null);
+  assert.strictEqual(res.rows[0].offenCount, 95);
+  assert.strictEqual(res.rows[0].offenAelteste, '2026-09-10 21:59:13.412');
+  assert.strictEqual(res.rows[0].gross, 0);
+  assert.strictEqual(res.rows[0].authorized, 298335000000);
+  assert.strictEqual(res.rows[1].offenCount, 0);
+  assert.strictEqual(res.rows[1].offenAelteste, '');
+});
+
+test('parseReportCsv: ohne offen-Spalten gilt offenCount 0 und offenAelteste leer (altes CSV)', () => {
+  const csv = [HEADER_V514, zeileV514('T1', 'Lounge 1', 'Visa', 47, 47, '1436.70000000', '1500.05000000', '34.70000000')].join('\n');
+  const res = parseReportCsv(csv);
+  assert.strictEqual(res.error, null);
+  assert.strictEqual(res.rows[0].offenCount, 0);
+  assert.strictEqual(res.rows[0].offenAelteste, '');
+});
+
+test('Modell: offenCount summiert, offenAelteste ist das Minimum ueber die belegten Zeilen', () => {
+  const rows = [
+    row('T1', 'Bar 1', 'Visa',       100000000, 100000000),
+    row('T1', 'Bar 1', 'Mastercard',         0, 250000000, { count: 2, offenCount: 2, offenAelteste: '2026-09-11 01:10:00.000' }),
+    row('T1', 'Bar 1', 'TWINT',              0,  50000000, { count: 1, offenCount: 1, offenAelteste: '2026-09-10 22:05:00.000' }),
+    row('T2', 'Bar 2', 'Visa',       300000000, 300000000),
+  ];
+  const m = buildReportModel(rows, {});
+  assert.strictEqual(m.grandTotal.offenCount, 3);
+  assert.strictEqual(m.grandTotal.offenAelteste, '2026-09-10 22:05:00.000');
+  const bar = m.detail.find(d => d.outlet === 'Bar');
+  assert.strictEqual(bar.subtotals[0].offenCount, 3);
+  assert.strictEqual(bar.subtotals[0].offenAelteste, '2026-09-10 22:05:00.000');
+  const t1 = bar.terminals.find(t => t.tid === 'T1');
+  assert.strictEqual(t1.brands.find(b => b.brand === 'Visa').offenCount, 0);
+  assert.strictEqual(t1.brands.find(b => b.brand === 'Visa').offenAelteste, '');
+  assert.strictEqual(m.brandTotals.find(b => b.brandGroup === 'Wallee').offenCount, 3);
+  assert.strictEqual(m.outletTotals.find(o => o.outlet === 'Bar').offenAelteste, '2026-09-10 22:05:00.000');
+});
+
+test('Modell: handgebaute Zeile ohne offen-Felder zaehlt 0 und bleibt ohne Zeitpunkt', () => {
+  const m = buildReportModel([row('T1', 'A 1', 'Visa', 10000000, 10000000)], {});
+  assert.strictEqual(m.grandTotal.offenCount, 0);
+  assert.strictEqual(m.grandTotal.offenAelteste, '');
+});
+
+test('Modell: offen listet je Terminal mit Differenz Betrag, Anzahl und aelteste Zahlung, sortiert nach Name', () => {
+  const rows = [
+    row('T2', 'Lounge 2', 'Visa',         0, 200000000, { count: 2, offenCount: 2, offenAelteste: '2026-09-10 23:00:00.000' }),
+    row('T2', 'Lounge 2', 'Mastercard', 50000000, 100000000, { count: 2, offenCount: 1, offenAelteste: '2026-09-10 21:59:13.000' }),
+    row('T1', 'Bar 1', 'Visa',   100000000, 100000000),
+    row('T3', 'Garderobe', 'Visa',       0,  10000000, { count: 1, offenCount: 1, offenAelteste: '2026-09-11 02:00:00.000' }),
+  ];
+  const m = buildReportModel(rows, {});
+  assert.deepStrictEqual(plain(m.offen), [
+    { tid: 'T3', name: 'Garderobe', offen: 10000000, offenCount: 1, aelteste: '2026-09-11 02:00:00.000' },
+    { tid: 'T2', name: 'Lounge 2', offen: 250000000, offenCount: 3, aelteste: '2026-09-10 21:59:13.000' },
+  ]);
+  assert.deepStrictEqual(plain(buildReportModel([row('T1', 'Bar 1', 'Visa', 100000000, 100000000)], {}).offen), []);
 });

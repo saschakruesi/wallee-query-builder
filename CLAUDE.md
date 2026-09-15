@@ -27,13 +27,17 @@ Bildschirm und im PDF. Seit v5.14 zeigen `brand` und `terminal` neben dem abgesc
 **autorisierten Betrag** (fehlende Submissions am Terminal werden sichtbar), der
 Terminal-Report-Excel kennt die Varianten **Full / Kondensiert**, und jedes Excel der App
 läuft durch eine gemeinsame Finalisierung (gemessene Spaltenbreiten, Druckbild eine Seite
-breit, Drucktitel).
+breit, Drucktitel). Seit v5.15 ordnen `brand` und `terminal` jede Zahlung dem Geschäftstag
+ihrer **Autorisierung** zu (nicht mehr der Einreichung) und trennen **Authorized / Complete
+Demand / Offen** — Authorized stimmt damit mit dem wallee Financial Report überein, Offen
+zeigt die fehlende Einreichung (an Produktivdaten des Kunden Kaufleuten bewiesen, siehe
+„Autorisierungszeitpunkt (v5.15)" unter „Wallee-Referenzwissen").
 
 ## Dateien
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.14.3).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.59 MB** (1'588'500 Bytes, gemessen 2026-09-12 an v5.14.3; davor 1'551'431 Bytes an v5.13.0 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.15.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.60 MB** (1'597'825 Bytes, gemessen 2026-09-15 an v5.15.0; davor 1'588'500 Bytes an v5.14.3 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, `/failure-reasons` (öffentliche Doku, **keine** API-Route), **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -46,7 +50,8 @@ breit, Drucktitel).
 | `dashboard/catalog/` | Die beiden **gescrapten wallee-Kataloge** als JSON, im Git: `failure-reasons.json` (2'254 Einträge mit Name, Kategorie und Beschreibung, je englisch und deutsch) und `label-descriptors.json` (755 Einträge). Quelle ist die öffentliche Doku-Liste, **kein API-Dienst** (siehe „Ablehngründe"). Aktualisiert mit `dashboard/tools/scrape_wallee_catalogs.py` (Python 3, nur Standardbibliothek) — danach den Build-Schritt erneut laufen lassen. |
 | `tools/build-failure-reasons.mjs` | Erzeugt aus `dashboard/catalog/failure-reasons.json` die Konstante `FAILURE_REASONS` zwischen den Markerkommentaren in `wallee_query_builder.html`. **Der einzige Generator im Repo** — er läuft nie zur Laufzeit, die App bleibt eine Single-File-App ohne Build. Idempotent; bricht ab bei fehlenden oder doppelten Markern und bei einer Kategorie, die er nicht kennt. Details unter „Ablehngründe im Klartext (v5.12)". |
 | `sql/autorisiert_verifikation.sql` | Discovery-Queries (Task 0 der Iteration «Autorisierter Betrag», v5.14) — einzeln im Portal ausführen: `authorizedon` je Zustand gefüllt (Q1), Alter liegengebliebener Autorisierungen (Q2), `completedamount` vs. `authorizationamount` bei abgeschlossenen Transaktionen (Q3/Q3b), Nullwerte bei `AUTHORIZED` (Q4), Terminal-/Connector-Zuordnung bei `AUTHORIZED` (Q5). Gelaufen am 2026-09-12 an Space 73192 (90 Tage); Ergebnisse lokal in `Terminal-Report-Tool/discovery-results/` (gitignored), Befunde unter „Wallee-Referenzwissen" > „Autorisierter Betrag". |
-| `Terminal-Report-Tool/` | **Nur lokal, nicht im Git** (`.gitignore`): `SPEC-ITERATION-2.md` (Stand 2026-09-12) ist die fachliche Vorgabe der v5.14-Iteration — autorisierter Betrag, kondensierter Excel-Report, Druck- und Spaltenoptimierung —, daneben die ältere `SPEC.md` und der Prototyp `terminal-report.html`, aus dem der Terminal-Report entstand. Bei Änderungen an Terminal-Report oder Excel-Finalisierung zuerst dort nachlesen. |
+| `Terminal-Report-Tool/` | **Nur lokal, nicht im Git** (`.gitignore`): `SPEC-ITERATION-3.md` (Stand 2026-09-15) ist die fachliche Vorgabe der **v5.15**-Iteration — Zuordnung nach Autorisierungszeitpunkt, echte Authorized-Spalte, Offen —, `SPEC-ITERATION-2.md` (2026-09-12) die der v5.14-Iteration (autorisierter Betrag, kondensierter Excel-Report, Druck- und Spaltenoptimierung), daneben die ältere `SPEC.md` und der Prototyp `terminal-report.html`. Unter `testdata/` liegen die **Referenzdaten des Kunden Kaufleuten** (Financial Report mit 637 Zeilen, die fehlerhaften v5.14-Exporte, der Tagesabschluss-Beleg, `expected_2026-09-10.json`, `expected_2026-09-10_wallee.json`) und das Prüfscript `verify_terminal_report.py`; unter `testdata/results/` die Ausgaben der drei Prüfstufen samt `ITERATION-3-VERIFICATION.md` (Abschlussbericht). Echte Produktivdaten mit Auth-Codes und Händlername — deshalb nie im Git. Bei Änderungen an Terminal-Report oder Excel-Finalisierung zuerst dort nachlesen. |
+| `sql/autorisierungszeitpunkt_verifikation.sql` | Rohexport-Query der Stufe 1 aus `SPEC-ITERATION-3.md` §6 (v5.15): alle Zeitstempel (`createdon`, `authorizedon`, `completedon`, `failedon`) und Zustände eines Space, um den Autorisierungszeitpunkt gegen den Financial Report zu beweisen. Gelaufen am 2026-09-15 an Space 73192; Befunde unter „Wallee-Referenzwissen" > „Autorisierungszeitpunkt (v5.15)". Erneut fahren, wenn ein anderer Connector oder Acquirer die Zeitstempel anders schreibt. |
 | `sql/tip_verifikation.sql` | Verifikations-Queries für die Trinkgeld-Frage (Trinkgeld bereits im Brutto enthalten) — an echten Daten bestätigt (siehe „Wallee-Referenzwissen"), Queries dienen der erneuten Gegenprüfung in anderen Spaces oder nach Schema-Änderungen. |
 | `CLAUDE.md` | Diese Datei. |
 
@@ -123,31 +128,37 @@ Muster und beschädigt den Code still (siehe `test/embedding.test.js`).
 
 ### Sechs Modi
 
-1. **`brand`** – Aggregat pro Space × Brand × Währung (`GROUP BY`). Spalten: Anzahl,
-   `unsettled_anzahl` (keine Gebühr UND kein Settlement-Record = wartet noch auf die
-   Abrechnung), Brutto, **`autorisiert_gross`** (seit v5.14, direkt rechts von
-   `brutto_gross`), Fees, Netto, `tip_total` (Trinkgeld-Anteil, bereits im Brutto
-   enthalten).
-   **Seit v5.14 ist die Basis grösser als in allen übrigen Modi:** `txCte({ …,
-   autorisiert: true })` und das Hauptselect filtern auf
-   `COALESCE(t.completedon, t.authorizedon)` und `t.state IN ('AUTHORIZED', 'FULFILL',
-   'COMPLETED')`. Für abgeschlossene Transaktionen ist das exakt die alte Menge; dazu kommen
-   offene Autorisierungen (freigegeben, aber ohne Submission/Tagesabschluss), eingeordnet
-   nach ihrem Autorisierungszeitpunkt — wird eine später abgeschlossen, wandert sie in den
-   Zeitraum ihres `completedon`, wird sie storniert (`VOIDED`), verschwindet sie. Damit die
-   bisherigen Zahlen **byte-identisch** bleiben (SPEC A1), sind `anzahl_transaktionen` und
-   `unsettled_anzahl` **und seit v5.14.1 `tip_total`** per `CASE` auf `FULFILL`/`COMPLETED`
-   geschützt (gemeinsame Konstante `AGGREGAT_KENNZAHLEN`). Der Tip-Guard ist **gemessen**:
-   Discovery Q4 (Space 73192, 2026-09-12) fand unter 64 `AUTHORIZED`-Transaktionen eine mit
-   Trinkgeld-Lineitem — ohne Guard wäre `tip_total` nicht mehr byte-identisch gewesen.
-   `brutto_gross`, Fees und Netto brauchen keinen Guard: `completedamount` und
-   `totalappliedfees` waren bei allen 64 exakt 0 (derselbe Lauf, siehe
-   „Wallee-Referenzwissen"). Eine Gruppe nur aus `AUTHORIZED`-Transaktionen erscheint als Zeile
-   mit `brutto_gross = 0`, `anzahl_transaktionen = 0`, `autorisiert_gross > 0` — genau die
-   Zeile, die die fehlende Submission zeigt.
+1. **`brand`** – Aggregat pro Space × Brand × Währung (`GROUP BY`). Spalten: `anzahl_transaktionen`,
+   `offen_anzahl` (seit v5.15), `unsettled_anzahl` (eingereicht, aber keine Gebühr UND kein
+   Settlement-Record = wartet noch auf die Abrechnung), `brutto_gross` (**Complete Demand**),
+   **`autorisiert_gross`** (**Authorized**, seit v5.14, direkt rechts von `brutto_gross`),
+   `offen_aelteste` (seit v5.15), Fees, Netto, `tip_total` (Trinkgeld-Anteil, bereits im
+   Brutto enthalten).
+   **Seit v5.15 gilt (Terminal-Report-Tool/SPEC-ITERATION-3.md §2): eine Zahlung gehört zu
+   dem Geschäftstag, an dem sie autorisiert wurde.** `txCte({ …, autorisiert: true })` und das
+   Hauptselect filtern auf **`COALESCE(t.authorizedon, t.createdon)`** und `t.state IN
+   ('AUTHORIZED', 'FULFILL', 'COMPLETED')` — der Einreichungszeitpunkt `completedon`
+   entscheidet nur noch darüber, ob eine Zahlung *eingereicht* ist, nie über das Fenster.
+   Darauf: **Authorized** = `SUM(t.authorizationamount)` über die ganze Basis; **Complete
+   Demand** = `completedamount` **nur** der eingereichten (`CASE WHEN t.state IN ('FULFILL',
+   'COMPLETED')`, Konstante `EINGEREICHT_BETRAG`, auch im Netto) — eine Teilmenge von
+   Authorized, per Konstruktion `Complete Demand ≤ Authorized`; **Offen** = Authorized −
+   Complete Demand (rechnet das Modell, `autorisiertDifferenz`), dazu `offen_anzahl`
+   (AUTHORIZED-Zeilen) und `offen_aelteste` (`MIN` ihres Autorisierungszeitpunkts) für den
+   Hinweisblock; `anzahl_transaktionen` = `COUNT(*)` und `tip_total` **ohne** Guard, beide
+   auf der Authorized-Basis (§2.2 — das Trinkgeld-Lineitem entsteht bei der Autorisierung am
+   Terminal, sogar `FAILED`-Transaktionen tragen es; der v5.14.1-Guard ist damit weg).
+   `FAILED`/`VOIDED` bleiben draussen: abgelehnte Zahlungen zählen in keiner Spalte, auch
+   nicht im Tip. Wird eine offene Autorisierung später eingereicht, bleibt sie in
+   **demselben** Fenster und wandert von Offen nach Complete Demand — nie in einen anderen
+   Tag. Das v5.14-Fenster `COALESCE(completedon, authorizedon)` ordnete dagegen nach der
+   Einreichung ein: ein Terminal, das um 08:45 einreicht, fehlte im Report bis 08:00
+   **komplett**, und Authorized war in jeder Zeile gleich Complete Demand (Befund §1 der
+   Spec, an Produktivdaten bestätigt).
 2. **`terminal`** ("Terminal-Report" im Mode-Selector) – wie `brand`, zusätzlich
-   Pflichtfilter + Gruppierung auf `paymentterminal.identifier` / `.name`. Gleiche
-   `unsettled_anzahl`/`tip_total`/`autorisiert_gross`-Spalten und dieselbe erweiterte Basis. Der frühere eigenständige `report`-Modus (CSV-
+   Pflichtfilter + Gruppierung auf `paymentterminal.identifier` / `.name`. Dieselben
+   Kennzahlen (`AGGREGAT_KENNZAHLEN`) und dieselbe Basis nach Autorisierungszeitpunkt (§2.7:
+   beide Modi bleiben konsistent, weil sie eine Konstante teilen). Der frühere eigenständige `report`-Modus (CSV-
    Upload) ist **aufgegangen**: das Report-Panel (Outlet-/Brand-Gruppen, XLSX-Export) hängt
    jetzt an diesem Modus und wird ausschliesslich über das API-Ergebnis der eigenen Query
    befüllt (`ingestReportCsv`, ausgelöst nach dem Submit) — kein Datei-Upload mehr für die
@@ -279,44 +290,87 @@ nie separat veröffentlichten Sync-Button-Fix aus v5.5.2.
 ### Terminal-Report (Ausgabe des Modus `terminal`, seit v4, seit v5 ohne CSV-Upload)
 
 Reine, DOM-freie Funktionen (über das Harness testbar), plus eine dünne UI-Schicht.
-Fachliche Vorgabe der v5.14-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-2.md`
-(lokal, gitignored).
+Fachliche Vorgabe der v5.15-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-3.md`, der
+v5.14-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-2.md` (beide lokal, gitignored).
 
-**Autorisierter Betrag (v5.14, SPEC §4):**
+**Authorized / Complete Demand / Offen (v5.15, SPEC-ITERATION-3 §2):**
+
+- Die Query liefert seit v5.15 zusätzlich `offen_anzahl` und `offen_aelteste` (siehe „Sechs
+  Modi", Punkt 1). `parseReportCsv` liest beide **optional** (`offenCount` = 0,
+  `offenAelteste` = `''` ohne die Spalten — ein v5.14-CSV bleibt lesbar); `leereKennzahlen`/
+  `addiere` führen sie mit, `offenAelteste` als **Minimum** der belegten Zeitstempel
+  (`fruehereZeit`, String-Vergleich auf dem Athena-Format `YYYY-MM-DD HH:MM:SS.fff`, leer =
+  „keine"). **Offen (Betrag) ist keine Spalte des CSV, sondern `autorisiertDifferenz(k)` =
+  `authorized − completeDemand`** — die Spec definiert es so (§2.2), und damit gilt
+  `Offen = Authorized − Complete Demand` in jeder Zeile per Konstruktion; ein `offen_gross`
+  aus SQL könnte davon abweichen, sobald ein Teil-Capture vorkäme.
+- `buildReportModel` liefert zusätzlich **`offen`**: je Terminal mit `authorized >
+  completeDemand` ein Eintrag `{ tid, name, offen, offenCount, aelteste }` (über die Marken
+  summiert, sortiert nach Terminalname) — die Quelle des Hinweisblocks **«Offene
+  Einreichungen»** (§2.3), der in allen vier Ausgaben nach dem Gesamttotal steht: Bildschirm
+  (`blockOffen`), CSV, Excel (linksbündig, eigene Spaltenform, deshalb in `exportReportXlsx`
+  von der rechtsbündigen Kennzahl-Ausrichtung ausgenommen) — Spalten `Terminal · TID · Offen ·
+  Offen Anz. · Älteste offene Zahlung` (`zeitpunktCH`, `DD.MM.YYYY HH:MM`; ohne Zeitstempel
+  leer, kein erfundenes Datum). Ohne offene Posten trägt der Block den Leer-Text
+  `OFFEN_LEER_TEXT` («Keine offenen Einreichungen per Reportzeitpunkt.») statt einer leeren
+  Tabelle — die Abwesenheit ist selbst die Aussage (dieselbe Haltung wie das „Keine." des
+  Settlement-Reports). In beiden Excel-Varianten identisch: er ist Hinweis, nicht Kennzahl.
+- **Kennzahl-Reihenfolge überall:** `Complete Demand · Authorized · Offen · Offen Anz. · Tip ·
+  Unsettled · Anz.` (`KENNZAHL_DEFS`; `KENNZAHL_KOPF` leitet sich seit v5.15 daraus ab).
+  `Offen` steht direkt rechts von `Authorized`, weil es dessen Differenz zum Complete Demand
+  ist. **`Unmatched` heisst seit v5.15 `Unsettled`** (§2.4): die Spalte zählt nicht
+  „ohne Einreichung" (das ist Offen), sondern *eingereicht, aber ohne Gebühr und ohne
+  Settlement-Record* — der Kunde konnte die Bedeutung nicht erkennen, deshalb der Name des
+  SQL-Feldes und ein eigener Satz im Hinweis. Kondensiert: `Complete Demand · Authorized ·
+  Offen · Tip` (§4.7: Offen ist enthalten, die drei Zähler `Offen Anz.`/`Unsettled`/`Anz.`
+  bleiben draussen).
+- **Orange** trägt seit v5.15 die **Offen-Zelle** (Bildschirm-Klasse `autorisiert-diff`,
+  Excel `XLSX_FARBE.orange` + fett), sobald Offen ≠ 0 — auf jeder Ebene bis zum
+  Gesamttotal. Die Authorized-Zelle bleibt normal, und das Zellenpaar „Differenz:" rechts vom
+  Gesamttotal (v5.14) ist **entfallen**: das Gesamttotal hat jetzt selbst eine Offen-Spalte.
+- **Hinweistext `AUTORISIERT_HINWEIS`** ist der Wortlaut aus §2.6 (Tippfehler
+  „Kartenherausteller" korrigiert), ergänzt um den Satz zu Unsettled — an denselben Stellen
+  wie bisher (Bildschirm unter „Detail" und „Gesamttotal", CSV-Fussnote — seit v5.15 wegen
+  des Semikolons in Anführungszeichen —, Excel, Panel, Verlaufs-Excel).
+- **«Stand Einreichungen»** (§2.5): der Zeitpunkt, zu dem die Query bei wallee lief —
+  `reportStand`, gesetzt in `holeErgebnisInReport` über `reportStandErmitteln(eintrag,
+  jetztIso)` (`submittedAt` des Verlaufseintrags; beim Token-Abruf also der damalige Lauf,
+  nicht „jetzt"). Steht im Druckkopf (`#reportPrintStand`), im Excel als Zeile 4 (die erste
+  türkise Kopfzeile und damit der Drucktitel liegt dadurch in **Zeile 8**) und als Hinweis im
+  Block «Offene Einreichungen». Complete Demand und Offen gelten für genau diesen Moment.
+- **Uhrzeit im Abfragezeitraum:** `reportingZeitraumText` schreibt beide Uhrzeiten, sobald
+  der Zeitraum keine ganzen Tage umfasst («10.09.2026 06:00 – 11.09.2026 06:00», Ende
+  exklusiv, wie der Picker es trägt); ganze Tage (00:00:00 bis 00:00:00 oder 23:59:59) bleiben
+  wie bisher ohne Uhrzeit. Gilt für alle drei Report-Köpfe, die die Funktion nutzen. Ein
+  Zeitraum-Dialog mit Uhrzeit existierte schon (HH:MM:SS-Spinner), nur der Kopf schwieg.
+
+**Autorisierter Betrag (v5.14, SPEC-ITERATION-2 §4) — soweit in v5.15 noch gültig:**
 
 - `parseReportCsv` liest die **optionale** Spalte `autorisiert_gross` als Feld `authorized`
   (1e-8-Einheiten). Fehlt sie (älteres CSV, die Fixture), gilt `authorized = gross` — kein
   Fehlerobjekt. `leereKennzahlen`/`addiere` führen das Feld, das Modell summiert es auf
   allen Ebenen wie `completeDemand` (`autorisiertVon(row)` fällt bei handgebauten Zeilen
   ohne Feld auf `gross` zurück, damit nie `NaN` entsteht). `autorisiertDifferenz(k)` =
-  `authorized − completeDemand`, exakt als Ganzzahl.
-- **Kennzahl-Reihenfolge überall:** `Complete Demand · Authorized · Tip · Unmatched · Anz.`
-  (`KENNZAHL_DEFS`: Kopf, Typ, Zugriff in **einer** Tabelle; `KENNZAHL_KOPF` für den
-  Bildschirm). Im Kopf englisch wie die bestehenden Spalten (Entscheid O1); „Autorisiert"
-  heisst die Kennzahl nur im Hinweistext.
-- **Differenz orange** (`--wallee-orange` = `#ff4d00`, XLSX `XLSX_FARBE.orange`): weicht
-  `authorized` vom `completeDemand` ab, trägt die Authorized-Zelle die Klasse
-  `autorisiert-diff` bzw. im Excel orange, fette Schrift — auf jeder Ebene bis zum
-  Gesamttotal, weil die Differenz der Zeilen durchschlägt. Im Excel steht rechts neben dem
-  Gesamttotal zusätzlich `Differenz:` + Betrag, nur wenn ≠ 0 (dann zwei Spalten mehr in der
-  Blattbreite). CSV bleibt unformatiert.
-- **Hinweis G2 = `AUTORISIERT_HINWEIS`**, Wortlaut ist Vorgabe und steht überall identisch:
+  `authorized − completeDemand`, exakt als Ganzzahl — seit v5.15 die Kennzahl **Offen**.
+- Im Kopf englisch wie die bestehenden Spalten (Entscheid O1); die Reihenfolge und die
+  Orange-Regel stehen seit v5.15 im Block darüber.
+- **Hinweis = `AUTORISIERT_HINWEIS`**, Wortlaut ist Vorgabe und steht überall identisch:
   Bildschirm (direkt unter dem Titel „Detail" und unter „Gesamttotal" — der Druck/PDF-Pfad
   des Terminal-Reports ist `window.print()` über die Bildschirmansicht, die Absätze drucken
   also mit; eine eigene Fusszeilen-Mechanik gibt es hier nicht), CSV (letzte Zeile nach einer
-  Leerzeile), Excel (unter „Erstellt am …" **und** als Fussnote nach dem letzten Block),
-  Panel der Modi `brand`/`terminal` (`#autorisiertHint`, Text zur Laufzeit aus der
+  Leerzeile), Excel (unter „Stand Einreichungen" **und** als Fussnote nach dem letzten
+  Block), Panel der Modi `brand`/`terminal` (`#autorisiertHint`, Text zur Laufzeit aus der
   Konstante) und Verlaufs-Excel (siehe „Abfrage-Verlauf"). Die in SPEC O3 erwogene
   Ergänzung „… oder eine Teil-Einreichung" ist **nicht nötig**: Discovery Q3 (Space 73192,
   98'233 abgeschlossene Transaktionen) fand **null** Zeilen mit `completedamount ≠
-  authorizationamount`. Sollte ein anderer Space Teil-Captures zeigen, ist es **nur** die
-  Konstante.
+  authorizationamount`, und Stufe 1 der v5.15-Prüfung (3'104 `FULFILL`-Zeilen) ebenfalls.
+  Sollte ein anderer Space Teil-Captures zeigen, ist es **nur** die Konstante.
 - **Excel-Varianten Full / Kondensiert (SPEC §5.1–5.2):** `reportExportBloecke(modell,
-  { variante })` — `'full'` (Default, auch bei unbekanntem Wert; `reportVariante()`) ist
-  byte-identisch zu vorher plus Authorized; `'kondensiert'` verdichtet das Detail auf **eine
-  Zeile je Terminal × Brand-Gruppe** (`brandGruppenSummen`: Marken in 1e-8-Einheiten
-  summiert, erst dann `unitsZuZahl`; keine Spalte „Marke") und lässt `Unmatched`/`Anz.` in
-  **allen** Blöcken weg (`KENNZAHLEN_KONDENSIERT`). Die Verdichtung ist eine
+  { variante })` — `'full'` (Default, auch bei unbekanntem Wert; `reportVariante()`) trägt
+  alle sieben Kennzahlen; `'kondensiert'` verdichtet das Detail auf **eine Zeile je
+  Terminal × Brand-Gruppe** (`brandGruppenSummen`: Marken in 1e-8-Einheiten summiert, erst
+  dann `unitsZuZahl`; keine Spalte „Marke") und lässt die Zähler `Offen Anz.`/`Unsettled`/
+  `Anz.` in **allen** Kennzahl-Blöcken weg (`KENNZAHLEN_KONDENSIERT`). Die Verdichtung ist eine
   Export-Entscheidung (G4): ein Modell, die Blockschicht verdichtet. **CSV und PDF bleiben
   Full.** Titel `REPORT_XLSX_TITEL[variante]`, Dateiname `terminal-report_<datum>.xlsx`
   bzw. `terminal-report-kondensiert_…` (`reportDateiname(endung, variante)`).
@@ -333,8 +387,8 @@ Fachliche Vorgabe der v5.14-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-2.
   Zusammenfassung «Space <id>». Ohne Zeitraum fällt der Name auf das Erstelldatum zurück wie
   bis v5.14.2; gilt für Excel **und** CSV des Terminal-Reports.
 - **Abfragezeitraum (v5.14.2):** Excel (Zeile «Abfragezeitraum: …» direkt unter «Erstellt am»,
-  vor dem Hinweis G2 — die erste türkise Kopfzeile und damit der Drucktitel liegt dadurch in
-  Zeile 7) und Druckkopf (`#reportPrintZeitraum`, «Abfragezeitraum 01.07.2026 – 31.07.2026»)
+  vor «Stand Einreichungen» und dem Hinweis — die erste türkise Kopfzeile und damit der
+  Drucktitel liegt seit v5.15 in Zeile 8) und Druckkopf (`#reportPrintZeitraum`, «Abfragezeitraum 01.07.2026 – 31.07.2026»)
   zeigen, was die Daten umfassen. Quelle ist `reportZeitraum`, gesetzt in
   `holeErgebnisInReport(token, account, filter)` über `reportZeitraumErmitteln(filter,
   eintrag)`: beim Submit der **Filter des Laufs**, beim Token-Abruf der **Verlaufseintrag des
@@ -364,12 +418,15 @@ Fachliche Vorgabe der v5.14-Änderungen: `Terminal-Report-Tool/SPEC-ITERATION-2.
    „Excel-Export: gemeinsame Finalisierung": mit „+ 2" waren die Spalten in v5.14.0 sichtbar
    zu breit, an einem echten Export nachgemessen.
    **Folge, die zu kennen ist:** die Blöcke eines Blatts **teilen sich die Spalten**. Deshalb
-   stehen im Terminal-Report-Excel seit v5.14.1 die Kennzahlen **jedes** Blocks rechtsbündig
-   unter denen des Detail-Blocks (`spalteIm`/`verteile` in `exportReportXlsx`, leere Zellen
-   dazwischen): vorher mass die TID-Spalte den Kopf „Complete Demand" des Blocks „Total
-   Outlet-Gruppen" darunter (19 statt 8 Zeichen). CSV bleibt blockweise ohne Auffüllung.
+   stehen im Terminal-Report-Excel seit v5.14.1 die Kennzahlen **jedes** Kennzahl-Blocks
+   rechtsbündig unter denen des Detail-Blocks (`spalteIm`/`verteile` in `exportReportXlsx`,
+   leere Zellen dazwischen): vorher mass die TID-Spalte den Kopf „Complete Demand" des Blocks
+   „Total Outlet-Gruppen" darunter (19 statt 8 Zeichen). Der Hinweisblock «Offene
+   Einreichungen» (v5.15) hat eine eigene Spaltenform und steht linksbündig. CSV bleibt
+   blockweise ohne Auffüllung.
 2. **Die Orange-Zelle ist zusätzlich fett** (§4.3 nennt nur die Schriftfarbe) — Orange allein
-   ist auf dem hellen Grund als Zahl schwer zu lesen; bewusst, nicht versehentlich.
+   ist auf dem hellen Grund als Zahl schwer zu lesen; bewusst, nicht versehentlich. Seit
+   v5.15 ist es die Offen-Zelle, nicht mehr die Authorized-Zelle.
 3. **Der PDF-Hinweis ist kein eigener Fusszeilen-Mechanismus** (§4.4 spricht von der
    „bestehenden Fussnoten-Mechanik") — der Terminal-Report druckt die Bildschirmansicht
    (`window.print()`), die beiden Hinweis-Absätze drucken mit; der erste steht unter
@@ -428,7 +485,8 @@ in `report-xlsx`, `history-xlsx`, `reporting-xlsx`, `reporting-tds-xlsx`.
 - **Ränder und Seitenlayout (§5.3):** `XLSX_RAENDER` (0.5"/0.75"/0.3"), `xlsxSeitenlayout
   (spalten)` = A4 (`paperSize` 9), `fitToWidth 1`, `fitToHeight 0` (automatisch),
   Hochformat bis 8 Spalten, **Querformat ab 9** (`XLSX_QUERFORMAT_AB_SPALTEN`); der Full-
-  Terminal-Report (10 Spalten) und das Settlement-Transaktionsdetail landen damit quer.
+  Terminal-Report (12 Spalten seit v5.15) und das Settlement-Transaktionsdetail landen damit
+  quer.
 - **Der Vendor schreibt `!margins` und Defined Names, aber kein `pageSetup` und kein
   `fitToPage`** (Machbarkeit gemessen, §5.3 Schritt 1: `!pageSetup` am Blatt wird still
   ignoriert). Deshalb die **ZIP-Nachbearbeitung** in `xlsxSchreibenUndLaden`: `XLSX.CFB.read`
@@ -1640,8 +1698,9 @@ Ergebnis selbst (das wird bei Bedarf über den Token neu vom Proxy geholt).
   Zusammenfassung der Zeile. Gesetzt über `merkeReportXlsxVarianteImVerlauf` nach dem
   Export, am Token `reportQuelleToken`; ein Report ohne Token hat nichts zu merken.
   **Verlaufs-Excel** (`styledSheetAusZeilen`): führt die Kopfzeile `autorisiert_gross`
-  (`brand`/`terminal`), hängt es unter die Tabelle eine Leerzeile und den Hinweis G2 an
-  (verbunden, kursiv) — `export`/`card`/`settlement` bleiben unberührt.
+  (`brand`/`terminal`), hängt es unter die Tabelle eine Leerzeile und den Hinweis an
+  (verbunden, kursiv) — `export`/`card`/`settlement` bleiben unberührt. Die v5.15-Spalten
+  `offen_anzahl`/`offen_aelteste` laufen über die Heuristik (Zähler bzw. Text).
 - **Befüllt wird der Verlauf bei jedem erfolgreichen Submit** (unabhängig vom Modus); die Modi
   `terminal`, `settlement` und `reporting` speisen zusätzlich sofort ihr jeweiliges
   Report-Panel, um einen weiteren Result-Abruf zu sparen. Der Verlaufseintrag merkt seit v5.8 zusätzlich den Account,
@@ -1743,7 +1802,8 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
   `buildSettlementQuery`, `buildReportingQuery` sind reine Funktionen (Input-Objekt →
   SQL-String) — bewusst so gehalten, damit sie ohne DOM testbar sind.
 - `txCte({ spaceIds, start, end, autorisiert })` grenzt die Transaktionen (Space + Zeitraum
-  + Status) einmal gemeinsam ein; `card`-, `settle`- und `payoutref`-CTE im
+  + Status) einmal gemeinsam ein — mit `autorisiert: true` (nur `brand`/`terminal`) nach dem
+  **Autorisierungszeitpunkt** `COALESCE(t.authorizedon, t.createdon)` und inkl. `AUTHORIZED`; `card`-, `settle`- und `payoutref`-CTE im
   Transaktions-Export filtern darüber, statt die teuren Joins über die gesamte
   Tabellenhistorie laufen zu lassen. Zeitfenster und Statusfilter liefert
   `txBasisBedingungen({ start, end, autorisiert })` als Liste — dieselbe Liste steht im
@@ -1768,17 +1828,19 @@ Das Herzstück von Modus 3. Jede Spalte ist ein Objekt:
   `>= TIMESTAMP ... AND < TIMESTAMP ...`. **Zwei Ausnahmen:** `buildReportingQuery`
   filtert auf `ca.createdon` — ein gescheiterter Charge Attempt hat kein `completedon`
   (siehe „Sechs Modi", Punkt 6); der Zeitraum-Picker bedeutet dort also etwas anderes als in
-  allen übrigen Modi. Und **`buildBrandQuery`/`buildTerminalQuery` filtern seit v5.14 auf
-  `COALESCE(t.completedon, t.authorizedon)`** — für abgeschlossene Transaktionen exakt
-  `completedon`, für offene Autorisierungen (die kein `completedon` haben) der
-  Autorisierungszeitpunkt. Der Picker meint dort also weiterhin den Tagesabschluss, nur
-  dass eine noch nicht eingereichte Autorisierung nach ihrem einzigen Zeitpunkt eingeordnet
-  wird (siehe „Sechs Modi", Punkt 1). Ein Schnappschuss-Test hält fest, dass `export`,
-  `card`, `settlement` und die Reporting-Queries weder `authorizedon` noch `AUTHORIZED`
-  kennen.
+  allen übrigen Modi. Und **`buildBrandQuery`/`buildTerminalQuery` filtern seit v5.15 auf
+  `COALESCE(t.authorizedon, t.createdon)`** — den Zeitpunkt, an dem der Kartenherausgeber die
+  Zahlung genehmigt hat (v5.14 hatte `COALESCE(t.completedon, t.authorizedon)`, also die
+  Einreichung, und verschob damit ganze Terminal-Abende in den Folgetag; Befund
+  SPEC-ITERATION-3 §1). Der Picker meint in diesen beiden Modi seit v5.15 also den
+  **Zeitpunkt der Zahlung**, wie der wallee Financial Report; `completedon` ist dort nur noch
+  das Kriterium „eingereicht" (siehe „Sechs Modi", Punkt 1). Ein Schnappschuss-Test hält
+  fest, dass `export`, `card`, `settlement` und die Reporting-Queries weder `authorizedon`
+  noch `AUTHORIZED` kennen.
 - Statusfilter fix `t.state IN ('FULFILL', 'COMPLETED')` — **ausser in `brand`/`terminal`**
-  (seit v5.14 `('AUTHORIZED', 'FULFILL', 'COMPLETED')`, die Zähler dafür per `CASE`
-  geschützt) **und ausser im Reporting-Modus**:
+  (seit v5.14 `('AUTHORIZED', 'FULFILL', 'COMPLETED')`; seit v5.15 ist nur noch Complete
+  Demand per `CASE` auf die eingereichten beschränkt, Zähler und Tip laufen über die ganze
+  Basis) **und ausser im Reporting-Modus**:
   der zählt Versuche, auch gescheiterte, und filtert stattdessen fest auf
   `ca.environment = 'PRODUCTION'`.
 - CTEs (in `buildExportQuery` je nach `needs*`-Flag, in `buildCardQuery` fest eingebaut;
@@ -2121,6 +2183,39 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     (SPEC 2.2). An den Referenzdaten hält die Heuristik: jedes `(spaceid, valuedate)`-Paar
     bildet auf **genau eine** Referenz ab (über alle 82 Settlements geprüft). Wer die
     Kosten sparen will, schaltet die Checkbox ab — der Report degradiert dann sauber.
+- **Autorisierungszeitpunkt (v5.15) — an Produktivdaten des Kunden Kaufleuten bewiesen
+  (Terminal-Report-Tool/SPEC-ITERATION-3.md §6, `sql/autorisierungszeitpunkt_verifikation.sql`,
+  Space 73192, Fenster 10.09.2026 06:00 – 11.09.2026 06:00, gelaufen 2026-09-15; Rohdaten,
+  Protokolle und Abschlussbericht in `Terminal-Report-Tool/testdata/results/`, gitignored).**
+  - **Der Kaufleuten-Space ist 73192, nicht 24627** (die Spec nennt 24627; die 18 TIDs des
+    Financial Reports liegen laut `paymentterminal.spaceid` in 73192, und `P-73192` steht im
+    Dateinamen des Financial Reports). 24627 ist kein Space dieses Accounts.
+  - **Athena-Zeitstempel sind Europe/Zurich**: `createdon`/`authorizedon` liegen 6–58 s
+    (Median 9/10 s) **nach** «Trans Date/Time» des Terminals, keine 2-h-Verschiebung. Beide
+    ordnen 624 von 624 genehmigten Zeilen dem richtigen Fenster zu; `authorizedon` ist bei
+    allen 3'104 `FULFILL`-Zeilen gesetzt, bei allen 39 `FAILED` leer, `createdon` immer.
+  - **`completedon` ist die Einreichung durch wallee, nicht der Tagesabschluss-Ausdruck:**
+    TID 32655286 (Lounge 2, Nachtbetrieb) hat für alle 95 Transaktionen der Nacht `completedon`
+    **11.09. 08:45:16–08:45:28** = «Transaction Submission Eff Time 08:45:00» des Financial
+    Reports; der gedruckte Tagesabschluss-Beleg (22:24:17) ist etwas anderes. Andere
+    Terminals reichen um 16:25 bzw. 23:19 ein. Genau das erklärt den v5.14-Fehler: ein Fenster
+    bis 08:00 enthielt Lounge 2 gar nicht, ein Fenster bis 24:00 die Vornacht des Folgetags.
+  - **Abgelehnte Zahlungen sind `FAILED` mit gesetztem `authorizationamount` und — bei 14
+    von 39 — einem Trinkgeld-Lineitem.** Das Lineitem entsteht also bei der Autorisierung,
+    nicht bei der Einreichung; nur der State-Filter hält Betrag und Tip aus dem Report
+    (Testfall Lounge 4: Tip 74.15, nicht 134.15). Ein Rohexport, der `authorizationamount`
+    ungefiltert summiert, zählt Abgelehntes mit.
+  - `completedamount = authorizationamount` bei allen 3'104 `FULFILL` (kein Teil-Capture);
+    keine `AUTHORIZED`/`VOIDED`/`COMPLETED` im Zeitraum per 15.09.; Trinkgeld je Transaktion
+    in allen 624 Zeilen auf den Rappen gleich dem Financial Report.
+  - **Drei genehmigte FR-Zeilen existieren in wallee Analytics nicht** (10.09. 13:06–13:14,
+    TIDs 32655501/32655316/32655502, 90.00 + 90.00 + 410.00, Auth-Codes 8DUZDB/a90307/002881;
+    gesucht über Space, ganzen Account und Auth-Code-Label). Der Terminal-Report kann sie nie
+    zeigen — Lücke zwischen Terminal/Acquirer und wallee, an wallee zu eskalieren. Deshalb
+    zwei Soll-Dateien für das Prüfscript (`expected_2026-09-10.json` = Financial Report,
+    `expected_2026-09-10_wallee.json` = abzüglich dieser drei; Option `--expected`).
+  - Wie überall: ein Space, ein Acquirer, zwei Tage — „bisher beobachtet". Bei einem anderen
+    Connector die SQL erneut fahren, bevor `authorizedon` als gesetzt gilt.
 - **Autorisierter Betrag (v5.14) — an Produktivdaten gemessen (Discovery Task 0,
   `sql/autorisiert_verifikation.sql`, Space 73192, POS, letzte 90 Tage, gelaufen
   2026-09-12; Rohdaten in `Terminal-Report-Tool/discovery-results/`, gitignored).**
@@ -2346,6 +2441,13 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    `sheet1.xml`-Prüfung über `XLSX.CFB`, Schriftfarbe über `styles.xml` — der Reader gibt
    Schriftfarben nicht zurück), `history`, `dom-ids` und die Zusicherungen in
    `reporting-xlsx`/`reporting-tds-xlsx`.
+   **v5.15 (Autorisierungszeitpunkt, Offen):** keine neue Testdatei — die Nähte sitzen in
+   `queries` (Fenster `COALESCE(authorizedon, createdon)`, `COUNT(*)`, `offen_anzahl`/
+   `offen_aelteste`, Complete Demand per `CASE`, Tip ohne Guard), `tip_unsettled`, `report`
+   (Parser/Modell inkl. `offen`), `report-export` (sieben Kennzahlen, Hinweisblock,
+   Kondensiert mit Offen), `report-render` (Offen orange, Hinweisblock, Leer-Text),
+   `report-xlsx` (Stand-Zeile, Drucktitel Zeile 8, kein Differenz-Paar, Hinweisblock
+   linksbündig) und `history` (`reportingZeitraumText` mit Uhrzeit).
    **v5.12 hat keine neue Testdatei gebracht, sondern vier neue Nähte in bestehenden:**
    `embedding` prüft zusätzlich den Build-Schritt `tools/build-failure-reasons.mjs` (er
    gehört dorthin, weil er dasselbe schützt wie der Rest der Datei — die Unversehrtheit der
@@ -2400,6 +2502,20 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
 
 ## Offene Punkte / Ideen
 
+- **Iteration 3 (v5.15, Zuordnung nach Autorisierungszeitpunkt) — was noch aussteht:**
+  - **Die drei fehlenden Transaktionen** (590.00, siehe „Wallee-Referenzwissen") sind an
+    wallee zu eskalieren; bis dahin weicht der Terminal-Report des 10.09. vom Financial Report
+    um genau diesen Betrag ab.
+  - **Stufe 3 ist simuliert** (per 15.09. gab es keine `AUTHORIZED`-Transaktion mehr im
+    Zeitraum). Der Live-Fall lässt sich an jedem Folgetag fahren: Terminal-Report für den
+    Vorabend **vor** der 08:45-Einreichung abrufen, danach nochmals — Offen muss zwischen den
+    beiden Läufen im selben Tag nach Complete Demand wandern.
+  - Die optionale zweite Tip-Spalte auf Complete-Demand-Basis (§2.2) ist nicht gebaut.
+  - «Anz.» zählt seit v5.15 alle genehmigten Zahlungen (Authorized-Basis), nicht mehr nur
+    die eingereichten — gegenüber v5.14 eine Bedeutungsänderung, für die Abstimmung mit dem
+    Financial Report die richtige.
+  - Spec §2.5 nennt «Stand Einreichungen: <Zeitpunkt der Abfrage>» — umgesetzt; ein Report
+    aus einem alten Token trägt den Zeitpunkt des damaligen Laufs, nicht des Abrufs.
 - **Autorisierter Betrag (v5.14/v5.14.1) — was noch aussteht:**
   - ~~Task 0 (Discovery) ist geschrieben, aber nicht gelaufen.~~ **Gelaufen am 2026-09-12**
     (Space 73192 statt des in der Spec genannten 40402), Befunde unter

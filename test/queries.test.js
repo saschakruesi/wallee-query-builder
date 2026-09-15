@@ -18,10 +18,10 @@ test('Harness laedt die Builder', () => {
 
 test('Brand-Query: korrektes Zeitfenster, keine 23:59:59-Falle', () => {
   const sql = B.buildBrandQuery(RANGE);
-  // Seit v5.14 liegt das Fenster auf COALESCE(completedon, authorizedon) - fuer
-  // abgeschlossene Transaktionen exakt das alte completedon-Fenster.
-  assert.match(sql, /COALESCE\(t\.completedon, t\.authorizedon\) >= TIMESTAMP '2026-07-01 00:00:00'/);
-  assert.match(sql, /COALESCE\(t\.completedon, t\.authorizedon\) <  TIMESTAMP '2026-07-02 00:00:00'/);
+  // Seit v5.15 liegt das Fenster auf dem Autorisierungszeitpunkt
+  // COALESCE(authorizedon, createdon) (SPEC-ITERATION-3 §2.1).
+  assert.match(sql, /COALESCE\(t\.authorizedon, t\.createdon\) >= TIMESTAMP '2026-07-01 00:00:00'/);
+  assert.match(sql, /COALESCE\(t\.authorizedon, t\.createdon\) <  TIMESTAMP '2026-07-02 00:00:00'/);
   assert.doesNotMatch(sql, /<= TIMESTAMP/);
 });
 
@@ -199,7 +199,7 @@ test('Brand-Query ohne unmatched_anzahl', () => {
 test('Brand-Query: Fee-Spalte ohne COALESCE, Netto mit', () => {
   const sql = B.buildBrandQuery(RANGE);
   assert.match(sql, /SUM\(t\.totalappliedfees\)\s+AS transaction_fee_total/);
-  assert.match(sql, /SUM\(t\.completedamount\) - COALESCE\(SUM\(t\.totalappliedfees\), 0\) AS netto/);
+  assert.match(sql, /THEN t\.completedamount ELSE 0 END\) - COALESCE\(SUM\(t\.totalappliedfees\), 0\) AS netto/);
 });
 
 test('Brand-Fallback bleibt erhalten', () => {
@@ -240,7 +240,7 @@ test('Terminal-Query ebenso bereinigt', () => {
   // ohne Gebuehrendaten).
   assert.doesNotMatch(sql, /CASE WHEN t\.totalappliedfees/);
   assert.match(sql, /SUM\(t\.totalappliedfees\)\s+AS transaction_fee_total/);
-  assert.match(sql, /SUM\(t\.completedamount\) - COALESCE\(SUM\(t\.totalappliedfees\), 0\) AS netto/);
+  assert.match(sql, /THEN t\.completedamount ELSE 0 END\) - COALESCE\(SUM\(t\.totalappliedfees\), 0\) AS netto/);
 });
 
 test('Export kennt keinen Kartenfilter mehr', () => {
@@ -495,12 +495,15 @@ test('Settlement-Query ohne Referenz ist byte-identisch zum Default', () => {
   assert.strictEqual((ohne.match(/GROUP BY/g) || []).length, 1);
 });
 
-// --- Autorisierter Betrag (v5.14, Terminal-Report-Tool/SPEC-ITERATION-2.md §2) ---
+// --- Autorisierter Betrag und Offen (v5.15, Terminal-Report-Tool/SPEC-ITERATION-3.md §2) ---
 //
-// brand und terminal nehmen Transaktionen im Zustand AUTHORIZED in die Basis auf,
-// eingeordnet nach authorizedon, und weisen SUM(t.authorizationamount) aus. Die
-// bestehenden Zaehler sind auf FULFILL/COMPLETED geschuetzt, damit die alten
-// Zahlen byte-identisch bleiben (SPEC A1). Alle uebrigen Builder bleiben beim
+// brand und terminal ordnen jede Transaktion dem Zeitpunkt ihrer Autorisierung zu
+// (COALESCE(t.authorizedon, t.createdon), Stufe 1 der Selbstpruefung), nie mehr
+// dem Einreichungszeitpunkt completedon. Basis sind AUTHORIZED/FULFILL/COMPLETED:
+// Authorized = SUM(authorizationamount) ueber alle, Complete Demand =
+// completedamount nur der eingereichten (FULFILL/COMPLETED), Offen = Zaehler der
+// AUTHORIZED-Zeilen plus aelteste offene Autorisierung. Anz. und Tip laufen auf
+// der Authorized-Basis (§2.2). Alle uebrigen Builder bleiben beim
 // completedon-Fenster und beim engen State-Filter.
 
 const AUTORISIERT_BUILDER = {
@@ -518,66 +521,67 @@ for (const [name, bauen] of Object.entries(AUTORISIERT_BUILDER)) {
     assert.ok(brutto !== -1 && autorisiert !== -1 && fee !== -1);
     assert.ok(brutto < autorisiert && autorisiert < fee,
       'autorisiert_gross muss im SELECT direkt rechts von brutto_gross stehen');
-    // Aggregat, nicht Gruppierungsschluessel.
-    // lastIndexOf: das erste GROUP BY sitzt im tip-CTE.
     const groupBy = sql.slice(sql.lastIndexOf('GROUP BY'));
-    assert.doesNotMatch(groupBy, /authorizationamount|autorisiert_gross/);
+    assert.doesNotMatch(groupBy, /authorizationamount|autorisiert_gross|completedamount/);
   });
 
-  test(`${name}: Fenster auf COALESCE(completedon, authorizedon) in CTE und Hauptselect`, () => {
+  test(`${name}: Fenster auf dem Autorisierungszeitpunkt COALESCE(authorizedon, createdon) in CTE und Hauptselect`, () => {
     const sql = bauen();
-    const von = sql.match(/COALESCE\(t\.completedon, t\.authorizedon\) >= TIMESTAMP '2026-07-01 00:00:00'/g) || [];
-    const bis = sql.match(/COALESCE\(t\.completedon, t\.authorizedon\) <  TIMESTAMP '2026-07-02 00:00:00'/g) || [];
+    const von = sql.match(/COALESCE\(t\.authorizedon, t\.createdon\) >= TIMESTAMP '2026-07-01 00:00:00'/g) || [];
+    const bis = sql.match(/COALESCE\(t\.authorizedon, t\.createdon\) <  TIMESTAMP '2026-07-02 00:00:00'/g) || [];
     assert.strictEqual(von.length, 2, 'Untergrenze einmal im tx-CTE, einmal im Hauptselect');
     assert.strictEqual(bis.length, 2, 'Obergrenze einmal im tx-CTE, einmal im Hauptselect');
-    // Kein nacktes completedon-Fenster mehr - CTE und Hauptselect beschreiben
-    // dieselbe Menge.
-    assert.doesNotMatch(sql, /\bt\.completedon >= TIMESTAMP/);
-    assert.doesNotMatch(sql, /\bt\.completedon <  TIMESTAMP/);
+    // completedon entscheidet nur noch ueber "eingereicht", nie ueber das Fenster.
+    assert.doesNotMatch(sql, /completedon[^\n]*TIMESTAMP/);
+    assert.doesNotMatch(sql, /COALESCE\(t\.completedon/);
   });
 
   test(`${name}: State-Filter mit AUTHORIZED, ebenfalls in CTE und Hauptselect`, () => {
     const sql = bauen();
     const erweitert = sql.match(/t\.state IN \('AUTHORIZED', 'FULFILL', 'COMPLETED'\)/g) || [];
     assert.strictEqual(erweitert.length, 2);
-    // Der enge Filter darf nur noch als Schutz der Zaehler vorkommen (innerhalb
-    // eines CASE, gefolgt von THEN), nie als WHERE-Bedingung am Zeilenende.
     assert.doesNotMatch(sql, /AND t\.state IN \('FULFILL', 'COMPLETED'\)\s*$/m);
   });
 
-  test(`${name}: anzahl_transaktionen zaehlt nur abgeschlossene, kein COUNT(*)`, () => {
+  test(`${name}: anzahl_transaktionen zaehlt die ganze Authorized-Basis (COUNT(*)), offen_anzahl nur AUTHORIZED`, () => {
     const sql = bauen();
-    assert.match(sql, /SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN 1 ELSE 0 END\)\s+AS anzahl_transaktionen/);
-    assert.doesNotMatch(sql, /COUNT\(\*\)/);
+    assert.match(sql, /COUNT\(\*\)\s+AS anzahl_transaktionen/);
+    assert.match(sql, /SUM\(CASE WHEN t\.state = 'AUTHORIZED' THEN 1 ELSE 0 END\)\s+AS offen_anzahl/);
+    assert.match(sql, /MIN\(CASE WHEN t\.state = 'AUTHORIZED' THEN COALESCE\(t\.authorizedon, t\.createdon\) END\)\s+AS offen_aelteste/);
   });
 
   test(`${name}: unsettled_anzahl zaehlt eine offene Autorisierung nicht mit`, () => {
     const sql = bauen();
     const m = sql.match(/SUM\(CASE WHEN([\s\S]*?)THEN 1 ELSE 0 END\)\s+AS unsettled_anzahl/);
     assert.ok(m, 'CASE-Ausdruck fuer unsettled_anzahl nicht gefunden');
-    const cond = m[1];
-    assert.match(cond, /\(t\.totalappliedfees IS NULL OR t\.totalappliedfees = 0\)\s*AND\s*se\.transaction_id IS NULL\s*AND\s*t\.state IN \('FULFILL', 'COMPLETED'\)/);
+    assert.match(m[1], /\(t\.totalappliedfees IS NULL OR t\.totalappliedfees = 0\)\s*AND\s*se\.transaction_id IS NULL\s*AND\s*t\.state IN \('FULFILL', 'COMPLETED'\)/);
   });
 
-  test(`${name}: brutto, fee, netto ohne CASE; tip_total auf FULFILL/COMPLETED geschuetzt`, () => {
+  test(`${name}: Complete Demand nur aus eingereichten Transaktionen, Tip ohne Guard (Authorized-Basis)`, () => {
     const sql = bauen();
-    assert.match(sql, /SUM\(t\.completedamount\)\s+AS brutto_gross/);
+    const eingereicht = "SUM(CASE WHEN t.state IN ('FULFILL', 'COMPLETED') THEN t.completedamount ELSE 0 END)";
+    assert.ok(sql.includes(eingereicht + ' '), 'brutto_gross = eingereichter Betrag');
+    assert.match(sql, /THEN t\.completedamount ELSE 0 END\)\s+AS brutto_gross/);
+    assert.ok(sql.includes(eingereicht + ' - COALESCE(SUM(t.totalappliedfees), 0)'), 'netto aus derselben Summe');
     assert.match(sql, /SUM\(t\.totalappliedfees\)\s+AS transaction_fee_total/);
-    assert.match(sql, /SUM\(t\.completedamount\) - COALESCE\(SUM\(t\.totalappliedfees\), 0\) AS netto/);
-    // Discovery Q4 (Space 73192): eine AUTHORIZED-Transaktion trug bereits ein
-    // Trinkgeld-Lineitem - ohne Guard waere tip_total nicht mehr byte-identisch.
-    assert.match(sql, /COALESCE\(SUM\(CASE WHEN t\.state IN \('FULFILL', 'COMPLETED'\) THEN tip\.tip_amount END\), 0\)\s+AS tip_total/);
-    assert.doesNotMatch(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)/);
+    assert.doesNotMatch(sql, /SUM\(t\.completedamount\)/, 'kein ungeschuetztes completedamount mehr');
+    // Tip: gleiche Basis wie Authorized (SPEC-ITERATION-3 §2.2) - das
+    // Trinkgeld-Lineitem entsteht bei der Autorisierung (Stufe 1: auch
+    // FAILED-Transaktionen tragen es), nicht erst bei der Einreichung.
+    assert.match(sql, /COALESCE\(SUM\(tip\.tip_amount\), 0\)\s+AS tip_total/);
+    assert.doesNotMatch(sql, /THEN tip\.tip_amount END/);
   });
 }
 
-test('txCte: nur mit autorisiert=true kommt das COALESCE-Fenster und AUTHORIZED', () => {
+test('txCte: nur mit autorisiert=true kommt das Autorisierungs-Fenster und AUTHORIZED', () => {
   const alt = B.txCte(RANGE);
   const neu = B.txCte({ ...RANGE, autorisiert: true });
-  assert.doesNotMatch(alt, /authorizedon|AUTHORIZED/);
-  assert.match(neu, /COALESCE\(t\.completedon, t\.authorizedon\) >= TIMESTAMP '2026-07-01 00:00:00'/);
-  assert.match(neu, /COALESCE\(t\.completedon, t\.authorizedon\) <  TIMESTAMP '2026-07-02 00:00:00'/);
+  assert.doesNotMatch(alt, /authorizedon|createdon|AUTHORIZED/);
+  assert.match(alt, /t\.completedon >= TIMESTAMP/);
+  assert.match(neu, /COALESCE\(t\.authorizedon, t\.createdon\) >= TIMESTAMP '2026-07-01 00:00:00'/);
+  assert.match(neu, /COALESCE\(t\.authorizedon, t\.createdon\) <  TIMESTAMP '2026-07-02 00:00:00'/);
   assert.match(neu, /t\.state IN \('AUTHORIZED', 'FULFILL', 'COMPLETED'\)/);
+  assert.doesNotMatch(neu, /completedon/);
   assert.match(neu, /t\.spaceid = 12345/);
 });
 

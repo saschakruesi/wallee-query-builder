@@ -77,11 +77,12 @@ vm.runInContext(
   '\n;globalThis.__x.exportReportXlsx = exportReportXlsx;' +
   '\n;globalThis.__x.xlsxSeitenlayoutEinbetten = xlsxSeitenlayoutEinbetten;' +
   '\n;globalThis.__x.setzeReportZeitraum = z => { reportZeitraum = z; };' +
-  '\n;globalThis.__x.setzeReportSpaces = sp => { reportSpaces = sp; };',
+  '\n;globalThis.__x.setzeReportSpaces = sp => { reportSpaces = sp; };' +
+  '\n;globalThis.__x.setzeReportStand = st => { reportStand = st; };',
   sandbox, { filename: 'app-logic.js' },
 );
 
-const { parseReportCsv, buildReportModel, exportReportXlsx, xlsxSeitenlayoutEinbetten, setzeReportZeitraum, setzeReportSpaces } = sandbox.__x;
+const { parseReportCsv, buildReportModel, exportReportXlsx, xlsxSeitenlayoutEinbetten, setzeReportZeitraum, setzeReportSpaces, setzeReportStand } = sandbox.__x;
 const XLSX = sandbox.XLSX;
 const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'beispiel-daten.csv'), 'utf8');
 
@@ -175,10 +176,10 @@ test('XLSX: Gesamttotal steht mit den richtigen Zahlen drin', async () => {
   const zeilen = blattZeilen(wb);
   const t = titelZeile(zeilen, 'Gesamttotal');
   // Seit v5.14.1 stehen die Kennzahlen jedes Blocks rechtsbuendig unter denen
-  // des Detail-Blocks (10 Spalten im Full-Report), die Luecke ist leer.
+  // des Detail-Blocks (12 Spalten im Full-Report seit v5.15), die Luecke ist leer.
   const PAD = ['', '', '', ''];
-  assert.deepStrictEqual(plain(zeilen[t + 1]), ['', ...PAD, 'Complete Demand', 'Authorized', 'Tip', 'Unmatched', 'Anz.']);
-  assert.deepStrictEqual(plain(zeilen[t + 2]), ['Total', ...PAD, 62756.16, 62756.16, 793.46, 889, 2070]);
+  assert.deepStrictEqual(plain(zeilen[t + 1]), ['', ...PAD, 'Complete Demand', 'Authorized', 'Offen', 'Offen Anz.', 'Tip', 'Unsettled', 'Anz.']);
+  assert.deepStrictEqual(plain(zeilen[t + 2]), ['Total', ...PAD, 62756.16, 62756.16, 0, 0, 793.46, 889, 2070]);
 });
 
 test('XLSX: Betraege sind Zahlen mit Schweizer Zahlformat', async () => {
@@ -187,7 +188,7 @@ test('XLSX: Betraege sind Zahlen mit Schweizer Zahlformat', async () => {
   const t = titelZeile(blattZeilen(wb), 'Gesamttotal');
   const datenR = t + 2;                 // 0-basierter Zeilenindex der Total-Zeile
   const b = ws[XLSX.utils.encode_cell({ r: datenR, c: 5 })];   // Complete Demand (rechtsbuendig zum Detail)
-  const d = ws[XLSX.utils.encode_cell({ r: datenR, c: 9 })];   // Anz.
+  const d = ws[XLSX.utils.encode_cell({ r: datenR, c: 11 })];  // Anz.
   assert.strictEqual(b.t, 'n', 'Betrag muss als Zahl gespeichert sein, sonst kann Excel nicht rechnen');
   assert.strictEqual(b.v, 62756.16);
   assert.strictEqual(b.z, '#,##0.00', 'Betrag ohne Zahlformat');
@@ -198,8 +199,8 @@ test('XLSX: Brand-Totals vollstaendig und korrekt', async () => {
   const { wb } = await exportiereUndLies();
   const daten = abschnittDaten(blattZeilen(wb), 'Total Brand-Gruppen');
   assert.deepStrictEqual(plain(daten), [
-    ['Lunch-Check', '', '', '', '', 31, 31, 0, 1, 2],
-    ['Wallee', '', '', '', '', 62725.16, 62725.16, 793.46, 888, 2068],
+    ['Lunch-Check', '', '', '', '', 31, 31, 0, 0, 0, 1, 2],
+    ['Wallee', '', '', '', '', 62725.16, 62725.16, 0, 0, 793.46, 888, 2068],
   ]);
 });
 
@@ -221,9 +222,11 @@ test('XLSX: Summe der Outlet-Totals ergibt das Gesamttotal', async () => {
 
 // --- v5.14: Variante, Spaltenbreite, Druckbild, Autorisiert (SPEC-ITERATION-2 §4.3-5.4) ---
 
-const G2 = 'Autorisiert = Summe der vom Kartenherausgeber freigegebenen Beträge. Weicht sie vom '
-  + 'Complete Demand ab, fehlt für die Differenz eine Submission (Einreichung/Tagesabschluss am '
-  + 'Terminal) — der Betrag ist freigegeben, aber noch nicht abgerechnet.';
+const G2 = 'Authorized = vom Kartenherausgeber genehmigte Beträge, zugeordnet nach dem Zeitpunkt der Zahlung. '
+  + 'Complete Demand = davon per Reportzeitpunkt eingereicht (Tagesabschluss). '
+  + 'Offen = autorisiert, aber noch nicht eingereicht; der Betrag erscheint nach dem Tagesabschluss im selben Tag, nicht in einem anderen. '
+  + 'Abgelehnte Zahlungen sind in keiner Spalte enthalten. '
+  + 'Unsettled = Anzahl eingereichter Zahlungen, für die wallee noch keinen Abrechnungs-Datensatz (Settlement) führt.';
 
 const HEADER_V514 = '"space_id","terminal_identifier","terminal_name","brand","waehrung",'
   + '"anzahl_transaktionen","unsettled_anzahl","brutto_gross","autorisiert_gross","transaction_fee_total","netto","tip_total"';
@@ -246,21 +249,25 @@ test('XLSX: Dateiname und Titel je Variante', async () => {
   assert.strictEqual(standard.dateiname, full.dateiname, 'ohne Angabe = Full');
 });
 
-test('XLSX kondensiert: keine Marke, kein Unmatched, kein Anz., Summen wie Full (A3)', async () => {
+test('XLSX kondensiert: keine Marke, keine Zaehler (Offen Anz., Unsettled, Anz.), Offen dabei, Summen wie Full (A3, §4.7)', async () => {
   const { wb } = await exportiereUndLies(FIXTURE, 'kondensiert');
   const zeilen = blattZeilen(wb);
   const t = titelZeile(zeilen, 'Detail');
   assert.deepStrictEqual(plain(zeilen[t + 1]),
-    ['Outlet-Gruppe', 'Terminal', 'TID', 'Brand-Gruppe', 'Complete Demand', 'Authorized', 'Tip']);
+    ['Outlet-Gruppe', 'Terminal', 'TID', 'Brand-Gruppe', 'Complete Demand', 'Authorized', 'Offen', 'Tip']);
   const alleZellen = zeilen.flat().map(String);
-  ['Marke', 'Unmatched', 'Anz.'].forEach(k => assert.ok(!alleZellen.includes(k), k + ' darf nicht vorkommen'));
+  ['Marke', 'Unmatched', 'Unsettled', 'Anz.'].forEach(k => assert.ok(!alleZellen.includes(k), k + ' darf nicht vorkommen'));
+  // "Offen Anz." nur im Hinweisblock (eigene Spaltenform), nicht in den Kennzahl-Bloecken
+  const o = titelZeile(zeilen, 'Offene Einreichungen');
+  assert.deepStrictEqual(plain(zeilen[o + 1].slice(0, 5)), ['Terminal', 'TID', 'Offen', 'Offen Anz.', 'Älteste offene Zahlung']);
+  assert.strictEqual(zeilen.filter(z => z.includes('Offen Anz.')).length, 1);
   const brands = abschnittDaten(zeilen, 'Total Brand-Gruppen');
   assert.deepStrictEqual(plain(brands), [
-    ['Lunch-Check', '', '', '', 31, 31, 0],
-    ['Wallee', '', '', '', 62725.16, 62725.16, 793.46],
+    ['Lunch-Check', '', '', '', 31, 31, 0, 0],
+    ['Wallee', '', '', '', 62725.16, 62725.16, 0, 793.46],
   ]);
   const g = titelZeile(zeilen, 'Gesamttotal');
-  assert.deepStrictEqual(plain(zeilen[g + 2]), ['Total', '', '', '', 62756.16, 62756.16, 793.46]);
+  assert.deepStrictEqual(plain(zeilen[g + 2]), ['Total', '', '', '', 62756.16, 62756.16, 0, 793.46]);
 });
 
 test('XLSX: Hinweis G2 unter "Erstellt am" und als Fussnote nach dem letzten Block', async () => {
@@ -269,47 +276,85 @@ test('XLSX: Hinweis G2 unter "Erstellt am" und als Fussnote nach dem letzten Blo
   const zeilen = blattZeilen(wb);
   assert.match(String(zeilen[1][0]), /^Erstellt am /);
   assert.match(String(zeilen[2][0]), /^Abfragezeitraum: /);
-  assert.strictEqual(zeilen[3][0], G2, 'unter dem Abfragezeitraum');
-  assert.strictEqual(zeilen[4].length, 0, 'Leerzeile danach');
+  assert.match(String(zeilen[3][0]), /^Stand Einreichungen: /, 'Stand der Einreichungen (§2.5)');
+  assert.strictEqual(zeilen[4][0], G2, 'unter dem Stand');
+  assert.strictEqual(zeilen[5].length, 0, 'Leerzeile danach');
   const letzte = zeilen.map(z => z[0]).filter(v => v !== undefined && v !== '');
   assert.strictEqual(letzte[letzte.length - 1], G2, 'Fussnote nach dem letzten Block');
   // ueber die Blattbreite verbunden
   const breite = Math.max(...zeilen.map(z => z.length));
   const merges = ws['!merges'].map(m => `${m.s.r}:${m.s.c}-${m.e.r}:${m.e.c}`);
-  assert.ok(merges.includes(`3:0-3:${breite - 1}`), 'Hinweiszeile 3 ist verbunden');
+  assert.ok(merges.includes(`4:0-4:${breite - 1}`), 'Hinweiszeile 4 ist verbunden');
+  assert.ok(merges.includes(`3:0-3:${breite - 1}`), 'Standzeile 3 ist verbunden');
   assert.ok(merges.includes(`2:0-2:${breite - 1}`), 'Zeitraumzeile 2 ist verbunden');
 });
 
-test('XLSX: Authorized orange nur bei Differenz, Differenz-Zelle rechts vom Gesamttotal', async () => {
+test('XLSX: Hinweisblock "Offene Einreichungen" nach dem Gesamttotal, linksbuendig, mit Leer-Text ohne offene Posten', async () => {
+  let { wb } = await exportiereUndLies(CSV_LANG);
+  let zeilen = blattZeilen(wb);
+  const g = titelZeile(zeilen, 'Gesamttotal');
+  const o = titelZeile(zeilen, 'Offene Einreichungen');
+  assert.ok(o > g, 'nach dem Gesamttotal');
+  // linksbuendig, der Rest der Blattbreite bleibt leer
+  assert.deepStrictEqual(plain(zeilen[o + 1].slice(0, 5)), ['Terminal', 'TID', 'Offen', 'Offen Anz.', 'Älteste offene Zahlung']);
+  assert.ok(zeilen[o + 1].slice(5).every(v => v === ''));
+  assert.deepStrictEqual(plain(zeilen[o + 2].slice(0, 5)), ['Terrasse Ost, Gartenpavillon beim Brunnen 12', 'T1', 42.5, 0, '']);
+  const refOffen = XLSX.utils.encode_cell({ r: o + 2, c: 2 });
+  assert.strictEqual(wb.Sheets['Terminal-Report'][refOffen].z, '#,##0.00');
+
+  ({ wb } = await exportiereUndLies(FIXTURE));
+  zeilen = blattZeilen(wb);
+  const o2 = titelZeile(zeilen, 'Offene Einreichungen');
+  assert.deepStrictEqual(plain(zeilen[o2 + 1].slice(0, 5)), ['Terminal', 'TID', 'Offen', 'Offen Anz.', 'Älteste offene Zahlung']);
+  assert.strictEqual(zeilen[o2 + 2][0], 'Keine offenen Einreichungen per Reportzeitpunkt.');
+});
+
+test('XLSX: Stand Einreichungen aus dem Zeitpunkt der Abfrage, sonst Strich', async () => {
+  setzeReportStand('2026-09-15T11:46:48.447Z');
+  let { wb } = await exportiereUndLies();
+  const d = new Date('2026-09-15T11:46:48.447Z');
+  const pad = n => String(n).padStart(2, '0');
+  const lokal = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  assert.strictEqual(blattZeilen(wb)[3][0], `Stand Einreichungen: ${lokal}`);
+  setzeReportStand('');
+  ({ wb } = await exportiereUndLies());
+  assert.strictEqual(blattZeilen(wb)[3][0], 'Stand Einreichungen: –');
+});
+
+test('XLSX: Offen orange nur wo etwas offen ist, Authorized bleibt normal, Offen auch im Gesamttotal', async () => {
   const { bytes, wb } = await exportiereUndLies(CSV_LANG);
   const ws = wb.Sheets['Terminal-Report'];
   const zeilen = blattZeilen(wb);
   const d = titelZeile(zeilen, 'Detail');
   const cAuth = zeilen[d + 1].indexOf('Authorized');
+  const cOffen = zeilen[d + 1].indexOf('Offen');
+  assert.strictEqual(cOffen, cAuth + 1, 'Offen direkt rechts von Authorized');
   const zeileMc = zeilen.findIndex((z, i) => i > d && z[3] === 'Mastercard');
   const zeileT2 = zeilen.findIndex((z, i) => i > d && z[1] === 'Bar 2');
-  const refMc = XLSX.utils.encode_cell({ r: zeileMc, c: cAuth });
-  const refT2 = XLSX.utils.encode_cell({ r: zeileT2, c: cAuth });
-  assert.strictEqual(ws[refMc].v, 42.5);
-  assert.strictEqual(zellenSchriftfarbe(bytes, refMc), 'FF4D00');
-  assert.strictEqual(ws[refT2].v, 10);
-  assert.strictEqual(zellenSchriftfarbe(bytes, refT2), '225956', 'ohne Differenz die normale Textfarbe');
+  const refMcOffen = XLSX.utils.encode_cell({ r: zeileMc, c: cOffen });
+  const refMcAuth = XLSX.utils.encode_cell({ r: zeileMc, c: cAuth });
+  const refT2Offen = XLSX.utils.encode_cell({ r: zeileT2, c: cOffen });
+  assert.strictEqual(ws[refMcOffen].v, 42.5);
+  assert.strictEqual(zellenSchriftfarbe(bytes, refMcOffen), 'FF4D00');
+  assert.strictEqual(ws[refMcAuth].v, 42.5);
+  assert.strictEqual(zellenSchriftfarbe(bytes, refMcAuth), '225956', 'Authorized nicht mehr orange');
+  assert.strictEqual(ws[refT2Offen].v, 0);
+  assert.strictEqual(zellenSchriftfarbe(bytes, refT2Offen), '225956', 'ohne Differenz die normale Textfarbe');
 
   const g = titelZeile(zeilen, 'Gesamttotal');
   const total = zeilen[g + 2];
-  // ['Total', '', '', '', '', CD, Auth, Tip, Unmatched, Anz., 'Differenz:', 42.5]
-  assert.strictEqual(total[10], 'Differenz:');
-  assert.strictEqual(total[11], 42.5);
-  const refDiff = XLSX.utils.encode_cell({ r: g + 2, c: 11 });
-  assert.strictEqual(ws[refDiff].z, '#,##0.00');
-  assert.strictEqual(zellenSchriftfarbe(bytes, refDiff), 'FF4D00');
+  // ['Total', '', '', '', '', CD, Auth, Offen, Offen Anz., Tip, Unsettled, Anz.] - kein Differenz-Zellenpaar mehr
+  assert.strictEqual(total.length, 12);
+  assert.strictEqual(total[cOffen], 42.5);
+  assert.strictEqual(zellenSchriftfarbe(bytes, XLSX.utils.encode_cell({ r: g + 2, c: cOffen })), 'FF4D00');
+  assert.ok(!zeilen.flat().includes('Differenz:'));
 });
 
-test('XLSX: ohne Differenz keine Differenz-Zelle', async () => {
+test('XLSX: ohne Differenz keine Differenz-Zelle, zwoelf Spalten', async () => {
   const { wb } = await exportiereUndLies();
   const zeilen = blattZeilen(wb);
   const g = titelZeile(zeilen, 'Gesamttotal');
-  assert.strictEqual(zeilen[g + 2].length, 10);
+  assert.strictEqual(zeilen[g + 2].length, 12);
   assert.ok(!zeilen.flat().includes('Differenz:'));
 });
 
@@ -347,7 +392,7 @@ test('XLSX: Raender, Seitenlayout (fitToWidth/fitToHeight/fitToPage/orientation)
   assert.match(xml, /<worksheet[^>]*><sheetPr><pageSetUpPr fitToPage="1"\/><\/sheetPr>/);
   assert.match(xml, /<pageMargins[^>]*\/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"\/>/,
     'Full hat 10 Spalten -> Querformat');
-  assert.match(workbookXml(bytes), /<definedName name="_xlnm\.Print_Titles" localSheetId="0">&apos;Terminal-Report&apos;!\$7:\$7<\/definedName>/,
+  assert.match(workbookXml(bytes), /<definedName name="_xlnm\.Print_Titles" localSheetId="0">&apos;Terminal-Report&apos;!\$8:\$8<\/definedName>/,
     'die erste tuerkise Kopfzeile (Zeile 7) als Drucktitel');
   // kondensiert: 7 Spalten -> Hochformat
   const kond = await exportiereUndLies(FIXTURE, 'kondensiert');
