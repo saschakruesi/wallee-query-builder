@@ -120,6 +120,7 @@ const DESCRIPTOREN = {
   DESC_CARD_CATEGORY:      '1474552618999',
   DESC_AUTH_RESPONSE_POS:  '1579287790513',
   DESC_AUTH_RESPONSE_ECOM: '15537739985478',
+  DESC_AUTH_RESPONSE_SIX:  '1532425961680',
   DESC_DCC_CURRENCY:       '1695119783358',
   DESC_PAN_TYPE:           '1634723429555',
   DESC_TDS_STARTED:        '1568637480278',
@@ -351,4 +352,19 @@ test('Tabellen- und Spaltennamen bleiben lowercase', () => {
     assert.ok(s.includes(name), `${name} fehlt`);
     assert.ok(!s.includes(name.toUpperCase()), `${name} in Grossschrift`);
   }
+});
+
+test('Der Ablehncode liest alle drei Descriptors in einem COALESCE', () => {
+  // Referenzfall C (SPEC-ITERATION-3 §3.2): der SIX-Connector schreibt den
+  // Code unter 1532425961680 (Gruppe Transaction Details), die beiden anderen
+  // kommen dort gar nicht vor - response_code stand in jeder Zeile auf UNKNOWN.
+  const s = sql();
+  const von = s.indexOf("COALESCE(element_at(filter(ca.labels, l -> l['descriptor'] = '"
+    + B.DESC_AUTH_RESPONSE_POS);
+  const bis = s.indexOf(') AS auth_response_code');
+  assert.ok(von !== -1 && bis > von, 'COALESCE ... AS auth_response_code fehlt');
+  const ausdruck = s.slice(von, bis);
+  assert.ok(ausdruck.includes(B.DESC_AUTH_RESPONSE_ECOM));
+  assert.ok(ausdruck.includes(B.DESC_AUTH_RESPONSE_SIX));
+  assert.strictEqual(s.split('1532425961680').length - 1, 1, 'genau einmal im SQL');
 });

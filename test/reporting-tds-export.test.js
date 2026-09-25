@@ -342,7 +342,8 @@ test('Jede neue Eimer-Beschriftung ist in REPORTING_LABEL eingetragen', () => {
     UNTER_10S: B.reportingLabel('UNTER_10S'),
     S10_60: B.reportingLabel('S10_60'),
     MIN1_5: B.reportingLabel('MIN1_5'),
-    UEBER_5MIN: B.reportingLabel('UEBER_5MIN'),
+    MIN5_9: B.reportingLabel('MIN5_9'),
+    UEBER_9MIN30: B.reportingLabel('UEBER_9MIN30'),
     UNTER_50: B.reportingLabel('UNTER_50'),
     B50_200: B.reportingLabel('B50_200'),
     B200_500: B.reportingLabel('B200_500'),
@@ -355,7 +356,8 @@ test('Jede neue Eimer-Beschriftung ist in REPORTING_LABEL eingetragen', () => {
     UNTER_10S: '< 10 s',
     S10_60: '10–60 s',
     MIN1_5: '1–5 min',
-    UEBER_5MIN: '> 5 min',
+    MIN5_9: '5–9.5 min',
+    UEBER_9MIN30: '> 9.5 min · ACS-Timeout-Signatur',
     UNTER_50: '< 50',
     B50_200: '50–200',
     B200_500: '200–500',
@@ -438,14 +440,15 @@ test('Einordnung: drei feste Eimer plus Total, auch der leere bleibt stehen', ()
   ]);
 });
 
-test('Dauer: fuenf feste Eimer, der leere mit 0 - dass es keinen gab, ist die Aussage', () => {
+test('Dauer: sechs feste Eimer, die leeren mit 0 - dass es keinen gab, ist die Aussage', () => {
   const b = block(bloecke(), 'Dauer bis zum Abbruch');
   // 3 s / 21 s / 26 s / 46 s / 46 s / 17 s / 341 s / ohne Ende.
   assert.deepStrictEqual(plain(b.zeilen), [
     ['< 10 s', 1, 12.5],
     ['10–60 s', 5, 62.5],
     ['1–5 min', 0, 0],
-    ['> 5 min', 1, 12.5],
+    ['5–9.5 min', 1, 12.5],
+    ['> 9.5 min · ACS-Timeout-Signatur', 0, 0],
     ['Unbekannt', 1, 12.5],
     [B.REPORTING_TOTAL_ZEILE, 8, 100],
   ]);
@@ -458,6 +461,8 @@ test('Der Dauer-Hinweis sagt, was er ersetzt und warum', () => {
   assert.match(b.hinweis, /2026-09-04/);
   assert.match(b.hinweis, /sofort abgebrochen/);
   assert.match(b.hinweis, /Timeout/);
+  assert.match(b.hinweis, /9\.5 min/);
+  assert.match(b.hinweis, /aus der Dauer geschlossen/);
 });
 
 test('Betrag je Waehrung: je Waehrung ein eigener Satz, nie eine Zeile darueber hinweg', () => {
@@ -592,7 +597,7 @@ test('Die Segmente eines Kuchens sind die Zeilen seiner Tabelle - ohne Total', (
   // mit 0 Grad ist nicht zu sehen und verlaengert nur die Legende. Die
   // Total-Zeile ist die Summe, nicht ein Segment.
   assert.deepStrictEqual(plain(k.segmente.map(s => [s.label, s.wert])), [
-    ['< 10 s', 1], ['10–60 s', 5], ['> 5 min', 1], ['Unbekannt', 1],
+    ['< 10 s', 1], ['10–60 s', 5], ['5–9.5 min', 1], ['Unbekannt', 1],
   ]);
   assert.strictEqual(k.segmente.reduce((a, s) => a + s.wert, 0), 8);
 });

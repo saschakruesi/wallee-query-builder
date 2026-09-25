@@ -1,6 +1,6 @@
 # Wallee Analytics Query Builder
 
-**Aktuelle Version: v5.15.0**
+**Aktuelle Version: v5.16.0**
 
 Eigenständige HTML-Applikation, die SQL-Queries für **wallee Analytics**
 (PrestoDB / Amazon Athena) generiert. Eine Datei, kein Build, keine Runtime-Dependencies
@@ -238,6 +238,9 @@ Failure* der häufigste Ablehngrund ist — diese Seite sagt, **welche Versuche*
   **Dauer bis zum Abbruch**, Betrag, Zahlungsmittel, Wallet, Issuer-Land, BIN, PAN-Quelle,
   ECI und Attempt Retry, Verlauf und Stosszeiten — und die **Zeilentabelle** mit einem
   Direktlink in die Transaktion im wallee-Backend.
+  Der Dauer-Eimer «> 9.5 min» ist die Signatur des Challenge-Timeouts am ACS (10 Minuten):
+  aus der Dauer geschlossen, nicht aus dem Challenge-Status, den wallee Analytics nicht
+  exportiert (seit v5.16).
 - **Wiederholungen auf zwei Ebenen:** je *Transaktion* („hat der Kunde es nochmal
   versucht?") und je *Bestellung* („hat er es am Ende geschafft?"). Wer nach drei
   Fehlschlägen mit einer neuen Transaktion zum Ziel kommt, ist auf der Transaktionsebene

@@ -141,6 +141,7 @@ test('Die uebernommenen Descriptors behalten ihren Map-Key aus SPEC 6.3', () => 
   const s = sql();
   const uebernommen = [
     [B.DESC_AUTH_RESPONSE_ECOM, 'shortTextContent'],
+    [B.DESC_AUTH_RESPONSE_SIX,  'shortTextContent'],
     [B.DESC_ISSUER_COUNTRY,     'countryContent'],
     [B.DESC_CARD_TYPE,          'shortTextContent'],
     [B.DESC_CARD_CATEGORY,      'shortTextContent'],
@@ -376,4 +377,17 @@ test('Kein Trinkgeld-CTE und kein lineitem-Join', () => {
   assert.doesNotMatch(s, /lineitem/i);
   assert.doesNotMatch(s, /\btip\b\s*(?:AS|ON|\.)/i);
   assert.doesNotMatch(s, /tip_amount|tip_total/i);
+});
+
+test('response_code liest den E-Com- und den SIX-Descriptor in einem COALESCE', () => {
+  const s = sql();
+  assert.strictEqual(B.DESC_AUTH_RESPONSE_SIX, '1532425961680');
+  const bis = s.indexOf(') AS response_code');
+  const von = s.lastIndexOf('COALESCE(', bis);
+  assert.ok(von !== -1 && bis > von, 'COALESCE ... AS response_code fehlt');
+  const ausdruck = s.slice(von, bis);
+  assert.ok(ausdruck.includes(B.DESC_AUTH_RESPONSE_ECOM));
+  assert.ok(ausdruck.includes(B.DESC_AUTH_RESPONSE_SIX));
+  // Der POS-Descriptor bleibt draussen: die Query ist fest E-Commerce.
+  assert.ok(!ausdruck.includes(B.DESC_AUTH_RESPONSE_POS));
 });

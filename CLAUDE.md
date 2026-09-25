@@ -31,13 +31,17 @@ breit, Drucktitel). Seit v5.15 ordnen `brand` und `terminal` jede Zahlung dem Ge
 ihrer **Autorisierung** zu (nicht mehr der Einreichung) und trennen **Authorized / Complete
 Demand / Offen** — Authorized stimmt damit mit dem wallee Financial Report überein, Offen
 zeigt die fehlende Einreichung (an Produktivdaten des Kunden Kaufleuten bewiesen, siehe
-„Autorisierungszeitpunkt (v5.15)" unter „Wallee-Referenzwissen").
+„Autorisierungszeitpunkt (v5.15)" unter „Wallee-Referenzwissen"). Seit v5.16 trennt die Seite
+«3DS-Failures» den Challenge-Timeout des ACS als eigenen Dauer-Eimer ab («> 9.5 min ·
+ACS-Timeout-Signatur», eine ausgewiesene Näherung, weil wallee Analytics den Challenge-Ausgang
+nicht exportiert) und beide Reporting-Queries lesen den Ablehncode auch vom SIX-Connector
+(`dashboard/SPEC-ITERATION-3.md` §3).
 
 ## Dateien
 
 | Datei | Zweck |
 |---|---|
-| `wallee_query_builder.html` | **Aktuelle Version (v5.15.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.60 MB** (1'597'825 Bytes, gemessen 2026-09-15 an v5.15.0; davor 1'588'500 Bytes an v5.14.3 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
+| `wallee_query_builder.html` | **Aktuelle Version (v5.16.0).** Sechs Modi (Terminal-Report als Ausgabe von `terminal`, Settlement-Report als Ausgabe von `settlement`, Reporting-Report als Ausgabe von `reporting`, seit v5.13 dazu die Seite «3DS-Failures» als **zweite** Ausgabe desselben Modus), zwei Betriebsmodi, Abfrage-Verlauf mit Download-by-Token, Multi-Space, Spaltenauswahl, Terminal-Synchronisierung, Self-Update-Check. Enthält seit v5.12 den eingebetteten Ablehngrund-Katalog (~107 KB, erzeugt von `tools/build-failure-reasons.mjs`) — Gesamtgrösse **~1.60 MB** (1'600'047 Bytes, gemessen 2026-09-25 an v5.16.0; davor 1'597'825 Bytes an v5.15.0 und 1'588'500 Bytes an v5.14.3 — die Angabe stand über mehrere Versionen still und war zweimal überholt, deshalb hier mit Byte-Zahl und Messdatum). Hier weiterentwickeln. |
 | `wallee-proxy.mjs` | Lokaler Zero-Dependency-Proxy für den API-Modus: JWT-Signatur, Analytics-Endpunkte, `/health`, `/setup`, `/credentials`, `/terminals`, `/update`, `/failure-reasons` (öffentliche Doku, **keine** API-Route), **`GET /` (App-HTML servieren)**. Start: `node wallee-proxy.mjs`. |
 | `Start-macOS.command` / `Start-Windows.bat` | Doppelklick-Starter: rufen `node wallee-proxy.mjs` mit `WALLEE_OPEN=1` auf (Server serviert die App unter `GET /` und öffnet den Browser). Setzen Node voraus; fehlt es, klarer Hinweis + Download-Seite. Siehe „Launcher-Skripte". |
 | `PAKET-ANLEITUNG.md` | End-Nutzer-Anleitung fürs Doppelklick-Starten (inkl. Node-Hinweis und Gatekeeper/SmartScreen-Erststart-Workaround). |
@@ -47,6 +51,8 @@ zeigt die fehlende Einreichung (an Produktivdaten des Kunden Kaufleuten bewiesen
 | `settlement-report-spec/` | **Nur lokal, bewusst nicht im Git** (siehe `.gitignore`): fachliche Vorgabe des Settlement-Reports (seit v5.10 umgesetzt) — `SPEC.md` (Datenmodell, Aggregation, Aufbau, Edge Cases, Validierungen §7), `GAP-ANALYSIS.md` (was der Report vor v5.10 anders machte), `generate_report.py` (Referenz-Implementierung in Python) sowie die Referenz-Ausgaben `Settlement_Report_Juni-Juli_2026.pdf` / `Settlement_Detail_Juni-Juli_2026.xlsx`. Die Referenzdateien enthalten **echte Produktivdaten** (~69'000 Transaktionen mit Bankreferenzen, namentlich genannter Händler) — dieses Repo ist **öffentlich**, weil das Self-Update ohne Auth von `raw.githubusercontent.com` lädt, deshalb dürfen sie nicht eingecheckt werden. **Bei Änderungen am Settlement-Report zuerst hier nachlesen** — die Referenzdaten sind der Prüfstein (siehe „Gegen die Referenzdaten prüfen" unten). |
 | `dashboard/` | Fachliche Vorgabe des **Reporting-Modus** (v5.11): `SPEC.md` (Grundsatzentscheide, Datenmodell der Query, KPI-Katalog K1–K10 / P1–P7 / E1–E6, UI, Edge Cases, Validierung §8), `PLAN.md`/`README.md` sowie unter `sql/` die Discovery-Queries (`00_label_discovery.sql`, `00b_ecom_discovery.sql`) und die **aus dem Builder generierten** Referenz-Queries (`01_reporting_reference.sql`, `01b_reporting_reference_terminal.sql` mit Terminal-Join). Diese Dateien sind im Git. **Nicht** im Git ist `dashboard/discovery-results/` (siehe `.gitignore`): dort liegen die Task-0-CSVs mit Produktivdaten sowie die Referenzausgaben des Reports. `DESCRIPTORS.md` darin ist die **Fundstelle aller Descriptor-IDs**, `ABNAHME.md` der **Abnahme-Nachweis nach SPEC §8** (inkl. der §8.3-Gegenrechnung gegen den `brand`-Modus, Belege `brand_ref_2026-07.csv` / `reporting_ref.csv` / `spec-8-3-vergleich.txt`) — bei Änderungen am Reporting-Modus zuerst dort und in `SPEC.md` nachlesen. |
 | `dashboard/SPEC-ITERATION-2.md` | Fachliche Vorgabe der **Iteration 2** (v5.12), datiert 2026-09-03: §1 Ablehngründe im Klartext, §2 Kuchendiagramme, §3 Seite «3DS-Failures», §4/§5 Discovery und die Antworten auf die Support-Anfrage aus Referenzfall B. **Umgesetzt sind §1 und §2**; was offen blieb und warum, steht unter „Offene Punkte". Der Fall selbst (Space-ID, Händler, Volumen, E-Mail-Wortlaut) steht **nicht** hier, sondern in `dashboard/discovery-results/FALL-B.md` (gitignored — das Repo ist öffentlich). |
+| `dashboard/SPEC-ITERATION-3.md` | Fachliche Vorgabe der **Iteration 3** (Entwurf, 2026-09-25, nichts gebaut): der Ausgang der 3DS-Challenge («The challenge authentication of the customer failed or was canceled») ist im Analytics-Export **nicht vorhanden** — die Entität «3-D Secure Authentication Attempt» wird weder als Tabelle exportiert noch als Label geschrieben (an zwei Connectoren gemessen). §3 Zwischenlösung (Dauer-Eimer «≥ 9.5 min · Signatur ACS-Timeout», dritter Response-Code-Descriptor), §4 Anforderung an wallee, §5 Umsetzung sobald die Daten da sind. Fall selbst (Space, Händler, IDs) in `dashboard/discovery-results/FALL-C.md` (gitignored). |
+| `dashboard/sql/02_tds_label_discovery.sql` | Discovery der Iteration 3 (Platzhalter `<SPACE_ID>`/`<ATTEMPT_ID>`): Q1 Label-Inventar je Zustand und 3DS-Grund, Q2 alle Labels eines Charge Attempts, Q3 gezielt die Netcetera-/Endeavour-/3-D-Secure-Details-Descriptors. Gelaufen 2026-09-25 über den Proxy an Referenzfall C; erneut fahren, sobald wallee Analytics oder Connector ändert (SPEC-ITERATION-3 §7). |
 | `dashboard/catalog/` | Die beiden **gescrapten wallee-Kataloge** als JSON, im Git: `failure-reasons.json` (2'254 Einträge mit Name, Kategorie und Beschreibung, je englisch und deutsch) und `label-descriptors.json` (755 Einträge). Quelle ist die öffentliche Doku-Liste, **kein API-Dienst** (siehe „Ablehngründe"). Aktualisiert mit `dashboard/tools/scrape_wallee_catalogs.py` (Python 3, nur Standardbibliothek) — danach den Build-Schritt erneut laufen lassen. |
 | `tools/build-failure-reasons.mjs` | Erzeugt aus `dashboard/catalog/failure-reasons.json` die Konstante `FAILURE_REASONS` zwischen den Markerkommentaren in `wallee_query_builder.html`. **Der einzige Generator im Repo** — er läuft nie zur Laufzeit, die App bleibt eine Single-File-App ohne Build. Idempotent; bricht ab bei fehlenden oder doppelten Markern und bei einer Kategorie, die er nicht kennt. Details unter „Ablehngründe im Klartext (v5.12)". |
 | `sql/autorisiert_verifikation.sql` | Discovery-Queries (Task 0 der Iteration «Autorisierter Betrag», v5.14) — einzeln im Portal ausführen: `authorizedon` je Zustand gefüllt (Q1), Alter liegengebliebener Autorisierungen (Q2), `completedamount` vs. `authorizationamount` bei abgeschlossenen Transaktionen (Q3/Q3b), Nullwerte bei `AUTHORIZED` (Q4), Terminal-/Connector-Zuordnung bei `AUTHORIZED` (Q5). Gelaufen am 2026-09-12 an Space 73192 (90 Tage); Ergebnisse lokal in `Terminal-Report-Tool/discovery-results/` (gitignored), Befunde unter „Wallee-Referenzwissen" > „Autorisierter Betrag". |
@@ -765,14 +771,17 @@ fehlender Beleg** — der Beleg steht in den Q2-CSVs daneben.
 | `DESC_CARD_CATEGORY` (Business/Privat) | `1474552618999` | `shortTextContent` |
 | `DESC_AUTH_RESPONSE_POS` (ISO-8583) | `1579287790513` | `shortTextContent` (Q2: 14 Werte `00`…`Z3`) |
 | `DESC_AUTH_RESPONSE_ECOM` (Processor) | `15537739985478` | `shortTextContent` (Q2: 5 Werte) |
+| `DESC_AUTH_RESPONSE_SIX` (SIX Acquiring, seit v5.16) | `1532425961680` | `shortTextContent` (Referenzfall C, Q1: 13 Werte) |
 | `DESC_DCC_CURRENCY` (nur Existenz) | `1695119783358` | `shortTextContent` (Q2: `EUR`/`SEK`) |
 | `DESC_PAN_TYPE` | `1634723429555` | `shortTextContent` (Q2: 5 Werte) |
 | `DESC_TDS_STARTED` | `1568637480278` | **`dateTimeContent`** |
 | `DESC_TDS_CAVV` (nur Existenz) | `1569496536590` | **`longTextContent`** |
 | `DESC_ECI` | `1634723429552` | `shortTextContent` |
 
-Die beiden Ablehncode-Descriptors stehen in einem `COALESCE` — ein Attempt trägt immer nur
-eines der beiden Labels (POS: Issuer-Code, E-Commerce: Processor-Code).
+Die drei Ablehncode-Descriptors stehen in einem `COALESCE` — ein Attempt trägt immer nur
+eines der Labels (POS: Issuer-Code, E-Commerce: Processor-Code, SIX-Connector: sein eigener
+«Response Code» aus der Gruppe Transaction Details, seit v5.16; die 3DS-Query kennt nur die
+beiden E-Commerce-Descriptors).
 
 **PII-Sperrliste (SPEC 9): `1456765000789` (Card Holder Name) und `1456765125779`
 (Masked Card Number, `DESC_MASKED_CARD`) dürfen in der Reporting-Query nie vorkommen** —
@@ -1399,7 +1408,9 @@ Analytics-Tabelle. Sie „vorsorglich" mitzuführen wäre genau der Fehler, den 
 sonst vermeidet: eine Spalte, die dauerhaft `NULL` liefert, sieht aus wie eine Messung. Ein
 Test hält fest, dass sie nicht zurückkehren. Geblieben ist die Zeitspanne zwischen
 `Process Started` und `Process Finished`, in vier Eimern plus `UNBEKANNT`
-(`TDS_DAUER_GRENZEN_SEK = [10, 60, 300]`; die Grenzen gehören zum **oberen** Eimer, und die
+(`TDS_DAUER_GRENZEN_SEK = [10, 60, 300, 570]` — seit v5.16 **fünf** Eimer plus `UNBEKANNT`; der fünfte,
+«> 9.5 min · ACS-Timeout-Signatur», ist der 10-Minuten-Challenge-Timeout des ACS aus
+SPEC-ITERATION-3 §3.1, eine Näherung aus der Dauer, die der Blockhinweis als solche benennt; die Grenzen gehören zum **oberen** Eimer, und die
 Beschriftung sagt das mit `<` und `>` ausdrücklich): sie beantwortet dieselbe Frage — bricht der Kunde sofort ab oder scheitert
 er nach einer langen Challenge — nur aus dem, was tatsächlich da ist.
 
@@ -2368,6 +2379,20 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     2'439 wirklich sind, bleibt offen und **ist aus dem Analytics-Export nicht zu
     beantworten** — die dafür nötigen EMVCo-Felder kommen dort nicht an, das hat derselbe
     Lauf gemessen (Punkt eins dieser Liste).
+- **Der Ausgang der 3-D-Secure-Challenge ist im Analytics-Export nicht vorhanden (Referenzfall C,
+  2026-09-25, `dashboard/SPEC-ITERATION-3.md`).** Was das Portal am Charge Attempt unter «3-D Secure
+  Authentication Attempts» zeigt (ARes Status, Challenge Status, Status Reason, Challenge cancel,
+  Enrolled, Method Completion, ACS-URL, eigener Ablehngrund aus der Katalog-Gruppe `15343…`), hängt an
+  der eigenen Entität `threed-secure/authentication-attempt`. Sie ist **keine** Analytics-Tabelle, ihre
+  Labels kommen **nicht** in `chargeattempt.labels` an (an zwei Connectoren gemessen: Fall B mit den
+  «3-D Secure Details»-IDs, Fall C mit den Netcetera-/Endeavour-IDs — 6'371 3DS-Fehlschläge, kein
+  einziger trägt eines), die Portal-Liste hat keinen Export, und die Web-Service-API (95 Services im SDK)
+  kennt weder Service noch Modell dafür. Ergänzbar nur durch wallee (SPEC-ITERATION-3 §4). Was die
+  Dauer heute trennt: Referenzfall C ist bimodal — 46.8 % der «3-D Secure Failure»-Zeilen unter 30 s,
+  28.6 % bei ≥ 590 s (der 10-Minuten-Challenge-Timeout des ACS; der Screenshot-Fall mit 611 s trägt im
+  Portal Reason `14` / Cancel `04`). Nebenbefund: der SIX-Connector schreibt den Ablehncode unter
+  `1532425961680` «Response Code» (`shortTextContent`, 13 Werte), nicht unter einem der beiden bekannten
+  Descriptors — `response_code` steht dort in jeder Zeile auf UNKNOWN, bis das `COALESCE` ihn kennt.
 - **Es gibt keinen Failure-Reason-Dienst in der wallee-Web-Service-API.** 98 Services in
   Doku und Java-SDK, keiner davon; beide Kandidatenpfade antworten mit einer HTML-404;
   `static-values` kennt die IDs nicht; das Analytics-Schema hat keine Nachschlagetabelle.
@@ -2480,7 +2505,7 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
    Die 3DS-Tests laufen gegen `test/fixtures/reporting-tds-beispiel.csv` — acht Zeilen, jede
    für einen fachlich interessanten Fall, alle Erwartungswerte von Hand gerechnet. **Hier
    ist auch die Schreibweise erfunden, nicht gemessen**, und das ist der Unterschied zur
-   Aggregat-Fixture: die 3DS-Query ist nie im Portal gelaufen (siehe „Offene Punkte"). Vor
+   Aggregat-Fixture: die 3DS-Query war bis 2026-09-25 nie im Portal gelaufen (seither Referenzfall C, siehe „Offene Punkte" — die Zeitstempel-Schreibweise ist jetzt gemessen, die Fixture noch nicht nachgezogen). Vor
    allem die beiden 3DS-Zeitstempel stammen aus einem `dateTimeContent`-Label, dessen Form
    niemand gesehen hat; der Parser reicht einen unpassenden Wert deshalb **durch** und zählt
    ihn zusätzlich als `unbrauchbareWerte`, statt ihn als leer auszugeben.
@@ -2654,6 +2679,10 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
   - Sollte wallee den **Failure-Reason-Dienst** je veröffentlichen, ersetzt er die statische
     `FAILURE_REASONS`-Tabelle (das Modell existiert in der API, nur der Dienst fehlt) —
     Nachfrage bei wallee wäre der Weg, erneutes Pfad-Raten nicht.
+- **Reporting-Modus, Iteration 3 (Challenge-Ausgang) — §3 gebaut in v5.16.0 (2026-09-25), Rest offen**
+  (`dashboard/SPEC-ITERATION-3.md`). Offen: die Stichprobe im Portal (§3.3 — 20 Attempts ≥ 590 s und 20
+  unter 30 s gegen Challenge cancel / Status Reason halten; die Signatur ist bisher an **einem** Fall
+  belegt), die Anfrage an wallee (§4) und §5, sobald `sql/02_tds_label_discovery.sql` Q3 Zeilen liefert.
 - **Reporting-Modus, Iteration 2 (v5.12/v5.12.1/v5.13) — was diese Versionen bewusst NICHT
   gebracht haben.**
   `dashboard/SPEC-ITERATION-2.md` beschreibt vier Vorhaben; umgesetzt sind **§1**
@@ -2671,8 +2700,13 @@ bzw. an der API-Doku (<https://app-wallee.com/doc/api/web-service>) verifiziert:
     stehen die **Dauer-Eimer**, und der in §3.6 vorgesehene Drei-Sekunden-Rückfall ist
     bewusst nicht gebaut (er beschriftete eine Annahme als Messung — siehe „Die Seite
     «3DS-Failures»", Abschnitt zu den nicht gebauten Achsen).
-  - **Der Portal-Referenzlauf der 3DS-Query steht noch aus.** Sie ist **nie gegen echte
-    Daten gelaufen** — anders als die Aggregat-Query, die den Lauf vom 2026-09-01 hinter
+  - ~~**Der Portal-Referenzlauf der 3DS-Query steht noch aus.**~~ **Erledigt 2026-09-25 (Referenzfall C,
+    `dashboard/discovery-results/FALL-C.md`):** drei Monate, 7'952 Zeilen über den API-Modus; die beiden
+    3DS-Zeitstempel kommen als `YYYY-MM-DDTHH:MM:SS.fffZ` (UTC **mit** Zone), `created_on` als Athena-Lokalzeit
+    ohne Zone — die Dauer-Achse ist damit belegt (6'305 von 6'371 3DS-Fehlschlägen mit Dauer). Die Fixture ist
+    auf diese Schreibweise umzustellen (SPEC-ITERATION-3 §3.4); (a) und (c) unten sind nicht protokolliert.
+    Der ursprüngliche Absatz bleibt als Prüfliste stehen: ~~Sie ist **nie gegen echte
+    Daten gelaufen**~~ — anders als die Aggregat-Query, die den Lauf vom 2026-09-01 hinter
     sich hat. Getestet ist sie ausschliesslich gegen eine **synthetische** Fixture
     (`test/fixtures/reporting-tds-beispiel.csv`, acht Zeilen von Hand gerechnet). Beim
     ersten echten Lauf gezielt auf drei Dinge schauen:

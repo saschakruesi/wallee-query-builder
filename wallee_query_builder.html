@@ -859,7 +859,7 @@
     <button class="btn btn-primary" id="updateBannerBtn">Jetzt aktualisieren</button>
   </div>
   <div class="kopfzeile">
-    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.15.0</span></h1>
+    <h1><span class="brand-mark">wallee</span> Analytics – Query Builder <span class="badge">v5.16.0</span></h1>
     <!-- Die Einstellungen gelten fuer alle Modi, nicht fuer einen einzelnen Tab -
          deshalb hier oben und nicht in einem der Panels. -->
     <button class="icon-btn" id="settingsBtn" title="Einstellungen" aria-label="Einstellungen"
@@ -1944,6 +1944,14 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   const DESC_CARD_CATEGORY      = '1474552618999'; // Issuer Card category, Produktname (Business/Privat)
   const DESC_AUTH_RESPONSE_POS  = '1579287790513'; // Authorization Response Code (ISO-8583, POS), shortTextContent (Q2: ohne_shorttext = 0)
   const DESC_AUTH_RESPONSE_ECOM = '15537739985478'; // Response Code des Processors (E-Commerce), shortTextContent (Q2: ohne_shorttext = 0)
+  // Dritter Ablehncode-Descriptor: der Connector "SIX Acquiring mit 3-D Secure"
+  // schreibt den Code unter 1532425961680 (Gruppe Transaction Details) und
+  // KEINEN der beiden obigen - response_code stand dort in jeder Zeile auf
+  // UNKNOWN. 13 Werte (AUTHORIZATION_DECLINED ... VERIFICATION_DATA_FAILED),
+  // gemessen 2026-09-25 an Referenzfall C (dashboard/sql/02_tds_label_discovery.sql
+  // Q1, SPEC-ITERATION-3 §3.2). Auf 3DS-Fehlschlaegen bleibt er leer: die
+  // Autorisierung fand nie statt. Das Vokabular ist ein anderes als ISO 8583.
+  const DESC_AUTH_RESPONSE_SIX  = '1532425961680'; // Response Code (SIX Acquiring), shortTextContent (Referenzfall C, Q1)
   const DESC_DCC_CURRENCY       = '1695119783358'; // DCC Cardholder Currency, shortTextContent (Q2: ohne_shorttext = 0) - nur Existenz
   const DESC_PAN_TYPE           = '1634723429555'; // Pan Type (Klartext-PAN / Device-/Scheme-Token), shortTextContent (Q2: ohne_shorttext = 0)
   const DESC_TDS_STARTED        = '1568637480278'; // 3-D Secure Process Started, dateTimeContent
@@ -2636,7 +2644,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   // Version der App; pro Release gebumpt (auch der <h1>-Badge und APP_VERSION im
   // Proxy). Der Check laeuft client-seitig gegen die GitHub-Releases-API (sendet
   // CORS *), das eigentliche Update uebernimmt der Proxy (POST /update).
-  const APP_VERSION = '5.15.0';
+  const APP_VERSION = '5.16.0';
   const UPDATE_API_URL = 'https://api.github.com/repos/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_RELEASE_PAGE = 'https://github.com/saschakruesi/wallee-query-builder/releases/latest';
   const UPDATE_CHECK_KEY = 'wallee_update_check_v1';
@@ -3650,7 +3658,8 @@ att AS (
         -- Issuers, im E-Commerce der Response Code des Processors. Ein Attempt
         -- traegt immer nur eines der beiden Labels.
         COALESCE(${labelExpr(DESC_AUTH_RESPONSE_POS)},
-                 ${labelExpr(DESC_AUTH_RESPONSE_ECOM)}) AS auth_response_code,
+                 ${labelExpr(DESC_AUTH_RESPONSE_ECOM)},
+                 ${labelExpr(DESC_AUTH_RESPONSE_SIX)}) AS auth_response_code,
         ${labelExpr(DESC_ISSUER_COUNTRY, 'countryContent')} AS issuer_country,
         ${labelExpr(DESC_CARD_CATEGORY)} AS card_category,
         ${labelExpr(DESC_CARD_TYPE)} AS funding,
@@ -3914,9 +3923,10 @@ ORDER BY block, channel, anzahl_attempts DESC;`;
         -- Der Vergleich in der WHERE-Klausel laeuft ueber denselben CAST und
         -- funktioniert damit unabhaengig vom Basistyp.
         CAST(ca.failurereason AS varchar)               AS failure_reason_id,
-        -- Nur der E-Com-Descriptor, kein COALESCE mit dem POS-Gegenstueck: die
-        -- Query filtert fest auf den E-Commerce-Kanal.
-        ${labelExpr(DESC_AUTH_RESPONSE_ECOM)} AS response_code,
+        -- Nur die E-Com-Descriptors (Processor und SIX), kein POS-Gegenstueck:
+        -- die Query filtert fest auf den E-Commerce-Kanal.
+        COALESCE(${labelExpr(DESC_AUTH_RESPONSE_ECOM)},
+                 ${labelExpr(DESC_AUTH_RESPONSE_SIX)}) AS response_code,
         ${labelExpr(DESC_ISSUER_COUNTRY, 'countryContent')} AS issuer_country,
         ${labelExpr(DESC_CARD_TYPE)} AS funding,
         ${labelExpr(DESC_CARD_CATEGORY)} AS card_category,
@@ -4547,9 +4557,11 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // brauchte eine Zeitzonen-Entscheidung, die hier niemand treffen kann.
   // Gemessen wird trotzdem, ob der Wert ueberhaupt wie ein Zeitstempel
   // aussieht - die Dauer-Eimer der Seite haengen daran. Bewusst grosszuegig:
-  // created_on kommt aus Athena als 'yyyy-mm-dd hh:mm:ss[.fff]', die beiden
-  // 3DS-Zeitpunkte aus einem dateTimeContent-Label, dessen genaue Schreibweise
-  // (T-Trenner, Zeitzone) nicht gemessen ist.
+  // created_on kommt aus Athena als 'yyyy-mm-dd hh:mm:ss[.fff]' (Lokalzeit,
+  // ohne Zone), die beiden 3DS-Zeitpunkte aus einem dateTimeContent-Label -
+  // gemessen 2026-09-25 an Referenzfall C als 'yyyy-mm-ddThh:mm:ss.fffZ', also
+  // UTC MIT Zone. Das Muster laesst beide Formen zu; die Fixture traegt seither
+  // die gemessene.
   const REPORTING_TDS_MUSTER_ZEIT =
     /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/;
 
@@ -5890,8 +5902,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // einen Wert OHNE Zone als Lokalzeit und einen MIT Zone absolut - eine
   // Differenz aus zwei gemischten Schreibweisen ist deshalb um den
   // UTC-Versatz des Browsers verschoben, ohne dass irgendwo etwas rot wird.
-  // Das Muster laesst beide Formen zu (die Schreibweise der beiden
-  // 3DS-Zeitpunkte ist NICHT gemessen), also muss die Differenz sie
+  // Das Muster laesst beide Formen zu (die 3DS-Zeitpunkte kommen mit Zone
+  // 'Z', created_on ohne - gemessen 2026-09-25), also muss die Differenz sie
   // vergleichen.
   const TDS_ZEIT_ZONE = /(?:Z|[+-]\d{2}:?\d{2})$/;
   function tdsHatZone(wert) {
@@ -5927,8 +5939,17 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
   // Dauer in genau einen Eimer, und die Summe der Eimer ist die Zeilenzahl -
   // gemischte Grenzen ("<= 300" neben "< 60") waeren die Sorte Detail, die
   // niemand nachrechnet und die trotzdem doppelt zaehlt.
-  const TDS_DAUER_GRENZEN_SEK = [10, 60, 300];
-  const REPORTING_TDS_DAUER = ['UNTER_10S', 'S10_60', 'MIN1_5', 'UEBER_5MIN', 'UNBEKANNT'];
+  //
+  // 570 s ist die Signatur des Challenge-Timeouts am ACS (in der Regel 10
+  // Minuten nach dem CReq). Gemessen an Referenzfall C (SPEC-ITERATION-3
+  // §3.1): der Gipfel beginnt bei 605 s, zwischen 540 und 600 s ist es leer.
+  // Die Grenze liegt bewusst UNTER 600, damit ein ACS mit 9.5-Minuten-Timeout
+  // nicht in den falschen Eimer faellt. Das ist eine Naeherung aus der Dauer,
+  // kein Challenge-Status - den exportiert wallee Analytics nicht (die
+  // Entitaet "3-D Secure Authentication Attempt" kommt weder als Tabelle noch
+  // als Label an), und der Blockhinweis sagt das.
+  const TDS_DAUER_GRENZEN_SEK = [10, 60, 300, 570];
+  const REPORTING_TDS_DAUER = ['UNTER_10S', 'S10_60', 'MIN1_5', 'MIN5_9', 'UEBER_9MIN30', 'UNBEKANNT'];
   function klassifiziereTdsDauer(sekunden) {
     // Die Negativ-Regel steht in tdsDauerSekunden, dort entsteht der Wert.
     // Der Guard hier ist die zweite Naht fuer den Fall, dass jemand die
@@ -5937,7 +5958,8 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     if (sekunden < TDS_DAUER_GRENZEN_SEK[0]) return 'UNTER_10S';
     if (sekunden < TDS_DAUER_GRENZEN_SEK[1]) return 'S10_60';
     if (sekunden < TDS_DAUER_GRENZEN_SEK[2]) return 'MIN1_5';
-    return 'UEBER_5MIN';
+    if (sekunden < TDS_DAUER_GRENZEN_SEK[3]) return 'MIN5_9';
+    return 'UEBER_9MIN30';
   }
 
   // Betrags-Eimer (§3.5), je Waehrung. Die Grenzen sind WAEHRUNGSBETRAEGE -
@@ -7226,7 +7248,11 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     UNTER_10S: '< 10 s',
     S10_60: '10–60 s',
     MIN1_5: '1–5 min',
-    UEBER_5MIN: '> 5 min',
+    MIN5_9: '5–9.5 min',
+    // Der fuenfte Eimer traegt seine Deutung im Namen, weil sie das Einzige
+    // ist, was ihn vom vierten unterscheidet - und "Signatur" statt "Timeout",
+    // weil es aus der Dauer geschlossen ist (SPEC-ITERATION-3 §3.1).
+    UEBER_9MIN30: '> 9.5 min · ACS-Timeout-Signatur',
     // Betrags-Eimer: bewusst OHNE Waehrung im Namen - die Grenzen sind
     // Waehrungsbetraege, und die Waehrung steht als eigene Spalte daneben.
     UNTER_50: '< 50',
@@ -7418,7 +7444,7 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
     // Die Dauer-Eimer der 3DS-Failure-Seite (§3.5). UNBEKANNT fehlt bewusst -
     // es ist immer Grau (siehe reportingKuchenIstGrau).
     UNTER_10S: 'tuerkis', S10_60: 'orange', MIN1_5: 'schwarz',
-    UEBER_5MIN: 'tuerkisHell',
+    MIN5_9: 'tuerkisHell', UEBER_9MIN30: 'orangeHell',
     // NICHT hier stehen die drei Eimer der Grund-Achse (TDS_FAILURE,
     // TDS_TIMEOUT, ANDERER_GRUND), obwohl sie ein ebenso fester Satz sind.
     // Grund: die Suche laeuft ueber den ANGEZEIGTEN TEXT (siehe
@@ -9036,7 +9062,10 @@ LIMIT ${REPORTING_TDS_LIMIT};`;
       + 'keine App zur Hand — von „Timeout“, ohne Connector-Details zu erfinden. Die Grenzen '
       + 'sind halboffen und gehören zum oberen Eimer: 10 s steht in „10–60 s“. „Unbekannt“ '
       + 'heisst, dass einer der beiden Zeitpunkte fehlt oder unlesbar ist — nicht, dass der '
-      + 'Abbruch sofort erfolgte.', true));
+      + 'Abbruch sofort erfolgte. Der Eimer „> 9.5 min“ entspricht dem Challenge-Timeout des '
+      + 'ACS (in der Regel 10 Minuten): der Kunde hat die Challenge begonnen und nie '
+      + 'abgeschlossen. Das ist aus der Dauer geschlossen, nicht aus dem Challenge-Status — '
+      + 'den exportiert wallee Analytics nicht.', true));
 
     // --- Betrag je Waehrung -----------------------------------------------
     // Die Eimergrenzen sind WAEHRUNGSBETRAEGE, deshalb je Waehrung ein eigener

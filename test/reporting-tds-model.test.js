@@ -407,7 +407,11 @@ test('Einordnung und Query-Liste stammen aus derselben Quelle', () => {
 
 test('Dauer-Eimer: die Grenzen liegen dort, wo sie heissen', () => {
   // Die Grenzen kommen aus der Konstanten, nicht aus einer zweiten Handliste.
-  assert.deepStrictEqual(plain([...B.TDS_DAUER_GRENZEN_SEK]), [10, 60, 300]);
+  // 570 s ist die ACS-Timeout-Signatur (SPEC-ITERATION-3 §3.1): der Gipfel
+  // beginnt in Referenzfall C bei 605 s, zwischen 540 und 600 s ist es leer.
+  assert.deepStrictEqual(plain([...B.TDS_DAUER_GRENZEN_SEK]), [10, 60, 300, 570]);
+  assert.deepStrictEqual(plain([...B.REPORTING_TDS_DAUER]),
+    ['UNTER_10S', 'S10_60', 'MIN1_5', 'MIN5_9', 'UEBER_9MIN30', 'UNBEKANNT']);
   // Halboffen: jede Grenze gehoert zum OBEREN Eimer. Je ein Wert knapp
   // darunter, auf der Grenze und knapp darueber.
   assert.strictEqual(B.klassifiziereTdsDauer(0), 'UNTER_10S');
@@ -416,8 +420,12 @@ test('Dauer-Eimer: die Grenzen liegen dort, wo sie heissen', () => {
   assert.strictEqual(B.klassifiziereTdsDauer(59.999), 'S10_60');
   assert.strictEqual(B.klassifiziereTdsDauer(60), 'MIN1_5');
   assert.strictEqual(B.klassifiziereTdsDauer(299.999), 'MIN1_5');
-  assert.strictEqual(B.klassifiziereTdsDauer(300), 'UEBER_5MIN');
-  assert.strictEqual(B.klassifiziereTdsDauer(3600), 'UEBER_5MIN');
+  assert.strictEqual(B.klassifiziereTdsDauer(300), 'MIN5_9');
+  assert.strictEqual(B.klassifiziereTdsDauer(569.999), 'MIN5_9');
+  assert.strictEqual(B.klassifiziereTdsDauer(570), 'UEBER_9MIN30');
+  // Der Screenshot-Fall aus Referenzfall C: 611 s, im Portal Reason 14 / Cancel 04.
+  assert.strictEqual(B.klassifiziereTdsDauer(611.093), 'UEBER_9MIN30');
+  assert.strictEqual(B.klassifiziereTdsDauer(3600), 'UEBER_9MIN30');
 });
 
 test('Dauer: leer, unlesbar und negativ sind alle "unbekannt"', () => {
@@ -455,9 +463,26 @@ test('Dauer-Eimer an der Fixture, von Hand nachgerechnet', () => {
   // 8000007 07:10:02 -> 07:15:43 = 341 s
   // 8000008 14:04:51 -> 14:05:08 = 17 s
   assert.deepStrictEqual(plain(m.dauer.gruppen.map(g => [g.schluessel, g.anzahl])), [
-    ['UNTER_10S', 1], ['S10_60', 5], ['MIN1_5', 0], ['UEBER_5MIN', 1], ['UNBEKANNT', 1],
+    ['UNTER_10S', 1], ['S10_60', 5], ['MIN1_5', 0], ['MIN5_9', 1], ['UEBER_9MIN30', 0],
+    ['UNBEKANNT', 1],
   ]);
   assert.strictEqual(summe(m.dauer.gruppen), 8);
+});
+
+test('Die ACS-Timeout-Signatur landet im eigenen Eimer, nicht in "5-9.5 min"', () => {
+  // Zwei Zeilen in UTC mit Zone (die gemessene Schreibweise aus Referenzfall
+  // C): 611 s und 341 s. Nur die erste traegt die Signatur.
+  const m = modell([
+    zeile({ attemptId: 'a1', transactionId: 't1',
+      tdsStartedOn: '2026-06-30T21:13:01.921Z', tdsFinishedOn: '2026-06-30T21:23:13.014Z' }),
+    zeile({ attemptId: 'a2', transactionId: 't2',
+      tdsStartedOn: '2026-06-30T21:00:00.000Z', tdsFinishedOn: '2026-06-30T21:05:41.000Z' }),
+  ]);
+  const eimer = k => m.dauer.gruppen.find(g => g.schluessel === k).anzahl;
+  assert.strictEqual(eimer('UEBER_9MIN30'), 1);
+  assert.strictEqual(eimer('MIN5_9'), 1);
+  // Die Zeilenliste ist sortiert, nicht in Eingabereihenfolge - deshalb ohne Reihenfolge.
+  assert.deepStrictEqual(m.zeilen.map(z => Math.round(z.dauerSekunden)).sort((x, y) => x - y), [341, 611]);
 });
 
 test('Beide belegten Zeitschreibweisen ergeben dieselbe Dauer', () => {
@@ -853,7 +878,7 @@ test('Challenge-Status, ACS, 3DS-Version und tds_flow sind keine Achsen', () => 
   // auch gegen ein leeres Modell.
   assert.ok(namen.indexOf('dauer') !== -1, 'Der Sammler muss die oberste Ebene sehen');
   assert.ok(namen.indexOf('gruppen') !== -1, 'Der Sammler muss verschachtelte Ebenen sehen');
-  assert.ok(namen.indexOf('UEBER_5MIN') !== -1, 'Der Sammler muss Eimerschluessel sehen');
+  assert.ok(namen.indexOf('UEBER_9MIN30') !== -1, 'Der Sammler muss Eimerschluessel sehen');
   assert.ok(namen.indexOf('CHALLENGE_TIMEOUT') === -1);
 
   // Die 3DS-Version bleibt als SPALTE in der Zeilenliste erhalten (der
